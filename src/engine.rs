@@ -330,7 +330,9 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
   let rate = claimed.sample_rate as usize;
   let stated = claimed.frames.map(|frames| frames as f64 / rate as f64);
   let mut analyzer = Analyzer::new(claimed.sample_rate, claimed.bit_depth, &settings.thresholds);
-  let mut buffer = vec![Vec::with_capacity(rate); decoder.channels];
+  let mut buffer: Vec<Vec<f32>> = (0..decoder.channels)
+    .map(|_| Vec::with_capacity(rate))
+    .collect();
   // a lossy file carries its own codec's grid, which says nothing
   let mut segments = claimed
     .frames

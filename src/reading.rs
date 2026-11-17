@@ -305,7 +305,7 @@ impl Measured {
         verdict: Verdict::Inconclusive,
         confidence: 0.4,
         encoder_guess: Some(EncoderGuess {
-          profile: profile.name.to_string(),
+          profile: profile.name.clone(),
           confidence: 0.4,
         }),
         summary: format!(
@@ -461,7 +461,7 @@ fn verdict(
     reading.verdict = Verdict::LikelyTranscode;
     reading.confidence = confidence;
     reading.encoder_guess = Some(EncoderGuess {
-      profile: profile.name.to_string(),
+      profile: profile.name.clone(),
       confidence: (clustered * (0.5 + 0.5 * sharp_share)).min(t.confidence_cap),
     });
     reading.cutoff_hz = Some(median);
@@ -481,7 +481,7 @@ fn verdict(
     reading.cutoff_hz = Some(median);
     // past the transcode rule, this is a sharp cutoff where the highest bitrates cut
     reading.encoder_guess = Some(EncoderGuess {
-      profile: profile.name.to_string(),
+      profile: profile.name.clone(),
       confidence: 0.4,
     });
     reading.limitations.push(Limitation::FilteredAt20Khz);
@@ -508,7 +508,7 @@ fn verdict(
     reading.verdict = Verdict::MixedSources;
     reading.confidence = 0.5 + 0.35 * (limited_share.min(full) / 0.5).min(1.0);
     reading.encoder_guess = t.profile_at(at).map(|p| EncoderGuess {
-      profile: p.name.to_string(),
+      profile: p.name.clone(),
       confidence: 0.5,
     });
     reading.cutoff_hz = Some(at);
@@ -532,7 +532,7 @@ fn verdict(
     reading.verdict = Verdict::MixedSources;
     reading.confidence = 0.5 + 0.35 * layered_share.min(1.0);
     reading.encoder_guess = t.profile_at(at).map(|p| EncoderGuess {
-      profile: p.name.to_string(),
+      profile: p.name.clone(),
       confidence: 0.5,
     });
     reading.cutoff_hz = Some(at);
@@ -665,7 +665,7 @@ fn verdict(
       }
       reading.confidence = 0.4;
       reading.encoder_guess = profile.map(|p| EncoderGuess {
-        profile: p.name.to_string(),
+        profile: p.name.clone(),
         confidence: 0.4,
       });
       let at = profile.map_or(String::new(), |p| {
