@@ -1,7 +1,4 @@
-//! Measures of a whole file.
-//!
-//! They are gathered from its windows and running totals: the cutoff histogram and median,
-//! percentiles of the per-window measures, and the file-wide figures.
+//! The measures of a whole file, gathered from its windows and running totals.
 
 use std::collections::BTreeMap;
 

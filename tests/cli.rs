@@ -4,8 +4,7 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
-use choon::fixtures::{self, music, pink};
-use mp3lame_encoder::Bitrate;
+use choon::fixtures::{self, Bitrate, music, pink};
 
 /// The paths of an honest FLAC and of one made from a 128 kbps MP3, written in `dir`.
 fn honest_and_fake(dir: &Path) -> (String, String) {

@@ -1,10 +1,5 @@
-//! Measures of each one-second window.
-//!
-//! A window's measures are its loudness, its spectrum averaged over short overlapping frames,
-//! where that spectrum stops (the cutoff) and how steeply, gaps in the band just below the
-//! cutoff, a step inside a full band, and how strongly the noise repeats at a lossy codec's
-//! frame length. Each window's samples are also added to the file-wide totals, and what the
-//! spectrogram and the waveform show of it is kept.
+//! The measures of each one-second window and the analyzer that takes them. Each window's
+//! samples are also added to the file-wide totals.
 
 use std::sync::Arc;
 
@@ -50,6 +45,11 @@ pub struct Step {
 }
 
 /// Measures of one window.
+///
+/// They are its loudness, where its spectrum, averaged over short overlapping frames, stops
+/// (the cutoff) and how steeply, gaps in the band just below the cutoff, a step inside a full
+/// band, how strongly the noise repeats at a lossy codec's frame length, and what the
+/// spectrogram and the waveform show of it.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]

@@ -10,11 +10,14 @@ use std::path::Path;
 
 use flacenc::component::BitRepr;
 use flacenc::error::Verify;
-use mp3lame_encoder::{Bitrate, Builder, DualPcm, FlushNoGap, Quality};
+use mp3lame_encoder::{Builder, DualPcm, FlushNoGap, Quality};
 use realfft::RealFftPlanner;
 use realfft::num_complex::Complex;
 
 use crate::decode::{Decoder, Filled, hint_of};
+
+/// Bitrate an MP3 is written at.
+pub use mp3lame_encoder::Bitrate;
 
 /// ALAC tone, 16-bit stereo at 8000 Hz, in an MP4 container.
 ///
@@ -28,7 +31,7 @@ pub const TONE: &[u8] = include_bytes!("fixtures/tone.m4a");
 pub const SECONDS: usize = 34;
 
 /// Audio in memory: a sample rate and one sample vector per channel.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Audio {
   /// Samples per second.
   pub rate: u32,

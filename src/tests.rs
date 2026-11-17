@@ -7,10 +7,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use mp3lame_encoder::Bitrate;
-
 use crate::engine::{self, Coverage, Error, Measured, Settings, measure, measure_bytes};
-use crate::fixtures::{self, Audio, lo_fi, music, music_for, pink, tone};
+use crate::fixtures::{self, Audio, Bitrate, lo_fi, music, music_for, pink, tone};
 use crate::flags::Flag;
 use crate::grid::{self, Codec};
 use crate::limitation::Limitation;
