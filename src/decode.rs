@@ -581,9 +581,13 @@ impl Decoder {
   }
 }
 
-/// the bits per sample `params` state; ALAC states them in its magic cookie only. the decoder
-/// made from `params` read the same cookie, so one that does not read here never gets this far
+/// the bits per sample `params` state of a codec whose samples are integers; ALAC states them
+/// in its magic cookie only. the decoder made from `params` read the same cookie, so one that
+/// does not read here never gets this far. a container can state a depth of any codec
 fn stated_bits(params: &AudioCodecParameters) -> Option<u32> {
+  if !(keeps_every_bit(params.codec) || pcm(params.codec)) {
+    return None;
+  }
   params.bits_per_sample.or_else(|| {
     let cookie = params.extra_data.as_deref()?;
     let read = (params.codec == CODEC_ID_ALAC).then(|| MagicCookie::read(cookie));
@@ -594,14 +598,20 @@ fn stated_bits(params: &AudioCodecParameters) -> Option<u32> {
 /// whether a codec keeps every bit: the lossless codecs and plain PCM, but not the companded
 /// telephone formats
 fn lossless(codec: AudioCodecId) -> bool {
-  if codec == CODEC_ID_FLAC || codec == CODEC_ID_ALAC {
-    return true;
-  }
-  codec != CODEC_ID_PCM_ALAW
-    && codec != CODEC_ID_PCM_MULAW
-    && codecs()
-      .get_audio_decoder(codec)
-      .is_some_and(|registered| registered.codec.info.short_name.starts_with("pcm_"))
+  keeps_every_bit(codec)
+    || (codec != CODEC_ID_PCM_ALAW && codec != CODEC_ID_PCM_MULAW && pcm(codec))
+}
+
+/// whether a codec is one of the lossless coders
+fn keeps_every_bit(codec: AudioCodecId) -> bool {
+  codec == CODEC_ID_FLAC || codec == CODEC_ID_ALAC
+}
+
+/// whether a codec is PCM, plain or companded
+fn pcm(codec: AudioCodecId) -> bool {
+  codecs()
+    .get_audio_decoder(codec)
+    .is_some_and(|registered| registered.codec.info.short_name.starts_with("pcm_"))
 }
 
 /// adds the bits set in the integer samples of `decoded` to `bits`. decoders put a sample's bits
@@ -737,6 +747,10 @@ mod tests {
     assert!(off < 0.05, "{off}");
     let (claimed, webm) = decoded(stream.webm());
     assert_eq!(claimed.frames, None);
+    assert_eq!(
+      claimed.bit_depth, None,
+      "the container's depth is not Opus's"
+    );
     // the container counts in milliseconds and keeps the last packet's padding
     let (length, most) = (webm[0].len(), 144_000 + 960);
     assert!((144_000..=most).contains(&length), "{length}");

@@ -804,9 +804,11 @@ impl OpusStream {
     ]
     .concat();
     let delay_ns = u64::from(self.pre_skip) * 1_000_000_000 / 48_000;
+    // the rate, the channels, and a bit depth, which muxers state of Opus too
     let audio = [
       ebml(&[0xb5], &48_000f64.to_be_bytes()),
       ebml(&[0x9f], &[self.channels]),
+      ebml(&[0x62, 0x64], &[16]),
     ]
     .concat();
     let track = [
