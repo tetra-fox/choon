@@ -25,6 +25,8 @@ use symphonia::core::units::{Time, TimeBase, Timestamp};
 use symphonia_common::apple::audio::alac::MagicCookie;
 use tracing::{debug, trace};
 
+use crate::engine;
+
 /// The most channels the analyzer reads; the rest of a surround file is left out.
 const ANALYZED_CHANNELS: usize = 2;
 
@@ -106,11 +108,16 @@ pub(crate) enum Filled {
 
 impl Decoder {
   /// Opens audio from any source of bytes, with `hint` naming what it might be. The error says
-  /// why, in words: the container is not recognized, the file holds no audio track or its track
-  /// has no codec parameters, the codec is not one the analyzer decodes, the decoder cannot
-  /// start, the sample rate or the channels are not stated, or the rate is above what the
-  /// analyzer reads.
-  pub(crate) fn from_source(source: Box<dyn MediaSource>, hint: &Hint) -> Result<Self, String> {
+  /// why, in words. Bytes are not audio when the container is not recognized or holds no audio
+  /// track. Audio is unsupported when its track has no codec parameters, the codec is not one
+  /// the analyzer decodes, the decoder cannot start, the sample rate or the channels are not
+  /// stated, or the rate is above what the analyzer reads.
+  pub(crate) fn from_source(
+    source: Box<dyn MediaSource>,
+    hint: &Hint,
+  ) -> Result<Self, engine::Error> {
+    let not_audio = |why: String| engine::Error::NotAudio(why);
+    let unsupported = |why: &str| engine::Error::Unsupported(why.to_string());
     let file_bytes = source.byte_len();
     let stream = MediaSourceStream::new(source, Default::default());
     let format = symphonia::default::get_probe()
@@ -120,15 +127,15 @@ impl Decoder {
         FormatOptions::default(),
         MetadataOptions::default(),
       )
-      .map_err(|e| format!("the container was not recognized: {e}"))?;
+      .map_err(|e| not_audio(format!("the container was not recognized: {e}")))?;
     let track = format
       .default_track(TrackType::Audio)
-      .ok_or("the file holds no audio track")?;
+      .ok_or_else(|| not_audio("the file holds no audio track".to_string()))?;
     let params = track
       .codec_params
       .as_ref()
       .and_then(|p| p.audio())
-      .ok_or("the audio track has no codec parameters")?
+      .ok_or_else(|| unsupported("the audio track has no codec parameters"))?
       .clone();
     let track_id = track.id;
     let time_base = track.time_base;
@@ -137,22 +144,22 @@ impl Decoder {
     let codec = codecs
       .get_audio_decoder(params.codec)
       .map(|registered| registered.codec.info.short_name.to_string())
-      .ok_or("the codec is not one the analyzer can decode")?;
+      .ok_or_else(|| unsupported("the codec is not one the analyzer can decode"))?;
     let decoder = codecs
       .make_audio_decoder(&params, &AudioDecoderOptions::default())
-      .map_err(|e| format!("the decoder could not start: {e}"))?;
+      .map_err(|e| unsupported(&format!("the decoder could not start: {e}")))?;
     let sample_rate = params
       .sample_rate
       .filter(|rate| *rate > 0)
-      .ok_or("the sample rate is not stated")?;
+      .ok_or_else(|| unsupported("the sample rate is not stated"))?;
     if sample_rate > MAX_RATE {
-      return Err(format!(
+      return Err(unsupported(&format!(
         "the sample rate of {sample_rate} Hz is above the {MAX_RATE} Hz the analyzer reads"
-      ));
+      )));
     }
     let all = params.channels.as_ref().map_or(0, |c| c.count());
     if all == 0 {
-      return Err("the number of channels is not stated".to_string());
+      return Err(unsupported("the number of channels is not stated"));
     }
     let channels = all.min(ANALYZED_CHANNELS);
     debug!(codec, sample_rate, channels = all, "audio opened");

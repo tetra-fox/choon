@@ -788,6 +788,28 @@ fn stating(path: &Path, seconds: usize, frames: u64) {
 }
 
 #[test]
+fn bytes_that_are_no_audio_and_audio_the_analyzer_does_not_read_are_told_apart() {
+  let none = measure_bytes(vec![0; 4096], &settings());
+  assert!(matches!(none, Err(Error::NotAudio(_))), "{none:?}");
+  // a WAV header of 16-bit mono PCM at 1 MHz, then a second of silence
+  let rate = 1_000_000u32;
+  let data = vec![0u8; 2 * rate as usize];
+  let mut bytes = b"RIFF".to_vec();
+  bytes.extend((36 + data.len() as u32).to_le_bytes());
+  bytes.extend(b"WAVEfmt \x10\0\0\0\x01\0\x01\0");
+  bytes.extend(rate.to_le_bytes());
+  bytes.extend((2 * rate).to_le_bytes());
+  bytes.extend(b"\x02\0\x10\0data");
+  bytes.extend((data.len() as u32).to_le_bytes());
+  bytes.extend(data);
+  let fast = measure_bytes(bytes, &settings());
+  assert!(
+    matches!(&fast, Err(Error::Unsupported(why)) if why.contains("1000000 Hz")),
+    "{fast:?}"
+  );
+}
+
+#[test]
 fn a_file_without_a_stated_length_is_read_only_so_far() {
   let dir = tempfile::tempdir().unwrap();
   let path = dir.path().join("a.flac");

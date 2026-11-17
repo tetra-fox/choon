@@ -158,12 +158,16 @@ pub enum Error {
   OutOfTime,
   /// The file could not be opened.
   Open(io::Error),
-  /// The bytes were not opened as audio, with why in words.
+  /// The bytes were not recognized as audio, with why in words.
   ///
-  /// The container is not recognized, holds no audio track or does not state its sample rate
-  /// or channels, the codec is not one the analyzer decodes, or the sample rate is above what
-  /// the analyzer reads.
+  /// The container is not recognized or holds no audio track.
   NotAudio(String),
+  /// The audio is not one the analyzer reads, with why in words.
+  ///
+  /// The track does not state its codec parameters, sample rate or channels, the codec is not
+  /// one the analyzer decodes, its decoder cannot start, or the sample rate is above what the
+  /// analyzer reads.
+  Unsupported(String),
 }
 
 impl fmt::Display for Error {
@@ -172,7 +176,7 @@ impl fmt::Display for Error {
       Self::Canceled => f.write_str("the analysis was canceled"),
       Self::OutOfTime => f.write_str("the analysis ran out of time while opening the file"),
       Self::Open(_) => f.write_str("the file could not be opened"),
-      Self::NotAudio(why) => f.write_str(why),
+      Self::NotAudio(why) | Self::Unsupported(why) => f.write_str(why),
     }
   }
 }
@@ -181,7 +185,7 @@ impl std::error::Error for Error {
   fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
     match self {
       Self::Open(e) => Some(e),
-      Self::Canceled | Self::OutOfTime | Self::NotAudio(_) => None,
+      Self::Canceled | Self::OutOfTime | Self::NotAudio(_) | Self::Unsupported(_) => None,
     }
   }
 }
@@ -247,7 +251,8 @@ impl MediaSource for Watched {
 /// # Errors
 ///
 /// Returns [`Error::Open`] if the file cannot be opened or is a directory,
-/// [`Error::NotAudio`] if its bytes are not opened as audio, [`Error::Canceled`] if
+/// [`Error::NotAudio`] if its bytes are not recognized as audio, [`Error::Unsupported`] if the
+/// audio is not one the analyzer reads, [`Error::Canceled`] if
 /// [`Settings::canceled`] says so before the analysis ends, and [`Error::OutOfTime`] if
 /// [`Settings::deadline`] passes before the audio is opened.
 ///
@@ -293,7 +298,7 @@ pub fn measure(path: impl AsRef<Path>, settings: &Settings) -> Result<Measured, 
   let source = Watched::new(Box::new(file), settings);
   let opened = Decoder::from_source(Box::new(source), &decode::hint_of(path));
   if let Err(problem) = &opened {
-    debug!(path = %path.display(), problem, "audio not opened");
+    debug!(path = %path.display(), %problem, "audio not opened");
   }
   measure_opened(opened, settings)
 }
@@ -302,7 +307,8 @@ pub fn measure(path: impl AsRef<Path>, settings: &Settings) -> Result<Measured, 
 ///
 /// # Errors
 ///
-/// Returns [`Error::NotAudio`] if the bytes are not opened as audio, [`Error::Canceled`] if
+/// Returns [`Error::NotAudio`] if the bytes are not recognized as audio,
+/// [`Error::Unsupported`] if the audio is not one the analyzer reads, [`Error::Canceled`] if
 /// [`Settings::canceled`] says so before the analysis ends, and [`Error::OutOfTime`] if
 /// [`Settings::deadline`] passes before the audio is opened.
 pub fn measure_bytes(bytes: Vec<u8>, settings: &Settings) -> Result<Measured, Error> {
@@ -315,12 +321,12 @@ pub fn measure_bytes(bytes: Vec<u8>, settings: &Settings) -> Result<Measured, Er
 
 /// Measures the audio of `opened`, or says why it did not open: the analysis's own stop when
 /// that cut opening short.
-fn measure_opened(opened: Result<Decoder, String>, settings: &Settings) -> Result<Measured, Error> {
+fn measure_opened(opened: Result<Decoder, Error>, settings: &Settings) -> Result<Measured, Error> {
   match opened {
     Ok(decoder) => measure_decoded(decoder, settings),
     Err(_) if is_canceled(settings.canceled.as_ref()) => Err(Error::Canceled),
     Err(_) if is_past(settings.deadline) => Err(Error::OutOfTime),
-    Err(problem) => Err(Error::NotAudio(problem)),
+    Err(problem) => Err(problem),
   }
 }
 

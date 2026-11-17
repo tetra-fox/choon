@@ -205,7 +205,7 @@ fn run(check: &Check) -> Result<u8, Failed> {
         code = FAILED;
         continue;
       }
-      Err(Error::NotAudio(why)) => {
+      Err(Error::NotAudio(why) | Error::Unsupported(why)) => {
         code = FAILED;
         if check.json {
           serde_json::to_string(&NotAudio {
