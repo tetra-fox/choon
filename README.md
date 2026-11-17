@@ -14,6 +14,9 @@ command-line tool and a Rust library.
 
 - Spots lossless files decoded from MP3 or AAC by the frame grid the encoder leaves, tuned on
   LAME at 96 to 320 kbps and V0 to V9 and on ffmpeg's AAC at 96 to 256 kbps
+- Spots lossless files decoded from Opus by the band energies its encoder quantizes, at 48 kHz
+  and after a conversion to 44.1 kHz, tuned on libopus at 16 to 256 kbps
+- Reads Opus files, with the coding mode and audio bandwidth their packets state
 - Reads the encoder's cutoff in the spectrum, which alone raises a doubt
 - Guesses the encoder setting behind a transcode, such as `mp3 ~128 kbps`
 - Flags upsampled audio, bit-padded samples and two channels holding the same audio
@@ -45,10 +48,18 @@ offset that counts far fewer than the rest; an MP3 grid also needs at least thre
 agreeing on it. It does not depend on where the encoder cut, so MP3 at 320 kbps or V0 and AAC at
 256 kbps show one too.
 
+Opus zeroes few values. Its CELT layer codes the energy of each of 21 bands in each 20 ms frame
+as a step from a prediction, a whole number of 6 dB refined by a few bits. With Opus's transform
+run again on the grid, each band's energy comes back and its step sits on that lattice. The scan
+counts the frames whose bands do, at every offset of the grid in the four stretches, and in up
+to 60 of the windows on the one grid a decode has when nothing was cut from its start. Samples
+at 44.1 kHz are brought back to the 48 kHz Opus runs at first. It does not depend on the
+bitrate.
+
 | Verdict          | Description                                                                 |
 | ---------------- | --------------------------------------------------------------------------- |
 | consistent       | nearly every window reaches the top of the claimed band                     |
-| likely transcode | the samples carry an MP3 or AAC frame grid                                  |
+| likely transcode | the samples carry an MP3, AAC or Opus frame grid                            |
 | mixed sources    | part of the time or of the band is band-limited, the rest full band         |
 | possibly lossy   | the cutoff reads as a transcode or mixed sources, and no frame grid shows   |
 | inconclusive     | too little audio, no pattern, or a cut indistinguishable from an honest one |
@@ -67,11 +78,17 @@ A reading also holds:
 
 ## Supported formats
 
-| Codecs                                       | Containers                                   |
-| -------------------------------------------- | -------------------------------------------- |
-| FLAC, ALAC, WAV, AIFF, CAF, MP3, AAC, Vorbis | their own files, MP4/M4A, Ogg, Matroska/WebM |
+| Codecs                                             | Containers                                   |
+| -------------------------------------------------- | -------------------------------------------- |
+| FLAC, ALAC, WAV, AIFF, CAF, MP3, AAC, Vorbis, Opus | their own files, MP4/M4A, Ogg, Matroska/WebM |
 
-Decoding is done by [symphonia](https://github.com/pdeljanov/Symphonia). Opus is not decoded.
+Decoding is done by [symphonia](https://github.com/pdeljanov/Symphonia), and Opus by
+[symphonia-opus](https://github.com/jiztastamablastamarang/symphonia-opus).
+
+- Opus is read in Ogg (`.opus`, `.ogg`) and in Matroska/WebM (`.mka`, `.webm`)
+- An Opus file starts after its pre-skip and has its header's output gain applied
+- Matroska does not say where the last Opus packet's audio ends, so up to 20 ms of padding is
+  read with it
 
 ## Installation
 
@@ -140,8 +157,8 @@ music/honest.flac: consistent, confidence 0.73
 
 - A walk skips hidden files and directories; `choon check --help` lists the extensions it reads
 - `--jobs` defaults to the number of cores; a file's grid scan runs on the same threads
-- A JSON line holds the claimed format, the length, the windows read, the grid scan and every
-  reading
+- A JSON line holds the claimed format, the length, the windows read, the grid scan, an Opus
+  file's modes and bandwidths, and every reading
 - A profile is `{"measure": {...}, "reading": {...}}`; keys left out keep their default and
   unknown keys are refused
 - Repeating `--profile` reads each file with several profiles; those with the same `measure`
@@ -201,14 +218,19 @@ fn main() -> Result<(), choon::Error> {
 | `testing`       | `fixtures`, the generated audio the tests read                                               |
 
 - `cli` turns `serde` on
-- `testing` builds LAME, which needs a C compiler and `make`
+- `testing` builds LAME and libopus, which need a C compiler, `make` and CMake
 
 ## Limitations
 
 - A lossless master filtered sharply where an encoder cuts (16 or 19 kHz) reads as possibly lossy
-- Resampling after the decode removes the frame grid, so such a transcode reads as possibly lossy
-  at most
-- Opus leaves no grid the scan knows; a Vorbis decode's grid mostly reads as AAC's
+- Resampling after the decode removes an MP3 or AAC frame grid, so such a transcode reads as
+  possibly lossy at most
+- A Vorbis decode's grid mostly reads as AAC's
+- Opus is found in 20 ms frames (and the 40 and 60 ms packets made of them) coded as long
+  blocks with the pitch post-filter off; a decode made mostly of other frames, one of 2.5, 5 or
+  10 ms frames, and one in SILK or hybrid voice mode read as possibly lossy at most
+- A gain change after an Opus decode moves the energies off the lattice
+- Opus is looked for at 44.1 and 48 kHz only
 - Clipping hides the grid frame by frame, so a decode made louder until it clips can lose it
 - The grid thresholds were tuned on LAME's MP3 and ffmpeg's AAC only; other AAC encoders use
   their own windows
@@ -238,8 +260,13 @@ fn main() -> Result<(), choon::Error> {
   and Multimedia Security_, 2013.
   [Open access](https://iris.polito.it/bitstream/11583/2508475/2/bianchi_IHMMSEC13_OA.pdf).
 
+- J.-M. Valin, G. Maxwell, T. B. Terriberry, K. Vos, "High-quality, low-delay music coding in
+  the Opus codec", AES 135th Convention, paper 8942, 2013.
+  [arXiv:1602.04845](https://arxiv.org/abs/1602.04845).
+
 The frame-grid scan's filterbanks follow the codec standards: ISO/IEC 11172-3 (MPEG-1 Audio
-Layer III) and ISO/IEC 13818-7 (MPEG-2 AAC).
+Layer III), ISO/IEC 13818-7 (MPEG-2 AAC) and RFC 6716 (Opus). Opus files are read as RFC 7845
+(Ogg Encapsulation for the Opus Audio Codec) says.
 
 ## License
 
