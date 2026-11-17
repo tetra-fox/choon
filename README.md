@@ -34,7 +34,8 @@ the noise floor, stereo correlation, DC offset and clipping.
 
 It decodes FLAC, ALAC, WAV, AIFF, CAF, MP3, AAC and Vorbis, in their own files and in MP4/M4A,
 Ogg and Matroska/WebM, through [symphonia](https://github.com/pdeljanov/Symphonia). Opus is not
-decoded; such a file reads as inconclusive.
+decoded: the library reads such a file as inconclusive, and the program reports it as not read
+as audio.
 
 ## What it cannot tell
 
@@ -65,7 +66,7 @@ cargo install earwitness
 $ earwitness check *.flac
 honest.flac: consistent, confidence 0.73
 fake-128.flac: likely transcode, cutoff 16.8 kHz, mp3 ~128 kbps, confidence 0.98
-fake-320.flac: inconclusive, cutoff 20.2 kHz, mp3 ~320 kbps or aac
+fake-320.flac: inconclusive, cutoff 20.2 kHz
 mixed.flac: mixed sources, cutoff 16.8 kHz, mp3 ~128 kbps, confidence 0.75
 ```
 
@@ -74,7 +75,8 @@ its length, how many windows were read, and the full reading under each profile.
 
 The exit status is 0 when every file is consistent or inconclusive, 1 when at least one reads as
 a likely transcode or mixed sources, and 2 when a file could not be read or an argument was
-wrong, so a script can act on it:
+wrong, so a script can act on it. A file the analyzer cannot open as audio prints `not read as
+audio` with the reason, and counts as one that could not be read:
 
 ```sh
 for f in *.flac; do earwitness check "$f" > /dev/null || mv "$f" suspect/; done

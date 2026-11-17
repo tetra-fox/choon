@@ -1,7 +1,8 @@
 //! What scripts act on: the program's exit status, its lines and its JSON.
 
+use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 use earwitness::fixtures::{self, music, pink};
 use mp3lame_encoder::Bitrate;
@@ -14,6 +15,14 @@ fn honest_and_fake(dir: &Path) -> (String, String) {
   let through = fixtures::through_mp3(&music(1, 44_100, pink), Bitrate::Kbps128, dir);
   fixtures::write_flac(&through, 16, false, &fake);
   (path(&honest), path(&fake))
+}
+
+/// The path of a FLAC made from a 320 kbps MP3, written in `dir`.
+fn fake_320(dir: &Path) -> String {
+  let fake = dir.join("fake-320.flac");
+  let through = fixtures::through_mp3(&music(1, 44_100, pink), Bitrate::Kbps320, dir);
+  fixtures::write_flac(&through, 16, false, &fake);
+  path(&fake)
 }
 
 /// `path` as an argument; a temporary directory's path is UTF-8.
@@ -136,4 +145,101 @@ fn a_wrong_argument_is_refused_before_any_file_is_read() {
   assert_eq!(status(&output), 0, "{output:?}");
   let defaults: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
   assert_eq!(defaults["reading"]["sharpShelfDb"], 30.0);
+}
+
+#[test]
+fn a_file_not_read_as_audio_fails_the_run_and_says_so() {
+  let dir = tempfile::tempdir().unwrap();
+  let (honest, fake) = honest_and_fake(dir.path());
+  let text = path(&dir.path().join("text.flac"));
+  std::fs::write(&text, "not audio\n").unwrap();
+  let empty = path(&dir.path().join("empty.flac"));
+  std::fs::write(&empty, "").unwrap();
+
+  for bad in [&text, &empty] {
+    let output = earwitness(&[bad]);
+    assert_eq!(status(&output), 2, "{output:?}");
+    let line = String::from_utf8(output.stdout).unwrap();
+    assert!(
+      line.starts_with(&format!(
+        "{bad}: not read as audio: the container was not recognized"
+      )),
+      "{line}"
+    );
+  }
+
+  // the other files are still read, and a lossy one does not hide the failure
+  for files in [[&honest, &text], [&text, &fake]] {
+    let output = earwitness(&files.map(String::as_str));
+    assert_eq!(status(&output), 2, "{output:?}");
+    assert_eq!(String::from_utf8(output.stdout).unwrap().lines().count(), 2);
+  }
+
+  let output = earwitness(&["--json", &text]);
+  assert_eq!(status(&output), 2, "{output:?}");
+  let line: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+  assert_eq!(line["claimed"], serde_json::Value::Null);
+  assert_eq!(line["readings"][0]["verdict"], "inconclusive");
+}
+
+#[test]
+fn a_closed_pipe_ends_the_run_with_the_status_of_the_files_read() {
+  let dir = tempfile::tempdir().unwrap();
+  let (honest, fake) = honest_and_fake(dir.path());
+  let missing = path(&dir.path().join("missing.flac"));
+  let mut child = Command::new(env!("CARGO_BIN_EXE_earwitness"))
+    .args(["check", &fake, &honest, &missing])
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()
+    .unwrap();
+  // read the first line and close the pipe, as `head -1` does, while the second file is read
+  let mut first = String::new();
+  BufReader::new(child.stdout.take().unwrap())
+    .read_line(&mut first)
+    .unwrap();
+  assert!(first.contains("likely transcode"), "{first}");
+  let output = child.wait_with_output().unwrap();
+  assert_eq!(status(&output), 1, "{output:?}");
+  assert!(output.stderr.is_empty(), "the run went on: {output:?}");
+}
+
+#[test]
+fn several_profiles_share_a_line_and_only_a_lossy_verdict_names_an_encoder() {
+  let dir = tempfile::tempdir().unwrap();
+  let (_, fake) = honest_and_fake(dir.path());
+  let fake_320 = fake_320(dir.path());
+  let shipped = path(&dir.path().join("shipped.json"));
+  std::fs::write(&shipped, "{}").unwrap();
+  let strict = path(&dir.path().join("strict.json"));
+  std::fs::write(&strict, r#"{"reading": {"minSeconds": 1000.0}}"#).unwrap();
+
+  let output = earwitness(&[
+    "--profile",
+    &shipped,
+    "--profile",
+    &strict,
+    &fake,
+    &fake_320,
+  ]);
+  assert_eq!(status(&output), 1, "{output:?}");
+  let lines = String::from_utf8(output.stdout).unwrap();
+  let lines: Vec<&str> = lines.lines().collect();
+  let (shipped_says, strict_says) = lines[0]
+    .strip_prefix(&format!("{fake}: [shipped] "))
+    .and_then(|rest| rest.split_once("; [strict] "))
+    .unwrap_or_else(|| panic!("{lines:?}"));
+  assert!(
+    shipped_says.starts_with("likely transcode, cutoff 16.")
+      && shipped_says.contains("mp3 ~128 kbps"),
+    "{shipped_says}"
+  );
+  assert!(strict_says.starts_with("inconclusive"), "{strict_says}");
+  // a 320 kbps cut reads as something the analyzer cannot tell, with no encoder named
+  assert!(
+    lines[1].starts_with(&format!("{fake_320}: [shipped] inconclusive")),
+    "{}",
+    lines[1]
+  );
+  assert!(!lines[1].contains("kbps"), "{}", lines[1]);
 }

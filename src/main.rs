@@ -36,7 +36,7 @@ enum Command {
   #[command(after_help = "\
 Exit status: 0 when every file is consistent with its format or inconclusive, 1 when at least \
 one reads as a likely transcode or mixed sources, 2 when a file could not be read or an argument \
-was wrong. A file that opens but is not audio the analyzer can decode reads as inconclusive.")]
+was wrong. A file the analyzer cannot open as audio is one that could not be read.")]
   Check(Check),
 }
 
@@ -127,8 +127,6 @@ fn main() -> ExitCode {
   let Command::Check(check) = Cli::parse().command;
   match run(&check) {
     Ok(code) => ExitCode::from(code),
-    // a reader that stopped reading, as `head` does, has what it wanted
-    Err(Failed::Output(e)) if e.kind() == io::ErrorKind::BrokenPipe => ExitCode::from(CLEAN),
     Err(e) => {
       eprintln!("earwitness: {e}");
       ExitCode::from(FAILED)
@@ -158,7 +156,7 @@ fn run(check: &Check) -> Result<u8, Failed> {
     // the defaults are numbers, strings and lists of them, which always serialize
     let defaults =
       serde_json::to_string_pretty(&Thresholds::default()).expect("thresholds serialize");
-    writeln!(out, "{defaults}").map_err(Failed::Output)?;
+    print(&mut out, &defaults)?;
     return Ok(CLEAN);
   }
   let profiles = if check.profile.is_empty() {
@@ -189,13 +187,10 @@ fn run(check: &Check) -> Result<u8, Failed> {
       continue;
     }
     let analyzed = analyzed(file, &profiles, &reach);
-    let lossy = analyzed.1.iter().any(|read| {
-      matches!(
-        read.reading.verdict,
-        Verdict::LikelyTranscode | Verdict::MixedSources
-      )
-    });
-    if lossy && code == CLEAN {
+    let audio = analyzed.0.claimed.is_some();
+    if !audio {
+      code = FAILED;
+    } else if code == CLEAN && analyzed.1.iter().any(|read| lossy(read.reading.verdict)) {
       code = LOSSY;
     }
     let line = if check.json {
@@ -211,12 +206,35 @@ fn run(check: &Check) -> Result<u8, Failed> {
         readings,
       })
       .expect("a reading serializes")
-    } else {
+    } else if audio {
       format!("{}: {}", file.display(), said(&analyzed.1))
+    } else {
+      format!("{}: {}", file.display(), not_audio(&analyzed.1))
     };
-    writeln!(out, "{line}").map_err(Failed::Output)?;
+    if !print(&mut out, &line)? {
+      // the files read so far decide the status
+      return Ok(code);
+    }
   }
   Ok(code)
+}
+
+/// Writes `line` to `out`; false when the reader has closed the pipe, as `head` does once it has
+/// what it wanted.
+fn print(out: &mut impl Write, line: &str) -> Result<bool, Failed> {
+  match writeln!(out, "{line}") {
+    Ok(()) => Ok(true),
+    Err(e) if e.kind() == io::ErrorKind::BrokenPipe => Ok(false),
+    Err(e) => Err(Failed::Output(e)),
+  }
+}
+
+/// Whether `verdict` says a lossless file holds lossy audio.
+fn lossy(verdict: Verdict) -> bool {
+  match verdict {
+    Verdict::LikelyTranscode | Verdict::MixedSources => true,
+    Verdict::Consistent | Verdict::Inconclusive => false,
+  }
 }
 
 /// The minutes `text` names, refusing a negative or endless length.
@@ -297,6 +315,25 @@ fn analyzed(
   (first, readings)
 }
 
+/// Why a file that did not open as audio was not read: the first limitation of a reading, as
+/// every profile's reading of it lists the same ones.
+fn not_audio(readings: &[Read]) -> String {
+  let why = readings
+    .first()
+    .and_then(|read| read.reading.limitations.first())
+    .map_or_else(String::new, |why| {
+      // the reading capitalizes the decoder's clause as a list item; here it follows a colon
+      let mut chars = why.chars();
+      chars.next().map_or_else(String::new, |first| {
+        format!(
+          ": {}",
+          first.to_lowercase().chain(chars).collect::<String>()
+        )
+      })
+    });
+  format!("not read as audio{why}")
+}
+
 /// The readings in a few words each, named after their profile when there are several.
 fn said(readings: &[Read]) -> String {
   match readings {
@@ -324,7 +361,12 @@ fn words(reading: &Reading) -> String {
   if let Some(hz) = reading.cutoff_hz {
     parts.push(format!("cutoff {:.1} kHz", hz / 1000.0));
   }
-  if let Some(guess) = &reading.encoder_guess {
+  // beside a verdict that finds no lossy audio, a named encoder would read as a finding
+  if let Some(guess) = reading
+    .encoder_guess
+    .as_ref()
+    .filter(|_| lossy(reading.verdict))
+  {
     parts.push(guess.profile.clone());
   }
   parts.extend(reading.flags.iter().map(|flag| {
