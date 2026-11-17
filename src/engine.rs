@@ -124,7 +124,7 @@ fn thousandths(done: f64) -> u32 {
 
 /// windows that take about as long to measure as one job of the grid scan takes, which weighs
 /// the two in the progress an analysis reports
-const SCAN_JOB_WINDOWS: f64 = 200.0;
+const SCAN_JOB_WINDOWS: f64 = 110.0;
 
 /// an analysis under way: its settings, and how its progress splits between the windows and the
 /// grid scan
