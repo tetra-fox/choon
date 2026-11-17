@@ -149,19 +149,19 @@ pub struct Measured {
 /// Error of an analysis that measured nothing.
 #[derive(Debug)]
 pub enum Error {
-  /// The analysis was canceled.
+  /// Analysis that was canceled.
   ///
   /// Nothing is reported of it.
   Canceled,
-  /// The deadline passed before the audio was opened.
+  /// Deadline that passed before the audio was opened.
   OutOfTime,
-  /// The file could not be opened.
+  /// File that could not be opened.
   Open(io::Error),
-  /// The bytes were not recognized as audio, with why in words.
+  /// Bytes not recognized as audio, with why in words.
   ///
   /// The container is not recognized or holds no audio track.
   NotAudio(String),
-  /// The audio is not one the analyzer reads, with why in words.
+  /// Audio the analyzer does not read, with why in words.
   ///
   /// The track does not state its codec parameters, sample rate or channels, the codec is not
   /// one the analyzer decodes, its decoder cannot start, or the sample rate is above what the
@@ -249,16 +249,15 @@ impl MediaSource for Watched {
 ///
 /// # Errors
 ///
-/// Returns [`Error::Open`] if the file cannot be opened or is a directory,
-/// [`Error::NotAudio`] if its bytes are not recognized as audio, [`Error::Unsupported`] if the
-/// audio is not one the analyzer reads, [`Error::Canceled`] if
-/// [`Settings::canceled`] says so before the analysis ends, and [`Error::OutOfTime`] if
-/// [`Settings::deadline`] passes before the audio is opened.
+/// - [`Error::Open`] if the file cannot be opened or is a directory.
+/// - [`Error::NotAudio`] if its bytes are not recognized as audio.
+/// - [`Error::Unsupported`] if the audio is not one the analyzer reads.
+/// - [`Error::Canceled`] if [`Settings::canceled`] says so before the analysis ends.
+/// - [`Error::OutOfTime`] if [`Settings::deadline`] passes before the audio is opened.
 ///
 /// # Examples
 ///
-/// Measuring is the slow step, so a file measured once can be read under several thresholds.
-/// A long file is sampled here, and the analysis given a deadline:
+/// A file measured once under a deadline, sampled when long, and read under several thresholds:
 ///
 /// ```no_run
 /// use std::num::NonZeroUsize;
@@ -306,10 +305,10 @@ pub fn measure(path: impl AsRef<Path>, settings: &Settings) -> Result<Measured, 
 ///
 /// # Errors
 ///
-/// Returns [`Error::NotAudio`] if the bytes are not recognized as audio,
-/// [`Error::Unsupported`] if the audio is not one the analyzer reads, [`Error::Canceled`] if
-/// [`Settings::canceled`] says so before the analysis ends, and [`Error::OutOfTime`] if
-/// [`Settings::deadline`] passes before the audio is opened.
+/// - [`Error::NotAudio`] if the bytes are not recognized as audio.
+/// - [`Error::Unsupported`] if the audio is not one the analyzer reads.
+/// - [`Error::Canceled`] if [`Settings::canceled`] says so before the analysis ends.
+/// - [`Error::OutOfTime`] if [`Settings::deadline`] passes before the audio is opened.
 pub fn measure_bytes(bytes: Vec<u8>, settings: &Settings) -> Result<Measured, Error> {
   let source = Watched::new(Box::new(io::Cursor::new(bytes)), settings);
   measure_opened(

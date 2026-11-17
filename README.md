@@ -15,7 +15,7 @@ command-line tool and a Rust library.
 - Spots lossless files decoded from MP3 or AAC by the frame grid the encoder leaves, tuned on
   LAME at 96 to 320 kbps and V0 to V9 and on ffmpeg's AAC at 96 to 256 kbps
 - Reads the encoder's cutoff in the spectrum, which alone raises a doubt
-- Guesses the encoder setting behind a transcode (`mp3 ~128 kbps`, ...)
+- Guesses the encoder setting behind a transcode, such as `mp3 ~128 kbps`
 - Flags upsampled audio, bit-padded samples and two channels holding the same audio
 - Finds lossy parts mixed into lossless audio (an intro, a stem)
 - Exit codes and JSON output for scripts
@@ -23,32 +23,46 @@ command-line tool and a Rust library.
 
 ## Methodology
 
-Each one-second window of the file is measured: its loudness, where its content stops (the
-cutoff), how sharply it stops, gaps below the cutoff and steps inside a full band. A lossy encoder
-cuts the top of the band with a steep low-pass at a frequency set by its bitrate, and decoding to
-FLAC or WAV does not bring it back. The cutoff reading comes from how the cutoffs spread across
-all windows.
+Each one-second window of the file is measured:
+
+- its loudness
+- where its content stops (the cutoff) and how sharply
+- gaps below the cutoff
+- steps inside a full band
+
+A lossy encoder cuts the top of the band with a steep low-pass at a frequency set by its bitrate,
+and decoding to FLAC or WAV does not bring it back. The cutoff reading comes from how the cutoffs
+spread across all windows.
 
 In a file that claims a lossless format, four stretches of the samples are also scanned for the
 frame grid of an MP3 or AAC encoder. The encoder transforms its input in frames on a fixed grid
-and zeroes many transform values; running its transform again on the decoded samples, with
-frames where the encoder put them, finds those values back at the level of the samples' rounding
-noise. The scan counts the values above that noise at every offset of each codec's grid. A grid
-is one offset that counts far fewer than the rest; an MP3 grid also needs at least three
-stretches agreeing on it. It does not depend on where the encoder cut, so MP3 at 320 kbps or V0
-and AAC at 256 kbps show one too.
+and zeroes many transform values. Running its transform again on the decoded samples, with frames
+where the encoder put them, finds those values back at the level of the samples' rounding noise.
 
-| Verdict          | Description                                                                                                                                                   |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| consistent       | nearly every window reaches the top of the claimed band, or a lossy file stops where its own bitrate cuts                                                     |
-| likely transcode | the samples carry an MP3 or AAC frame grid; without a grid scan, as in a lossy file, nearly every window stops at one known encoder cutoff with a sharp shelf |
-| mixed sources    | without a grid scan: part of the time or part of the band is band-limited, the rest full band                                                                 |
-| possibly lossy   | the cutoff reads as a transcode or mixed sources, but no frame grid shows                                                                                     |
-| inconclusive     | too little audio, no pattern, or a cut indistinguishable from an honest one                                                                                   |
+The scan counts the values above that noise at every offset of each codec's grid. A grid is one
+offset that counts far fewer than the rest; an MP3 grid also needs at least three stretches
+agreeing on it. It does not depend on where the encoder cut, so MP3 at 320 kbps or V0 and AAC at
+256 kbps show one too.
 
-Beside the verdict: the `upsampled`, `bit_padded` and `dual_mono` flags, a summary in words,
-what made the reading less reliable, and measures such as effective bit depth, noise floor,
-stereo correlation, DC offset and clipping.
+| Verdict          | Description                                                                 |
+| ---------------- | --------------------------------------------------------------------------- |
+| consistent       | nearly every window reaches the top of the claimed band                     |
+| likely transcode | the samples carry an MP3 or AAC frame grid                                  |
+| mixed sources    | part of the time or of the band is band-limited, the rest full band         |
+| possibly lossy   | the cutoff reads as a transcode or mixed sources, and no frame grid shows   |
+| inconclusive     | too little audio, no pattern, or a cut indistinguishable from an honest one |
+
+- A lossy file is also consistent when it stops where its own bitrate cuts
+- Without a grid scan, as in a lossy file, a likely transcode is nearly every window stopping at
+  one known encoder cutoff with a sharp shelf
+- Mixed sources is read only without a grid scan
+
+A reading also holds:
+
+- the `upsampled`, `bit_padded` and `dual_mono` flags
+- a summary in words
+- what made it less reliable
+- measures such as effective bit depth, noise floor, stereo correlation, DC offset and clipping
 
 ## Supported formats
 
@@ -76,21 +90,25 @@ fake-320.flac: likely transcode: MP3 grid at offset 48 (z 131), cut at 20.2 kHz,
 cut-19.flac: possibly lossy, cannot confirm: no codec grid; the spectrum reads as an encoder's cutoff (cut at 19.3 kHz, like mp3 ~224 kbps)
 ```
 
-| Option                                     | Description                                                                                       |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------- |
-| `--json`                                   | one JSON object per file and line: claimed format, length, windows read, grid scan, every reading |
-| `--profile FILE`                           | read with the thresholds in FILE instead of the defaults; repeat for several profiles             |
-| `--defaults`                               | print the default thresholds as JSON                                                              |
-| `--max-full-minutes M --sampled-windows N` | read files longer than M minutes at N one-second windows instead of in full                       |
+| Option                                     | Description                                               |
+| ------------------------------------------ | --------------------------------------------------------- |
+| `--json`                                   | print each file as one line of JSON                       |
+| `--profile FILE`                           | read with the thresholds in FILE in place of the defaults |
+| `--defaults`                               | print the default thresholds as JSON                      |
+| `--max-full-minutes M --sampled-windows N` | read files longer than M minutes at N one-second windows  |
 
-A profile is `{"measure": {...}, "reading": {...}}`. Keys left out keep their default, unknown
-keys are refused, and profiles with the same `measure` thresholds share one decode.
+- A JSON line holds the claimed format, the length, the windows read, the grid scan and every
+  reading
+- A profile is `{"measure": {...}, "reading": {...}}`; keys left out keep their default and
+  unknown keys are refused
+- Repeating `--profile` reads each file with several profiles; those with the same `measure`
+  thresholds share one decode
 
 | Exit code | Description                                           |
 | --------- | ----------------------------------------------------- |
 | 0         | every file consistent, possibly lossy or inconclusive |
 | 1         | at least one likely transcode or mixed sources        |
-| 2         | a file not read as audio, or a wrong argument         |
+| 2         | a file that could not be read, or a wrong argument    |
 
 ```sh
 for f in *.flac; do choon check "$f" > /dev/null || mv "$f" suspect/; done
@@ -119,19 +137,28 @@ fn main() -> Result<(), choon::Error> {
 }
 ```
 
-- `choon::measure` blocks its thread; `Settings` holds a `progress`, a `canceled` check and a
-  `deadline` that report, stop and bound it, and a `coverage` that samples long files
+- `choon::measure` blocks its thread
 - The grid scan runs on rayon's thread pool, the global one unless `choon::measure` is called
   inside another
 - Measuring is slow and reading is quick: measure once, read under many thresholds
 - `picture` holds each window's spectrogram and waveform data
-- Logs through `tracing`, installs no subscriber
+- Logs through `tracing`
 
-| Feature         | Description                                                                                   |
-| --------------- | --------------------------------------------------------------------------------------------- |
-| `cli` (default) | the `choon` program and its dependencies (clap, serde_json); turns `serde` on                 |
-| `serde`         | `Serialize` and `Deserialize` on the thresholds and the measures, `Serialize` on the reading  |
-| `testing`       | `fixtures`, the generated audio the tests read; builds LAME, so needs a C compiler and `make` |
+| Setting    | Description                                    |
+| ---------- | ---------------------------------------------- |
+| `coverage` | reads a long file at windows spread over it    |
+| `deadline` | stops the analysis with what it has            |
+| `canceled` | stops the analysis, which then reports nothing |
+| `progress` | reports how far the analysis is                |
+
+| Feature         | Description                                                                                  |
+| --------------- | -------------------------------------------------------------------------------------------- |
+| `cli` (default) | the `choon` program and its dependencies (clap, serde_json)                                  |
+| `serde`         | `Serialize` and `Deserialize` on the thresholds and the measures, `Serialize` on the reading |
+| `testing`       | `fixtures`, the generated audio the tests read                                               |
+
+- `cli` turns `serde` on
+- `testing` builds LAME, which needs a C compiler and `make`
 
 ## Limitations
 
@@ -152,8 +179,6 @@ fn main() -> Result<(), choon::Error> {
 
 ## References
 
-The frame-grid scan builds on this work on the compression history of decoded audio:
-
 - O. Derrien, "Detection of genuine lossless audio files. Application to the MPEG-AAC codec",
   _Journal of the Audio Engineering Society_ 67(3), pp. 116-123, 2019.
   [doi:10.17743/jaes.2019.0002](https://doi.org/10.17743/jaes.2019.0002),
@@ -170,8 +195,8 @@ The frame-grid scan builds on this work on the compression history of decoded au
   and Multimedia Security_, 2013.
   [Open access](https://iris.polito.it/bitstream/11583/2508475/2/bianchi_IHMMSEC13_OA.pdf).
 
-The filterbanks follow the codec standards: ISO/IEC 11172-3 (MPEG-1 Audio Layer III) and
-ISO/IEC 13818-7 (MPEG-2 AAC).
+The frame-grid scan's filterbanks follow the codec standards: ISO/IEC 11172-3 (MPEG-1 Audio
+Layer III) and ISO/IEC 13818-7 (MPEG-2 AAC).
 
 ## License
 

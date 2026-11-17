@@ -1,7 +1,7 @@
 //! Spectrogram and waveform data of each window.
 //!
-//! A window adds its spectrum over the whole second, the same spectrum in short columns across
-//! the second, and the lowest and highest sample in short buckets to what a viewer draws.
+//! Each window keeps its spectrum over the whole second, the same spectrum in short columns
+//! across the second, and the lowest and highest sample of short buckets, for a viewer to draw.
 //! Levels are bytes over linear frequency bins from 0 Hz to half the sample rate, so a viewer
 //! can lay them out on any frequency axis.
 

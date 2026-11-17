@@ -35,21 +35,21 @@ const HI_RES_TOP_HZ: f64 = 24_000.0;
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum Verdict {
-  /// Nearly every window reaches the top of the claimed band.
+  /// Audio that reaches the top of the claimed band in nearly every window.
   ///
   /// It does so without an encoder's shelf.
   Consistent,
-  /// A codec's frame grid shows in the samples.
+  /// Samples that show a codec's frame grid.
   ///
   /// Where no grid scan ran, as in a file that claims a lossy codec, nearly every window stops
   /// at the same known encoder cutoff with a sharp shelf.
   LikelyTranscode,
-  /// Part of the time or of the band is band-limited while the rest is full band.
+  /// Audio band-limited for part of the time or of the band, and full band for the rest.
   ///
   /// It is what one low-bitrate stem mixed into a lossless track looks like. A file whose grid
   /// was scanned reads as possibly lossy instead.
   MixedSources,
-  /// The cutoff reads as lossy, but no codec's frame grid shows.
+  /// Cutoff that reads as lossy where no codec's frame grid shows.
   ///
   /// The cutoff alone reads as a transcode or as mixed sources. A recording filtered where an
   /// encoder cuts and a decode resampled afterwards both look like this.
@@ -217,12 +217,8 @@ fn lower_profile_at(thresholds: &ReadingThresholds, hz: f64) -> Option<&EncoderP
 impl Measured {
   /// Reads the measures with `thresholds`.
   ///
-  /// A reading says whether the audio is consistent with the format it claims, a likely
-  /// transcode, a mix of sources, possibly lossy, or something the analyzer cannot tell, with
-  /// how sure it is, the findings independent of that, one summary, and what made it less
-  /// reliable. The cutoff is read from the spread over windows, not an average, so a
-  /// band-limited minority of the time or of the band reads as mixed sources rather than as a
-  /// transcode.
+  /// The cutoff is read from its spread over the windows, so a band-limited minority of the
+  /// time or of the band reads as mixed sources.
   ///
   /// In a file that claims a lossless format, the cutoff is weighed with the scan for a
   /// codec's frame grid ([`grid`]). Only a grid calls the file a likely transcode; a cutoff

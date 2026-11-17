@@ -46,10 +46,7 @@ pub struct Step {
 
 /// Measures of one window.
 ///
-/// They are its loudness, where its spectrum, averaged over short overlapping frames, stops
-/// (the cutoff) and how steeply, gaps in the band just below the cutoff, a step inside a full
-/// band, how strongly the noise repeats at a lossy codec's frame length, and what the
-/// spectrogram and the waveform show of it.
+/// The spectrum they are taken from is averaged over short overlapping frames.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
