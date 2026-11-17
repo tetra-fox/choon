@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 
 use crate::engine::Measured;
-use crate::measure::Window;
+use crate::window::Window;
 
 /// The width of a cutoff histogram bucket, in Hz.
 const HISTOGRAM_HZ: f64 = 500.0;
@@ -77,7 +77,7 @@ pub(crate) fn measures(
   let shelves: Vec<f64> = windows.iter().filter_map(|w| w.shelf_db).collect();
   let holes: Vec<f64> = windows.iter().filter_map(|w| w.holes).collect();
   let scores: Vec<f64> = windows.iter().filter_map(|w| w.frame_score).collect();
-  let claimed_bits = measured.claimed.as_ref().and_then(|c| c.bit_depth);
+  let claimed_bits = measured.claimed.bit_depth;
   Measures {
     cutoff_hz_histogram: histogram.into_iter().map(|(hz, n)| [hz, n]).collect(),
     cutoff_median_hz: (!cutoffs.is_empty()).then(|| middle(&cutoffs).round() as u32),

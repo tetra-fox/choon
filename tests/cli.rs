@@ -202,8 +202,19 @@ fn a_file_not_read_as_audio_fails_the_run_and_says_so() {
   let output = choon(&["--json", &text]);
   assert_eq!(status(&output), 2, "{output:?}");
   let line: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-  assert_eq!(line["claimed"], serde_json::Value::Null);
-  assert_eq!(line["readings"][0]["verdict"], "inconclusive");
+  assert_eq!(line["file"], text);
+  let error = line["error"].as_str().unwrap();
+  assert!(
+    error.starts_with("the container was not recognized"),
+    "{error}"
+  );
+
+  // a directory is a file that could not be opened, which goes to stderr
+  let output = choon(&[&path(dir.path())]);
+  assert_eq!(status(&output), 2, "{output:?}");
+  assert!(output.stdout.is_empty(), "{output:?}");
+  let errors = String::from_utf8(output.stderr).unwrap();
+  assert!(errors.contains("is a directory"), "{errors}");
 }
 
 #[test]

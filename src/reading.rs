@@ -1,14 +1,5 @@
-//! The analyzer's reading of its measures.
-//!
-//! A reading says whether the audio is consistent with the format it claims, a likely
-//! transcode, a mix of sources, possibly lossy, or something the analyzer cannot tell, with how
-//! sure it is, the findings independent of that, one summary, and what made it less reliable.
-//! The cutoff is read from the spread over windows, not an average, so a band-limited minority
-//! of the time or of the band reads as mixed sources rather than as a transcode.
-//!
-//! In a file that claims a lossless format, the cutoff is weighed with the scan for a codec's
-//! frame grid ([`grid`]). Only a grid calls the file a likely transcode; a cutoff
-//! that reads as lossy without one makes the file possibly lossy.
+//! The analyzer's reading of its measures: the cutoff read from its spread over the windows,
+//! weighed with the grid scan, with the findings beside it.
 
 use serde::Serialize;
 
@@ -16,8 +7,8 @@ use crate::aggregate::{Measures, measures, middle, percentile, upsample_ratio};
 use crate::engine::Measured;
 use crate::flags::{Flag, findings};
 use crate::grid::{self, Codec, Found};
-use crate::measure::{Step, Window};
 use crate::thresholds::{Profile, ReadingThresholds};
+use crate::window::{Step, Window};
 
 /// The top of the band of a 48 kHz recording; a file whose band goes past it is hi-res.
 const HI_RES_TOP_HZ: f64 = 24_000.0;
@@ -27,27 +18,19 @@ const HI_RES_TOP_HZ: f64 = 24_000.0;
 /// # Examples
 ///
 /// ```
-/// use choon::{ReadingThresholds, Verdict, reading};
+/// use choon::{ReadingThresholds, Verdict};
 ///
-/// # use std::time::{Duration, Instant};
-/// # use choon::engine::{self, Settings};
-/// # use choon::MeasureThresholds;
-/// # let settings = Settings {
-/// #   max_full_seconds: 900.0,
-/// #   sampled_windows: 240,
-/// #   deadline: Instant::now() + Duration::from_secs(120),
-/// #   progress: None,
-/// #   canceled: None,
-/// #   thresholds: MeasureThresholds::default(),
-/// # };
-/// # let measured = engine::read_bytes(choon::fixtures::TONE.to_vec(), &settings)
-/// #   .expect("nothing cancels it");
-/// let reading = reading::read(&measured, &ReadingThresholds::default());
+/// # fn main() -> Result<(), choon::Error> {
+/// # let tone = choon::fixtures::TONE.to_vec();
+/// # let measured = choon::measure_bytes(tone, &choon::Settings::default())?;
+/// let reading = measured.read(&ReadingThresholds::default());
 /// let lossy = match reading.verdict {
 ///   Verdict::LikelyTranscode | Verdict::MixedSources => true,
 ///   Verdict::Consistent | Verdict::PossiblyLossy | Verdict::Inconclusive => false,
 /// };
 /// println!("{}", if lossy { "lossy" } else { "no lossy source found" });
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -243,163 +226,152 @@ fn lower_profile_at(thresholds: &ReadingThresholds, hz: f64) -> Option<&Profile>
     .filter(|p| p.kbps < thresholds.high_bitrate_kbps)
 }
 
-/// Reads what `measured` found with `thresholds`.
-///
-/// # Examples
-///
-/// Thresholds can come from JSON, as a profile; keys left out keep their default:
-///
-/// ```
-/// use choon::{ReadingThresholds, reading};
-///
-/// # fn main() -> Result<(), serde_json::Error> {
-/// # use std::time::{Duration, Instant};
-/// # use choon::engine::{self, Settings};
-/// # use choon::MeasureThresholds;
-/// # let settings = Settings {
-/// #   max_full_seconds: 900.0,
-/// #   sampled_windows: 240,
-/// #   deadline: Instant::now() + Duration::from_secs(120),
-/// #   progress: None,
-/// #   canceled: None,
-/// #   thresholds: MeasureThresholds::default(),
-/// # };
-/// # let measured = engine::read_bytes(choon::fixtures::TONE.to_vec(), &settings)
-/// #   .expect("nothing cancels it");
-/// let thresholds: ReadingThresholds = serde_json::from_str(r#"{"sharpShelfDb": 25.0}"#)?;
-/// let reading = reading::read(&measured, &thresholds);
-/// println!("{:?}, {}", reading.verdict, reading.summary);
-/// # Ok(())
-/// # }
-/// ```
-pub fn read(measured: &Measured, thresholds: &ReadingThresholds) -> Reading {
-  let Some(claimed) = &measured.claimed else {
-    return Reading {
-      verdict: Verdict::Inconclusive,
-      cutoff_verdict: Verdict::Inconclusive,
-      grid: None,
-      confidence: 0.0,
-      flags: Vec::new(),
-      encoder_guess: None,
-      summary: "The file could not be read as audio.".to_string(),
-      measures: measures(measured, &[], None),
-      limitations: problems(measured),
-      cutoff_hz: None,
+impl Measured {
+  /// Reads the measures with `thresholds`.
+  ///
+  /// A reading says whether the audio is consistent with the format it claims, a likely
+  /// transcode, a mix of sources, possibly lossy, or something the analyzer cannot tell, with
+  /// how sure it is, the findings independent of that, one summary, and what made it less
+  /// reliable. The cutoff is read from the spread over windows, not an average, so a
+  /// band-limited minority of the time or of the band reads as mixed sources rather than as a
+  /// transcode.
+  ///
+  /// In a file that claims a lossless format, the cutoff is weighed with the scan for a
+  /// codec's frame grid ([`grid`]). Only a grid calls the file a likely transcode; a cutoff
+  /// that reads as lossy without one makes the file possibly lossy.
+  ///
+  /// # Examples
+  ///
+  /// Thresholds can come from JSON, as a profile; keys left out keep their default:
+  ///
+  /// ```
+  /// use choon::ReadingThresholds;
+  ///
+  /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+  /// # let tone = choon::fixtures::TONE.to_vec();
+  /// # let measured = choon::measure_bytes(tone, &choon::Settings::default())?;
+  /// let thresholds: ReadingThresholds = serde_json::from_str(r#"{"sharpShelfDb": 25.0}"#)?;
+  /// let reading = measured.read(&thresholds);
+  /// println!("{:?}, {}", reading.verdict, reading.summary);
+  /// # Ok(())
+  /// # }
+  /// ```
+  pub fn read(&self, thresholds: &ReadingThresholds) -> Reading {
+    let claimed = &self.claimed;
+    let nyquist = f64::from(claimed.sample_rate) / 2.0;
+    let windows: Vec<&Window> = self
+      .windows
+      .iter()
+      .filter(|w| w.cutoff_hz.is_some())
+      .collect();
+    let upsample_ratio = (claimed.sample_rate > 48_000).then(|| upsample_ratio(&windows));
+    let measures = measures(self, &windows, upsample_ratio);
+    let median = measures.cutoff_median_hz.map(f64::from);
+    let found_beside = findings(claimed, &windows, median, &measures, thresholds);
+    // an upsampled file is judged against the band of the rate it was made at
+    let top = found_beside.source_edge.unwrap_or(nyquist);
+    let windows: Vec<Seen> = windows
+      .iter()
+      .map(|w| Seen::of(w, top, thresholds))
+      .collect();
+    let cutoffs: Vec<f64> = windows.iter().filter_map(|w| w.cutoff_hz).collect();
+    let median = (!cutoffs.is_empty()).then(|| middle(&cutoffs));
+    let heard = Heard {
+      windows,
+      top,
+      thresholds,
     };
-  };
-  let nyquist = f64::from(claimed.sample_rate) / 2.0;
-  let windows: Vec<&Window> = measured
-    .windows
-    .iter()
-    .filter(|w| w.cutoff_hz.is_some())
-    .collect();
-  let upsample_ratio = (claimed.sample_rate > 48_000).then(|| upsample_ratio(&windows));
-  let measures = measures(measured, &windows, upsample_ratio);
-  let median = measures.cutoff_median_hz.map(f64::from);
-  let found_beside = findings(claimed, &windows, median, &measures, thresholds);
-  // an upsampled file is judged against the band of the rate it was made at
-  let top = found_beside.source_edge.unwrap_or(nyquist);
-  let windows: Vec<Seen> = windows
-    .iter()
-    .map(|w| Seen::of(w, top, thresholds))
-    .collect();
-  let cutoffs: Vec<f64> = windows.iter().filter_map(|w| w.cutoff_hz).collect();
-  let median = (!cutoffs.is_empty()).then(|| middle(&cutoffs));
-  let heard = Heard {
-    windows,
-    top,
-    thresholds,
-  };
-  let mut limitations = problems(measured);
-  if measured.sampled {
-    limitations.push(format!(
-      "Only {} one-second windows spread over the file were analyzed",
-      measured.windows.len()
-    ));
-  }
-  if measured.channels_left_out > 0 {
-    limitations.push(format!(
-      "Only the first two of {} channels were analyzed",
-      claimed.channels
-    ));
-  }
-  let mut found = verdict(&heard, median, claimed.lossless, measured.bitrate_kbps);
-  let heard_seconds = heard.seconds();
-  if heard_seconds < thresholds.few_seconds() {
-    limitations.push(format!(
-      "Only {heard_seconds:.1} s of the audio is above silence, too little for a reliable reading"
-    ));
-  }
-  if quiet(&heard) {
-    limitations
-      .push("The audio is quiet, which makes the upper band harder to measure".to_string());
-  }
-  // a lossy file read as consistent with its own bitrate stops where its own encoder cuts,
-  // which needs no other explanation
-  let own_cutoff = !claimed.lossless && found.verdict == Verdict::Consistent;
-  if let Some(edge) = found_beside.source_edge
-    && let Some(profile) = thresholds.profile_at(edge)
-    && found.verdict != Verdict::MixedSources
-    && !own_cutoff
-  {
-    // the edge of the lower rate is also where an encoder cuts: either could be the source
-    found = CutoffReading {
-      verdict: Verdict::Inconclusive,
-      confidence: 0.4,
-      encoder_guess: Some(EncoderGuess {
-        profile: profile.name.to_string(),
+    let mut limitations = problems(self);
+    if self.sampled {
+      limitations.push(format!(
+        "Only {} one-second windows spread over the file were analyzed",
+        self.windows.len()
+      ));
+    }
+    if self.channels_left_out > 0 {
+      limitations.push(format!(
+        "Only the first two of {} channels were analyzed",
+        claimed.channels
+      ));
+    }
+    let mut found = verdict(&heard, median, claimed.lossless, self.bitrate_kbps);
+    let heard_seconds = heard.seconds();
+    if heard_seconds < thresholds.few_seconds() {
+      limitations.push(format!(
+        "Only {heard_seconds:.1} s of the audio is above silence, too little for a reliable reading"
+      ));
+    }
+    if quiet(&heard) {
+      limitations
+        .push("The audio is quiet, which makes the upper band harder to measure".to_string());
+    }
+    // a lossy file read as consistent with its own bitrate stops where its own encoder cuts,
+    // which needs no other explanation
+    let own_cutoff = !claimed.lossless && found.verdict == Verdict::Consistent;
+    if let Some(edge) = found_beside.source_edge
+      && let Some(profile) = thresholds.profile_at(edge)
+      && found.verdict != Verdict::MixedSources
+      && !own_cutoff
+    {
+      // the edge of the lower rate is also where an encoder cuts: either could be the source
+      found = CutoffReading {
+        verdict: Verdict::Inconclusive,
         confidence: 0.4,
-      }),
-      summary: format!(
-        "The content stops sharply at {}, both the upper limit of a {} kHz recording and the \
+        encoder_guess: Some(EncoderGuess {
+          profile: profile.name.to_string(),
+          confidence: 0.4,
+        }),
+        summary: format!(
+          "The content stops sharply at {}, both the upper limit of a {} kHz recording and the \
          cutoff of an encoder at {}. The file was either upsampled from that rate or \
          transcoded from that encoder, and the analyzer cannot tell which.",
-        khz(edge),
-        format!("{:.2}", edge * 2.0 / 1000.0)
-          .trim_end_matches('0')
-          .trim_end_matches('.'),
-        profile.name
-      ),
-      limitations: Vec::new(),
-      cutoff_hz: Some(edge),
-    };
-  }
-  if found.verdict != Verdict::Consistent
-    && let Some(cut) = found.cutoff_hz
-    && let Some(edge) = thresholds
-      .other_rate_edges
-      .iter()
-      .find(|edge| (cut - edge.hz).abs() <= thresholds.cluster_hz)
-  {
-    limitations.push(format!(
-      "Audio recorded at {} and converted to this rate has the same sharp cutoff at {}",
-      edge.rate,
-      khz(edge.hz)
-    ));
-  }
-  let cutoff_verdict = found.verdict;
-  let grid = measured
-    .grid
-    .as_ref()
-    .and_then(|scan| grid::found(scan, thresholds));
-  if measured.grid.is_some() {
-    found = weighed(found, grid.as_ref(), thresholds);
-  }
-  limitations.extend(found.limitations);
-  Reading {
-    verdict: found.verdict,
-    cutoff_verdict,
-    grid,
-    confidence: found.confidence.min(thresholds.confidence_cap),
-    flags: found_beside.flags,
-    encoder_guess: found.encoder_guess,
-    summary: std::iter::once(found.summary)
-      .chain(found_beside.notes)
-      .collect::<Vec<_>>()
-      .join(" "),
-    measures,
-    limitations,
-    cutoff_hz: found.cutoff_hz,
+          khz(edge),
+          format!("{:.2}", edge * 2.0 / 1000.0)
+            .trim_end_matches('0')
+            .trim_end_matches('.'),
+          profile.name
+        ),
+        limitations: Vec::new(),
+        cutoff_hz: Some(edge),
+      };
+    }
+    if found.verdict != Verdict::Consistent
+      && let Some(cut) = found.cutoff_hz
+      && let Some(edge) = thresholds
+        .other_rate_edges
+        .iter()
+        .find(|edge| (cut - edge.hz).abs() <= thresholds.cluster_hz)
+    {
+      limitations.push(format!(
+        "Audio recorded at {} and converted to this rate has the same sharp cutoff at {}",
+        edge.rate,
+        khz(edge.hz)
+      ));
+    }
+    let cutoff_verdict = found.verdict;
+    let grid = self
+      .grid
+      .as_ref()
+      .and_then(|scan| grid::found(scan, thresholds));
+    if self.grid.is_some() {
+      found = weighed(found, grid.as_ref(), thresholds);
+    }
+    limitations.extend(found.limitations);
+    Reading {
+      verdict: found.verdict,
+      cutoff_verdict,
+      grid,
+      confidence: found.confidence.min(thresholds.confidence_cap),
+      flags: found_beside.flags,
+      encoder_guess: found.encoder_guess,
+      summary: std::iter::once(found.summary)
+        .chain(found_beside.notes)
+        .collect::<Vec<_>>()
+        .join(" "),
+      measures,
+      limitations,
+      cutoff_hz: found.cutoff_hz,
+    }
   }
 }
 

@@ -3,13 +3,16 @@
 
 use std::borrow::Cow;
 use std::io::{self, Write};
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use choon::engine::{self, Measured, Settings};
 use choon::grid::Scan;
-use choon::{Claimed, Flag, MeasureThresholds, Reading, ReadingThresholds, Verdict, reading};
+use choon::{
+  Claimed, Coverage, Error, Flag, MeasureThresholds, Measured, Reading, ReadingThresholds,
+  Settings, Verdict,
+};
 use clap::{Args, Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 
@@ -75,13 +78,8 @@ struct Check {
   max_full_minutes: Option<f64>,
 
   /// Read a file longer than --max-full-minutes at COUNT one-second windows
-  #[arg(
-    long,
-    value_name = "COUNT",
-    requires = "max_full_minutes",
-    value_parser = clap::value_parser!(u32).range(1..)
-  )]
-  sampled_windows: Option<u32>,
+  #[arg(long, value_name = "COUNT", requires = "max_full_minutes")]
+  sampled_windows: Option<NonZeroUsize>,
 }
 
 /// What a file is measured and read with: a profile.
@@ -97,7 +95,7 @@ struct Thresholds {
 #[serde(rename_all = "camelCase")]
 struct Analyzed<'a> {
   file: Cow<'a, str>,
-  claimed: Option<&'a Claimed>,
+  claimed: &'a Claimed,
   duration_seconds: f64,
   bitrate_kbps: Option<u32>,
   sampled: bool,
@@ -118,10 +116,11 @@ struct Read {
   reading: Reading,
 }
 
-/// How files are read: in full up to a length, sampled past it.
-struct Reach {
-  max_full_seconds: f64,
-  sampled_windows: usize,
+/// What is printed with `--json` for a file not read as audio.
+#[derive(Serialize)]
+struct NotAudio<'a> {
+  file: Cow<'a, str>,
+  error: String,
 }
 
 fn main() -> ExitCode {
@@ -169,49 +168,58 @@ fn run(check: &Check) -> Result<u8, Failed> {
       .map(|path| profile(path))
       .collect::<Result<_, _>>()?
   };
-  let reach = match (check.max_full_minutes, check.sampled_windows) {
-    (Some(minutes), Some(count)) => Reach {
-      max_full_seconds: minutes * 60.0,
-      sampled_windows: count as usize,
+  let coverage = match (check.max_full_minutes, check.sampled_windows) {
+    (Some(minutes), Some(windows)) => Coverage::Sampled {
+      over_seconds: minutes * 60.0,
+      windows,
     },
     // clap lets neither through without the other
-    _ => Reach {
-      max_full_seconds: f64::INFINITY,
-      sampled_windows: 0,
-    },
+    _ => Coverage::Full,
   };
   let mut code = CLEAN;
   for file in &check.files {
-    if let Err(e) = openable(file) {
-      eprintln!("choon: {}: {e}", file.display());
-      code = FAILED;
-      continue;
-    }
-    let analyzed = analyzed(file, &profiles, &reach);
-    let audio = analyzed.0.claimed.is_some();
-    if !audio {
-      code = FAILED;
-    } else if code == CLEAN && analyzed.1.iter().any(|read| lossy(read.reading.verdict)) {
-      code = LOSSY;
-    }
-    let line = if check.json {
-      let (measured, readings) = analyzed;
-      // the readings are numbers, strings and lists of them, which always serialize
-      serde_json::to_string(&Analyzed {
-        file: file.to_string_lossy(),
-        claimed: measured.claimed.as_ref(),
-        duration_seconds: measured.duration,
-        bitrate_kbps: measured.bitrate_kbps,
-        sampled: measured.sampled,
-        windows: measured.windows.len(),
-        grid: measured.grid.as_ref(),
-        readings,
-      })
-      .expect("a reading serializes")
-    } else if audio {
-      format!("{}: {}", file.display(), said(&analyzed.1))
-    } else {
-      format!("{}: {}", file.display(), not_audio(&analyzed.1))
+    let line = match analyzed(file, &profiles, coverage) {
+      Ok((measured, readings)) => {
+        if code == CLEAN && readings.iter().any(|read| lossy(read.reading.verdict)) {
+          code = LOSSY;
+        }
+        if check.json {
+          // the readings are numbers, strings and lists of them, which always serialize
+          serde_json::to_string(&Analyzed {
+            file: file.to_string_lossy(),
+            claimed: &measured.claimed,
+            duration_seconds: measured.duration,
+            bitrate_kbps: measured.bitrate_kbps,
+            sampled: measured.sampled,
+            windows: measured.windows.len(),
+            grid: measured.grid.as_ref(),
+            readings,
+          })
+          .expect("a reading serializes")
+        } else {
+          format!("{}: {}", file.display(), said(&readings))
+        }
+      }
+      Err(Error::Open(e)) => {
+        eprintln!("choon: {}: {e}", file.display());
+        code = FAILED;
+        continue;
+      }
+      Err(Error::NotAudio(why)) => {
+        code = FAILED;
+        if check.json {
+          serde_json::to_string(&NotAudio {
+            file: file.to_string_lossy(),
+            error: why,
+          })
+          .expect("two strings serialize")
+        } else {
+          format!("{}: not read as audio: {why}", file.display())
+        }
+      }
+      Err(Error::Canceled | Error::OutOfTime) => {
+        unreachable!("the analysis has no cancel check and no deadline")
+      }
     };
     if !print(&mut out, &line)? {
       // the files read so far decide the status
@@ -248,15 +256,6 @@ fn minutes(text: &str) -> Result<f64, String> {
   Ok(minutes)
 }
 
-/// Whether the file at `path` can be opened for reading.
-fn openable(path: &Path) -> io::Result<()> {
-  let file = std::fs::File::open(path)?;
-  if file.metadata()?.is_dir() {
-    return Err(io::Error::other("it is a directory"));
-  }
-  Ok(())
-}
-
 /// The profile in the file at `path`, named after the file.
 fn profile(path: &Path) -> Result<(String, Thresholds), Failed> {
   let failed = |e: String| Failed::Profile(path.to_path_buf(), e);
@@ -274,8 +273,8 @@ fn profile(path: &Path) -> Result<(String, Thresholds), Failed> {
 fn analyzed(
   path: &Path,
   profiles: &[(String, Thresholds)],
-  reach: &Reach,
-) -> (Measured, Vec<Read>) {
+  coverage: Coverage,
+) -> Result<(Measured, Vec<Read>), Error> {
   let mut measured: Vec<(&MeasureThresholds, Measured, f64)> = Vec::new();
   let mut readings = Vec::new();
   for (name, thresholds) in profiles {
@@ -286,25 +285,19 @@ fn analyzed(
       Some(at) => at,
       None => {
         let settings = Settings {
-          max_full_seconds: reach.max_full_seconds,
-          sampled_windows: reach.sampled_windows,
-          // a day, which no single file takes: the reading covers the whole file
-          deadline: Instant::now() + Duration::from_secs(24 * 60 * 60),
-          progress: None,
-          canceled: None,
+          coverage,
           thresholds: thresholds.measure.clone(),
+          ..Settings::default()
         };
         let started = Instant::now();
-        let Ok(done) = engine::run(path, &settings) else {
-          unreachable!("nothing cancels the analysis")
-        };
+        let done = choon::measure(path, &settings)?;
         measured.push((&thresholds.measure, done, started.elapsed().as_secs_f64()));
         measured.len() - 1
       }
     };
     let (_, done, measure_seconds) = &measured[at];
     let started = Instant::now();
-    let reading = reading::read(done, &thresholds.reading);
+    let reading = done.read(&thresholds.reading);
     readings.push(Read {
       profile: name.clone(),
       measure_seconds: *measure_seconds,
@@ -314,26 +307,7 @@ fn analyzed(
   }
   // every profile reads the same windows of the file; what differs is what is made of them
   let (_, first, _) = measured.swap_remove(0);
-  (first, readings)
-}
-
-/// Why a file that did not open as audio was not read: the first limitation of a reading, as
-/// every profile's reading of it lists the same ones.
-fn not_audio(readings: &[Read]) -> String {
-  let why = readings
-    .first()
-    .and_then(|read| read.reading.limitations.first())
-    .map_or_else(String::new, |why| {
-      // the reading capitalizes the decoder's clause as a list item; here it follows a colon
-      let mut chars = why.chars();
-      chars.next().map_or_else(String::new, |first| {
-        format!(
-          ": {}",
-          first.to_lowercase().chain(chars).collect::<String>()
-        )
-      })
-    });
-  format!("not read as audio{why}")
+  Ok((first, readings))
 }
 
 /// The readings in a few words each, named after their profile when there are several.

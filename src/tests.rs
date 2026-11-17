@@ -2,32 +2,38 @@
 //! upsample, padded bits, mixed sources and honest band-limited audio, which must never read
 //! as a transcode or as mixed.
 
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use mp3lame_encoder::Bitrate;
 
-use crate::engine::{self, Settings};
+use crate::engine::{self, Coverage, Error, Measured, Settings, measure, measure_bytes};
 use crate::fixtures::{self, Audio, lo_fi, music, music_for, pink, tone};
 use crate::flags::Flag;
 use crate::grid::{self, Codec};
 use crate::reading::{Reading, Verdict};
 use crate::thresholds::{MeasureThresholds, ReadingThresholds};
 
-fn settings() -> Settings {
-  Settings {
-    max_full_seconds: 900.0,
-    sampled_windows: 240,
-    deadline: Instant::now() + Duration::from_secs(600),
-    progress: None,
-    canceled: None,
-    thresholds: MeasureThresholds::default(),
+/// A long file at `windows` windows, and one of up to `over_seconds` in full.
+fn sampled(over_seconds: f64, windows: usize) -> Coverage {
+  Coverage::Sampled {
+    over_seconds,
+    windows: NonZeroUsize::new(windows).unwrap(),
   }
 }
 
-fn read(measured: &engine::Measured) -> Reading {
-  crate::reading::read(measured, &ReadingThresholds::default())
+fn settings() -> Settings {
+  Settings {
+    coverage: sampled(900.0, 240),
+    deadline: Some(Instant::now() + Duration::from_secs(600)),
+    ..Settings::default()
+  }
+}
+
+fn read(measured: &Measured) -> Reading {
+  measured.read(&ReadingThresholds::default())
 }
 
 fn analyzed(path: &Path) -> Reading {
@@ -36,7 +42,7 @@ fn analyzed(path: &Path) -> Reading {
 
 /// The reading of the file at `path`, with what it saw for an assertion to print.
 fn explained(path: &Path) -> (Reading, String) {
-  let measured = engine::run(path, &settings()).unwrap();
+  let measured = measure(path, &settings()).unwrap();
   let reading = read(&measured);
   let why = engine::explain(&measured, &reading);
   (reading, why)
@@ -133,7 +139,7 @@ fn an_mp3_decode_carries_the_mp3_grid_and_its_source_none() {
     ("decoded.flac", &through, Some(Codec::Mp3)),
     ("source.flac", &source, None),
   ] {
-    let measured = engine::run(&flac(dir.path(), name, audio, 16), &settings()).unwrap();
+    let measured = measure(flac(dir.path(), name, audio, 16), &settings()).unwrap();
     let scan = measured.grid.as_ref().expect("a lossless file is scanned");
     let found = grid::found(scan, &ReadingThresholds::default());
     assert_eq!(found.as_ref().map(|f| f.codec), grid, "{name}: {scan:?}");
@@ -184,7 +190,7 @@ fn a_cover_larger_than_the_audio_does_not_raise_an_mp3s_bitrate() {
   let honest = dir.path().join("honest.mp3");
   fixtures::write_mp3(&music(1, 44_100, pink), Bitrate::Kbps128, &honest);
   fixtures::add_cover(&honest, 2_000_000);
-  let measured = engine::run(&honest, &settings()).unwrap();
+  let measured = measure(&honest, &settings()).unwrap();
   let kbps = measured.bitrate_kbps.unwrap();
   assert!((120..=136).contains(&kbps), "{kbps} kbps");
   let reading = read(&measured);
@@ -498,12 +504,11 @@ fn a_long_file_is_sampled_at_windows_spread_over_it() {
   let path = flac(dir.path(), "a.flac", &music(1, 44_100, pink), 16);
   let progress = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
   let settings = Settings {
-    max_full_seconds: 10.0,
-    sampled_windows: 20,
+    coverage: sampled(10.0, 20),
     progress: Some(progress.clone()),
     ..settings()
   };
-  let measured = engine::run(&path, &settings).unwrap();
+  let measured = measure(&path, &settings).unwrap();
   assert!(measured.sampled);
   assert_eq!(measured.windows.len(), 20);
   assert_eq!(progress.load(std::sync::atomic::Ordering::Relaxed), 1000);
@@ -525,44 +530,33 @@ fn a_sampled_file_scans_the_same_samples_for_a_grid_as_one_read_in_full() {
   let dir = tempfile::tempdir().unwrap();
   let through = fixtures::through_mp3(&music(1, 44_100, pink), Bitrate::Kbps128, dir.path());
   let path = flac(dir.path(), "t.flac", &through, 16);
-  let full = engine::run(&path, &settings()).unwrap();
+  let full = measure(&path, &settings()).unwrap();
   // the sampled windows miss the grid's stretches, which are sought and placed by their
   // packets' timestamps
   let sampled = Settings {
-    max_full_seconds: 10.0,
-    sampled_windows: 3,
+    coverage: sampled(10.0, 3),
     ..settings()
   };
-  let sampled = engine::run(&path, &sampled).unwrap();
+  let sampled = measure(&path, &sampled).unwrap();
   assert!(sampled.sampled);
   assert!(full.grid.is_some());
   assert_eq!(sampled.grid, full.grid);
 }
 
 #[test]
-fn a_canceled_analysis_stops_and_one_out_of_time_reports_what_it_has() {
+fn a_canceled_analysis_and_one_out_of_time_before_it_opens_report_nothing() {
   let dir = tempfile::tempdir().unwrap();
   let path = flac(dir.path(), "a.flac", &music(1, 44_100, pink), 16);
   let canceled = Settings {
     canceled: Some(Arc::new(|| true)),
     ..settings()
   };
-  assert_eq!(engine::run(&path, &canceled).unwrap_err(), engine::Canceled);
+  assert!(matches!(measure(&path, &canceled), Err(Error::Canceled)));
   let late = Settings {
-    deadline: Instant::now(),
+    deadline: Some(Instant::now()),
     ..settings()
   };
-  let measured = engine::run(&path, &late).unwrap();
-  assert!(measured.windows.is_empty());
-  let reading = read(&measured);
-  assert_eq!(reading.verdict, Verdict::Inconclusive);
-  assert!(
-    reading
-      .limitations
-      .iter()
-      .any(|l| l.contains("ran out of time")),
-    "{reading:#?}"
-  );
+  assert!(matches!(measure(&path, &late), Err(Error::OutOfTime)));
 }
 
 /// Content cut where an encoder cuts, which the cutoff alone reads as a transcode with the
@@ -579,14 +573,14 @@ fn a_17_khz_cut(dir: &Path) -> PathBuf {
 #[test]
 fn the_reading_uses_the_thresholds_it_is_given() {
   let dir = tempfile::tempdir().unwrap();
-  let measured = engine::run(&a_17_khz_cut(dir.path()), &settings()).unwrap();
+  let measured = measure(a_17_khz_cut(dir.path()), &settings()).unwrap();
   assert_eq!(read(&measured).cutoff_verdict, Verdict::LikelyTranscode);
   // no shelf is this sharp, so no window stops with an encoder's low-pass
   let blunt = ReadingThresholds {
     sharp_shelf_db: 1000.0,
     ..ReadingThresholds::default()
   };
-  let reading = crate::reading::read(&measured, &blunt);
+  let reading = measured.read(&blunt);
   assert_ne!(
     reading.cutoff_verdict,
     Verdict::LikelyTranscode,
@@ -605,7 +599,7 @@ fn measuring_uses_the_thresholds_it_is_given() {
     },
     ..settings()
   };
-  let measured = engine::run(&a_17_khz_cut(dir.path()), &deaf).unwrap();
+  let measured = measure(a_17_khz_cut(dir.path()), &deaf).unwrap();
   assert!(!measured.windows.is_empty());
   assert!(measured.windows.iter().all(|w| w.cutoff_hz.is_none()));
   assert_eq!(read(&measured).verdict, Verdict::Inconclusive);
@@ -618,13 +612,13 @@ fn no_reading_is_surer_than_the_confidence_cap() {
     confidence_cap: 0.1,
     ..ReadingThresholds::default()
   };
-  let short = engine::read_bytes(fixtures::TONE.to_vec(), &settings()).unwrap();
-  let reading = crate::reading::read(&short, &capped);
+  let short = measure_bytes(fixtures::TONE.to_vec(), &settings()).unwrap();
+  let reading = short.read(&capped);
   assert_eq!(reading.verdict, Verdict::Inconclusive);
   assert_eq!(reading.confidence, 0.1);
   let honest = flac(dir.path(), "a.flac", &music(1, 44_100, pink), 16);
-  let honest = engine::run(&honest, &settings()).unwrap();
-  let reading = crate::reading::read(&honest, &capped);
+  let honest = measure(&honest, &settings()).unwrap();
+  let reading = honest.read(&capped);
   assert_eq!(reading.verdict, Verdict::Consistent);
   assert_eq!(reading.confidence, 0.1);
 }
@@ -639,7 +633,7 @@ fn a_step_search_from_far_below_the_spectrum_ends() {
     ..settings()
   };
   let bytes = fixtures::flac(&music_for(2, 1, 44_100, pink), 16, false);
-  let measured = engine::read_bytes(bytes, &far).unwrap();
+  let measured = measure_bytes(bytes, &far).unwrap();
   assert!(measured.windows.iter().any(|w| w.inner_shelf.is_some()));
 }
 
@@ -661,8 +655,9 @@ proptest::proptest! {
     ];
     let mut input = headers[header].to_vec();
     input.extend_from_slice(&bytes);
-    let measured = engine::read_bytes(input, &settings()).unwrap();
-    read(&measured);
+    if let Ok(measured) = measure_bytes(input, &settings()) {
+      read(&measured);
+    }
   }
 }
 
@@ -744,11 +739,11 @@ fn a_file_without_a_stated_length_is_read_only_so_far() {
   // a total sample count of 0 is none stated
   stating(&path, fixtures::SECONDS, 0);
   let settings = Settings {
-    max_full_seconds: 10.0,
+    coverage: sampled(10.0, 240),
     ..settings()
   };
-  let measured = engine::run(&path, &settings).unwrap();
-  assert_eq!(measured.claimed.as_ref().unwrap().frames, None);
+  let measured = measure(&path, &settings).unwrap();
+  assert_eq!(measured.claimed.frames, None);
   assert!(!measured.sampled);
   assert_eq!(measured.windows.len(), 10);
   assert_eq!(measured.duration, 10.0);
@@ -767,7 +762,7 @@ fn a_file_shorter_than_it_states_reports_the_length_read() {
   let dir = tempfile::tempdir().unwrap();
   let path = dir.path().join("short.flac");
   stating(&path, fixtures::SECONDS, 600 * 44_100);
-  let measured = engine::run(&path, &settings()).unwrap();
+  let measured = measure(&path, &settings()).unwrap();
   assert!(!measured.sampled);
   assert_eq!(measured.windows.len(), fixtures::SECONDS);
   assert!(
@@ -782,7 +777,7 @@ fn a_file_stating_a_huge_length_reports_only_what_was_read() {
   let dir = tempfile::tempdir().unwrap();
   let path = dir.path().join("huge.flac");
   stating(&path, 4, (1 << 36) - 1);
-  let measured = engine::run(&path, &settings()).unwrap();
+  let measured = measure(&path, &settings()).unwrap();
   assert!(measured.sampled);
   assert!(measured.duration <= 4.0, "{}", measured.duration);
   assert!(!measured.windows.is_empty());
@@ -822,7 +817,7 @@ fn a_seek_past_what_a_file_holds_ends_the_length_where_reading_stopped() {
   bytes[21] = (bytes[21] & 0xf0) | ((frames >> 32) as u8 & 0x0f);
   bytes[22..26].copy_from_slice(&(frames as u32).to_be_bytes());
   std::fs::write(&path, &bytes).unwrap();
-  let measured = engine::run(&path, &settings()).unwrap();
+  let measured = measure(&path, &settings()).unwrap();
   assert!(measured.sampled);
   assert!(measured.duration <= 12.0, "{}", measured.duration);
   let reading = read(&measured);
@@ -988,12 +983,11 @@ fn a_file_stating_more_than_its_bytes_hold_is_as_long_as_they_hold() {
   fixtures::write_repeating_mp4(&music(1, 44_100, pink), 20, u32::MAX, &path);
   let bytes = std::fs::metadata(&path).unwrap().len();
   let settings = Settings {
-    max_full_seconds: 10.0,
-    sampled_windows: 20,
+    coverage: sampled(10.0, 20),
     ..settings()
   };
-  let measured = engine::run(&path, &settings).unwrap();
-  let stated = measured.claimed.as_ref().unwrap().frames.unwrap() as f64 / 44_100.0;
+  let measured = measure(&path, &settings).unwrap();
+  let stated = measured.claimed.frames.unwrap() as f64 / 44_100.0;
   assert!(stated > 1e10, "the file states {stated} s");
   // two bytes a sample frame
   let held = bytes as f64 / 2.0 / 44_100.0;

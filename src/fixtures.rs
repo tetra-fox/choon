@@ -14,7 +14,7 @@ use mp3lame_encoder::{Bitrate, Builder, DualPcm, FlushNoGap, Quality};
 use realfft::RealFftPlanner;
 use realfft::num_complex::Complex;
 
-use crate::decode::{Decoder, Filled};
+use crate::decode::{Decoder, Filled, hint_of};
 
 /// ALAC tone, 16-bit stereo at 8000 Hz, in an MP4 container.
 ///
@@ -448,7 +448,8 @@ pub fn add_cover(path: &Path, bytes: usize) {
 
 /// Returns the audio of the file at `path`, decoded whole.
 pub fn decoded(path: &Path) -> Audio {
-  let mut decoder = Decoder::open_through(path, |file| Box::new(file)).unwrap();
+  let file = std::fs::File::open(path).unwrap();
+  let mut decoder = Decoder::from_source(Box::new(file), &hint_of(path)).unwrap();
   let rate = decoder.claimed.sample_rate;
   let mut channels = vec![Vec::new(); decoder.channels];
   let mut window = vec![Vec::new(); decoder.channels];

@@ -7,8 +7,8 @@ use serde::Serialize;
 
 use crate::aggregate::Measures;
 use crate::decode::Claimed;
-use crate::measure::Window;
 use crate::thresholds::ReadingThresholds;
+use crate::window::Window;
 
 /// Finding reported beside the reading, independent of the cutoff.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]

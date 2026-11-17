@@ -104,23 +104,11 @@ choon = { version = "0.1", default-features = false }
 ```
 
 ```rust,no_run
-use std::path::Path;
-use std::time::{Duration, Instant};
+use choon::{ReadingThresholds, Settings, Verdict};
 
-use choon::engine::{self, Canceled, Settings};
-use choon::{MeasureThresholds, ReadingThresholds, Verdict, reading};
-
-fn main() -> Result<(), Canceled> {
-  let settings = Settings {
-    max_full_seconds: 900.0,
-    sampled_windows: 240,
-    deadline: Instant::now() + Duration::from_secs(120),
-    progress: None,
-    canceled: None,
-    thresholds: MeasureThresholds::default(),
-  };
-  let measured = engine::run(Path::new("track.flac"), &settings)?;
-  let reading = reading::read(&measured, &ReadingThresholds::default());
+fn main() -> Result<(), choon::Error> {
+  let measured = choon::measure("track.flac", &Settings::default())?;
+  let reading = measured.read(&ReadingThresholds::default());
   match reading.verdict {
     Verdict::LikelyTranscode | Verdict::MixedSources => println!("lossy: {}", reading.summary),
     Verdict::Consistent | Verdict::PossiblyLossy | Verdict::Inconclusive => {
@@ -131,9 +119,10 @@ fn main() -> Result<(), Canceled> {
 }
 ```
 
-- `engine::run` blocks its thread; `progress`, `canceled` and `deadline` report, stop and bound it
-- The grid scan runs on rayon's thread pool, the global one unless `engine::run` is called inside
-  another
+- `choon::measure` blocks its thread; `Settings` holds a `progress`, a `canceled` check and a
+  `deadline` that report, stop and bound it, and a `coverage` that samples long files
+- The grid scan runs on rayon's thread pool, the global one unless `choon::measure` is called
+  inside another
 - Measuring is slow and reading is quick: measure once, read under many thresholds
 - `picture` holds each window's spectrogram and waveform data
 - Logs through `tracing`, installs no subscriber

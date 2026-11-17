@@ -4,7 +4,6 @@
 //! analyzer takes the first two channels as floats in one-second windows. Integer samples are
 //! also looked at as they come, for the bits they actually use.
 
-use std::fs::File;
 use std::ops::Range;
 use std::path::Path;
 
@@ -87,6 +86,15 @@ pub(crate) struct Decoder {
   pub(crate) stopped: Option<String>,
 }
 
+/// A hint of what the file at `path` holds: its extension.
+pub(crate) fn hint_of(path: &Path) -> Hint {
+  let mut hint = Hint::new();
+  if let Some(extension) = path.extension().and_then(|e| e.to_str()) {
+    hint.with_extension(extension);
+  }
+  hint
+}
+
 /// What filling a window gave.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Filled {
@@ -97,20 +105,6 @@ pub(crate) enum Filled {
 }
 
 impl Decoder {
-  /// Opens the file at `path`, finding its container from its contents and its extension, and
-  /// reads its bytes through the source `through` makes of it.
-  pub(crate) fn open_through(
-    path: &Path,
-    through: impl FnOnce(File) -> Box<dyn MediaSource>,
-  ) -> Result<Self, String> {
-    let file = File::open(path).map_err(|e| format!("the file could not be opened: {e}"))?;
-    let mut hint = Hint::new();
-    if let Some(extension) = path.extension().and_then(|e| e.to_str()) {
-      hint.with_extension(extension);
-    }
-    Self::from_source(through(file), &hint)
-  }
-
   /// Opens audio from any source of bytes, with `hint` naming what it might be. The error says
   /// why, in words: the container is not recognized, the file holds no audio track or its track
   /// has no codec parameters, the codec is not one the analyzer decodes, the decoder cannot
