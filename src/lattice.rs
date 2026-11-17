@@ -171,31 +171,42 @@ impl Celt {
   }
 
   /// how many frames of `channels`, pre-emphasized, sit on the lattice with the frame grid at
-  /// `offset` from their first sample
+  /// `offset` from their first sample: frames after the first in which every channel with
+  /// enough tested bands has its share of them on the lattice, and one channel at least has
+  /// enough. a channel is transformed only for a frame that the channels before it leave open
   fn count(&mut self, channels: &[Vec<f32>], offset: usize, frames: usize) -> usize {
-    let mut before: Vec<Bands> = Vec::with_capacity(channels.len());
+    // each channel's bands in the frame before and in this one, where they were needed
+    let mut bands: Vec<[Option<Bands>; 2]> = vec![[None; 2]; channels.len()];
     let mut count = 0;
-    for frame in 0..frames {
-      let start = offset + frame * FRAME;
+    for frame in 1..frames {
       let mut judged = false;
       let mut good = true;
-      for (index, channel) in channels.iter().enumerate() {
-        let bands = self.bands(&channel[start..start + 2 * FRAME]);
-        if let Some(before) = before.get(index) {
-          let (tested, hits) = on_lattice(before, &bands);
-          if tested >= MIN_TESTED {
-            judged = true;
-            good &= hits as f64 >= SHARE * tested as f64;
+      for (channel, bands) in channels.iter().zip(&mut bands) {
+        let [before, this] = bands;
+        let at = |frame: usize| {
+          let start = offset + frame * FRAME;
+          &channel[start..start + 2 * FRAME]
+        };
+        let before = match *before {
+          Some(before) => before,
+          None => self.bands(at(frame - 1)),
+        };
+        let now = self.bands(at(frame));
+        *this = Some(now);
+        let (tested, hits) = on_lattice(&before, &now);
+        if tested >= MIN_TESTED {
+          judged = true;
+          good = hits as f64 >= SHARE * tested as f64;
+          if !good {
+            break;
           }
-        }
-        if frame == 0 {
-          before.push(bands);
-        } else {
-          before[index] = bands;
         }
       }
       if judged && good {
         count += 1;
+      }
+      for [before, this] in &mut bands {
+        *before = this.take();
       }
     }
     count
@@ -413,14 +424,28 @@ impl Resampler {
         let at = j * down + HALF * up;
         let (newest, phase) = (at / up, at % up);
         // the newest sample read is `newest` of the input, 2 * HALF further in `padded`
-        self.phases[phase]
-          .iter()
-          .zip(&padded[newest..=newest + 2 * HALF])
-          .map(|(tap, sample)| tap * sample)
-          .sum()
+        dot(&self.phases[phase], &padded[newest..=newest + 2 * HALF])
       })
       .collect()
   }
+}
+
+/// the products `dot` adds up side by side
+const SIDE_BY_SIDE: usize = 8;
+
+/// the sum of the products of `a` and `b`, added up in several running totals so that the
+/// additions do not wait on each other
+fn dot(a: &[f64], b: &[f64]) -> f64 {
+  let (a_runs, a_rest) = a.as_chunks::<SIDE_BY_SIDE>();
+  let (b_runs, b_rest) = b.as_chunks::<SIDE_BY_SIDE>();
+  let mut totals = [0.0; SIDE_BY_SIDE];
+  for (a, b) in a_runs.iter().zip(b_runs) {
+    for ((total, a), b) in totals.iter_mut().zip(a).zip(b) {
+      *total += a * b;
+    }
+  }
+  let rest: f64 = a_rest.iter().zip(b_rest).map(|(a, b)| a * b).sum();
+  totals.iter().sum::<f64>() + rest
 }
 
 fn gcd(a: usize, b: usize) -> usize {
