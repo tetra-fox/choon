@@ -20,7 +20,7 @@ const HISTOGRAM_HZ: f64 = 500.0;
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Measures {
-  /// Pairs of a cutoff in Hz and the non-silent windows that have it.
+  /// Pairs of a cutoff in Hz and how many non-silent windows have it.
   ///
   /// Cutoffs are rounded to the nearest 500 Hz, and the pairs ascend by cutoff.
   pub cutoff_hz_histogram: Vec<[u32; 2]>,
