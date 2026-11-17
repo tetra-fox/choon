@@ -420,9 +420,13 @@ fn weighed(
       verdict: Verdict::LikelyTranscode,
       confidence: thresholds.confidence_cap,
       summary: format!(
-        "The samples carry an {name} frame grid at offset {} (z {:.0}, {} of 4 segments \
+        "The samples carry an {name} frame grid at offset {} (z {:.0}, {} of {} segments \
          agreeing), as audio decoded from {name} does. {}",
-        grid.scan.offset, grid.scan.z, grid.scan.agree, found.summary
+        grid.scan.offset,
+        grid.scan.z,
+        grid.scan.agree,
+        grid::SEGMENTS,
+        found.summary
       ),
       limitations,
       ..found

@@ -166,16 +166,24 @@ pub struct ReadingThresholds {
   /// grids in decodes that hide them, such as clipped ones, and finds them in more lossless
   /// files whose counts happen to dip at one offset.
   pub aac_grid_z: f64,
+  /// Fewest segments that put their lowest count at the file's offset, for an AAC grid.
+  ///
+  /// It is compared with [`CodecScan::agree`](crate::grid::CodecScan::agree). A decode carries
+  /// one grid from start to end, so every segment finds it at the same offset. The segments of
+  /// a lossless file can agree on an offset too, so agreement alone is no grid: it only narrows
+  /// what the z threshold finds. A file that holds a lossy section only in part falls short,
+  /// and so does a Vorbis decode, whose grid the AAC scan finds at an offset that moves between
+  /// segments.
+  pub aac_grid_segments_agreeing: usize,
   /// Robust z over which the MP3 scan finds a frame grid.
   ///
   /// It is compared with [`CodecScan::z`](crate::grid::CodecScan::z), as `aac_grid_z` is.
   pub mp3_grid_z: f64,
-  /// Fewest segments that put their lowest count at the file's offset, for a frame grid.
+  /// Fewest segments that put their lowest count at the file's offset, for an MP3 grid.
   ///
-  /// A decode carries one grid from start to end, so every segment finds it at the same
-  /// offset. A lossless file whose counts dip somewhere by chance dips at a different offset in
-  /// each segment. A file that holds a lossy section only in part also falls short.
-  pub grid_segments_agreeing: usize,
+  /// It is compared with [`CodecScan::agree`](crate::grid::CodecScan::agree), as
+  /// `aac_grid_segments_agreeing` is.
+  pub mp3_grid_segments_agreeing: usize,
 }
 
 /// Band top of a rate some old equipment recorded at.
@@ -271,10 +279,12 @@ impl Default for ReadingThresholds {
         ),
         Profile::new(20_500.0, "mp3 ~320 kbps", 320, None),
       ],
-      // the highest z of the lossless files of half the tuning masters
-      aac_grid_z: 7.79,
-      mp3_grid_z: 11.57,
-      grid_segments_agreeing: 3,
+      // the tuning's lossless files reach z 8.24 for AAC, and 11.57 for MP3 apart from one with
+      // an MP3 section in one segment, which the agreement keeps out
+      aac_grid_z: 9.0,
+      aac_grid_segments_agreeing: 0,
+      mp3_grid_z: 12.0,
+      mp3_grid_segments_agreeing: 3,
     }
   }
 }

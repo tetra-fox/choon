@@ -36,7 +36,7 @@ const AAC_HOP: usize = 1024;
 /// MP3's hop, a granule.
 const MP3_HOP: usize = 576;
 /// The number of segments scanned.
-const SEGMENTS: usize = 4;
+pub(crate) const SEGMENTS: usize = 4;
 /// The samples of one segment: 40 AAC hops.
 pub(crate) const SEGMENT: usize = 40 * AAC_HOP;
 /// Where the segments start, as fractions of the file's length.
@@ -109,17 +109,27 @@ pub struct Found {
   pub scan: CodecScan,
 }
 
-/// The grid `scan` shows under `thresholds`: a codec over its z threshold with enough segments
-/// agreeing, the one furthest over its threshold when both are.
+/// The grid `scan` shows under `thresholds`: a codec over its z threshold with as many segments
+/// agreeing as its own threshold asks, the one furthest over its z threshold when both are.
 pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found> {
   [
-    (Codec::Aac, &scan.aac, thresholds.aac_grid_z),
-    (Codec::Mp3, &scan.mp3, thresholds.mp3_grid_z),
+    (
+      Codec::Aac,
+      &scan.aac,
+      thresholds.aac_grid_z,
+      thresholds.aac_grid_segments_agreeing,
+    ),
+    (
+      Codec::Mp3,
+      &scan.mp3,
+      thresholds.mp3_grid_z,
+      thresholds.mp3_grid_segments_agreeing,
+    ),
   ]
   .into_iter()
-  .filter(|(_, scan, z)| scan.z > *z && scan.agree >= thresholds.grid_segments_agreeing)
-  .max_by(|(_, a, za), (_, b, zb)| (a.z / za).total_cmp(&(b.z / zb)))
-  .map(|(codec, scan, _)| Found {
+  .filter(|(_, scan, z, agreeing)| scan.z > *z && scan.agree >= *agreeing)
+  .max_by(|(_, a, za, _), (_, b, zb, _)| (a.z / za).total_cmp(&(b.z / zb)))
+  .map(|(codec, scan, _, _)| Found {
     codec,
     scan: scan.clone(),
   })
@@ -774,6 +784,34 @@ mod tests {
     assert_eq!(at, 6);
     assert!((z - 8.0 / MAD_TO_SD).abs() < 1e-12, "{z}");
     assert_eq!(robust_z(&[3.0; 8]), (0.0, 0), "a flat curve has no z");
+  }
+
+  #[test]
+  fn each_codec_asks_for_its_own_agreement() {
+    let thresholds = ReadingThresholds {
+      aac_grid_z: 9.0,
+      aac_grid_segments_agreeing: 0,
+      mp3_grid_z: 12.0,
+      mp3_grid_segments_agreeing: 3,
+      ..ReadingThresholds::default()
+    };
+    let codec_scan = |z: f64, agree: usize| CodecScan {
+      offset: 0,
+      z,
+      agree,
+      segment_z: [0.0; SEGMENTS],
+    };
+    let scan = |aac: (f64, usize), mp3: (f64, usize)| Scan {
+      aac: codec_scan(aac.0, aac.1),
+      mp3: codec_scan(mp3.0, mp3.1),
+    };
+    let codec = |scan: &Scan| found(scan, &thresholds).map(|f| f.codec);
+    // an MP3 dip in one segment is no grid, an AAC dip the segments place differently is one
+    assert_eq!(codec(&scan((2.0, 0), (50.0, 1))), None);
+    assert_eq!(codec(&scan((19.0, 1), (2.0, 0))), Some(Codec::Aac));
+    assert_eq!(codec(&scan((9.0, 4), (12.0, 4))), None);
+    // both over: 30 / 9 against 36 / 12
+    assert_eq!(codec(&scan((30.0, 4), (36.0, 3))), Some(Codec::Aac));
   }
 
   #[test]
