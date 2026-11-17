@@ -1,0 +1,64 @@
+{
+  description = "earwitness, which tells whether an audio file is what its format claims";
+
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
+
+  outputs =
+    {
+      nixpkgs,
+      rust-overlay,
+      ...
+    }:
+    let
+      inherit (nixpkgs) lib;
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+        "aarch64-darwin"
+      ];
+      forAllSystems = lib.genAttrs systems;
+      pkgsFor =
+        system:
+        import nixpkgs {
+          inherit system;
+          overlays = [ rust-overlay.overlays.default ];
+        };
+    in
+    {
+      devShells = forAllSystems (
+        system:
+        let
+          pkgs = pkgsFor system;
+          # the oldest Rust the manifest's rust-version promises, which rust-overlay names in full
+          rustVersion = (lib.importTOML ./Cargo.toml).package.rust-version;
+          msrv =
+            pkgs.rust-bin.stable.${
+              if lib.length (lib.splitString "." rustVersion) == 2 then "${rustVersion}.0" else rustVersion
+            }.minimal;
+        in
+        {
+          # the test fixtures build LAME's C source with the shell's compiler and make
+          default = pkgs.mkShell {
+            packages = with pkgs; [
+              (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
+              cargo-nextest
+              just
+              git
+            ];
+
+            env.RUST_BACKTRACE = "1";
+          };
+
+          msrv = pkgs.mkShell { packages = [ msrv ]; };
+        }
+      );
+
+      formatter = forAllSystems (system: (pkgsFor system).nixfmt);
+    };
+}
