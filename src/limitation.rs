@@ -160,7 +160,7 @@ impl fmt::Display for Limitation {
 fn minutes(seconds: u64) -> String {
   match seconds {
     60 => "a minute".to_string(),
-    s if s % 60 == 0 => format!("{} minutes", s / 60),
+    s if s > 0 && s % 60 == 0 => format!("{} minutes", s / 60),
     s => format!("{s} seconds"),
   }
 }

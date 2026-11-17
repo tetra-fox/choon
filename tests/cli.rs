@@ -151,6 +151,13 @@ fn a_wrong_argument_is_refused_before_any_file_is_read() {
     vec!["--max-full-minutes=-1", "--sampled-windows", "240", &audio],
     vec![
       "--max-full-minutes",
+      "0",
+      "--sampled-windows",
+      "240",
+      &audio,
+    ],
+    vec![
+      "--max-full-minutes",
       "inf",
       "--sampled-windows",
       "240",

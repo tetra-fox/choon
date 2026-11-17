@@ -247,10 +247,11 @@ fn lossy(verdict: Verdict) -> bool {
   }
 }
 
-/// The minutes `text` names, refusing a negative or endless length.
+/// The minutes `text` names, refusing an endless length and one of no time, under which a file
+/// that states no length would not be read at all.
 fn minutes(text: &str) -> Result<f64, String> {
   let minutes: f64 = text.parse().map_err(|e| format!("{e}"))?;
-  if !minutes.is_finite() || minutes < 0.0 {
+  if !minutes.is_finite() || minutes <= 0.0 {
     return Err("not a length in minutes".to_string());
   }
   Ok(minutes)

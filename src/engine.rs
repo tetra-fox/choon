@@ -43,7 +43,7 @@ pub enum Coverage {
     /// Longest file analyzed in full, in seconds.
     ///
     /// A file that does not state its length, or runs longer than it states, is read no
-    /// further than this.
+    /// further than this, so not at all when it is 0.
     over_seconds: f64,
     /// Number of windows a longer file is analyzed at.
     windows: NonZeroUsize,
