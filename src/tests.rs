@@ -11,6 +11,7 @@ use mp3lame_encoder::Bitrate;
 use crate::engine::{self, Settings};
 use crate::fixtures::{self, Audio, lo_fi, music, music_for, pink, tone};
 use crate::flags::Flag;
+use crate::grid::{self, Codec};
 use crate::reading::{Reading, Verdict};
 use crate::thresholds::{MeasureThresholds, ReadingThresholds};
 
@@ -47,13 +48,13 @@ fn flac(dir: &Path, name: &str, audio: &Audio, bits: u32) -> PathBuf {
   path
 }
 
-/// The reading must not call honest audio fake.
+/// The reading must not call honest audio fake, nor its cutoff read as lossy.
 fn not_fake(reading: &Reading) {
   assert!(
     !matches!(
-      reading.verdict,
+      reading.cutoff_verdict,
       Verdict::LikelyTranscode | Verdict::MixedSources
-    ),
+    ) && reading.verdict != Verdict::LikelyTranscode,
     "{reading:#?}"
   );
 }
@@ -109,12 +110,39 @@ fn a_256_kbps_transcode_reads_as_the_cut_it_shares_with_224_kbps() {
 }
 
 #[test]
-fn a_320_kbps_transcode_is_not_read_as_consistent() {
+fn a_320_kbps_transcode_reads_as_a_transcode_by_its_grid() {
   let dir = tempfile::tempdir().unwrap();
   let through = fixtures::through_mp3(&music(1, 44_100, pink), Bitrate::Kbps320, dir.path());
   let reading = analyzed(&flac(dir.path(), "t.flac", &through, 16));
-  assert_ne!(reading.verdict, Verdict::Consistent, "{reading:#?}");
-  assert!(reading.confidence <= 0.75, "{reading:#?}");
+  assert_eq!(reading.verdict, Verdict::LikelyTranscode, "{reading:#?}");
+  assert_eq!(reading.grid.as_ref().map(|g| g.codec), Some(Codec::Mp3));
+  // the cutoff alone cannot tell where the highest bitrates cut
+  assert_eq!(
+    reading.cutoff_verdict,
+    Verdict::Inconclusive,
+    "{reading:#?}"
+  );
+}
+
+#[test]
+fn an_mp3_decode_carries_the_mp3_grid_and_its_source_none() {
+  let dir = tempfile::tempdir().unwrap();
+  let source = music(1, 44_100, pink);
+  let through = fixtures::through_mp3(&source, Bitrate::Kbps128, dir.path());
+  for (name, audio, grid) in [
+    ("decoded.flac", &through, Some(Codec::Mp3)),
+    ("source.flac", &source, None),
+  ] {
+    let measured = engine::run(&flac(dir.path(), name, audio, 16), &settings()).unwrap();
+    let scan = measured.grid.as_ref().expect("a lossless file is scanned");
+    let found = grid::found(scan, &ReadingThresholds::default());
+    assert_eq!(found.as_ref().map(|f| f.codec), grid, "{name}: {scan:?}");
+    if grid.is_some() {
+      assert_eq!(scan.mp3.agree, 4, "{scan:?}");
+    } else {
+      assert!(scan.aac.z < 5.0 && scan.mp3.z < 5.0, "{scan:?}");
+    }
+  }
 }
 
 #[test]
@@ -224,39 +252,62 @@ fn a_mono_source_copied_to_stereo_shows_in_the_measures() {
 }
 
 #[test]
-fn a_lossy_layer_under_a_full_band_bed_reads_as_mixed_sources() {
+fn a_lossy_layer_under_a_full_band_bed_reads_as_mixed_sources_and_shows_its_grid() {
   let dir = tempfile::tempdir().unwrap();
   let stem = fixtures::through_mp3(&music(3, 44_100, pink), Bitrate::Kbps128, dir.path());
   // a full-band bed 23 dB under a stem from a 128 kbps MP3, all the way through
   let layered = stem.mixed(&music(4, 44_100, pink), 0.071);
   let reading = analyzed(&flac(dir.path(), "layered.flac", &layered, 16));
-  assert_eq!(reading.verdict, Verdict::MixedSources, "{reading:#?}");
+  assert_eq!(
+    reading.cutoff_verdict,
+    Verdict::MixedSources,
+    "{reading:#?}"
+  );
   assert!(reading.summary.contains("step"), "{}", reading.summary);
+  assert_eq!(reading.verdict, Verdict::LikelyTranscode, "{reading:#?}");
+  assert_eq!(reading.grid.as_ref().map(|g| g.codec), Some(Codec::Mp3));
 }
 
 #[test]
-fn a_lossy_part_before_lossless_audio_reads_as_mixed_sources() {
+fn a_lossy_part_before_lossless_audio_reads_as_mixed_sources_and_possibly_lossy() {
   let dir = tempfile::tempdir().unwrap();
   let stem = fixtures::through_mp3(&music(3, 44_100, pink), Bitrate::Kbps128, dir.path());
-  // the first twelve seconds from the MP3, the rest lossless
+  // the first twelve seconds from the MP3, the rest lossless: one of the four stretches the
+  // grid scan reads is in the MP3 part, too few to agree on a grid
   let intro = stem.spliced(&music(1, 44_100, pink), 12);
   let reading = analyzed(&flac(dir.path(), "intro.flac", &intro, 16));
-  assert_eq!(reading.verdict, Verdict::MixedSources, "{reading:#?}");
+  assert_eq!(
+    reading.cutoff_verdict,
+    Verdict::MixedSources,
+    "{reading:#?}"
+  );
   assert!(
     reading.summary.starts_with("65% of the time is full-band"),
     "{}",
     reading.summary
   );
+  assert_eq!(reading.verdict, Verdict::PossiblyLossy, "{reading:#?}");
+  assert_eq!(reading.grid, None);
 }
 
 /// A 320 kbps stem under a bed at `gain`: a step where the highest bitrates cut, which a
-/// recording filtered at 20 kHz with something above it also shows.
-fn a_320_kbps_stem_under_a_bed_reads_as_that_cut(gain: f32) {
+/// recording filtered at 20 kHz with something above it also shows. The stem's grid shows
+/// through a bed quiet enough, as `grid`.
+fn a_320_kbps_stem_under_a_bed_reads_as_that_cut(gain: f32, grid: Option<Codec>) {
   let dir = tempfile::tempdir().unwrap();
   let stem = fixtures::through_mp3(&music(3, 44_100, pink), Bitrate::Kbps320, dir.path());
   let layered = stem.mixed(&music(4, 44_100, pink), gain);
   let (reading, why) = explained(&flac(dir.path(), "layered320.flac", &layered, 16));
-  assert_eq!(reading.verdict, Verdict::Inconclusive, "{gain}: {why}");
+  assert_eq!(
+    reading.cutoff_verdict,
+    Verdict::Inconclusive,
+    "{gain}: {why}"
+  );
+  assert_eq!(
+    reading.grid.as_ref().map(|g| g.codec),
+    grid,
+    "{gain}: {why}"
+  );
   let guess = reading.encoder_guess.as_ref().unwrap();
   assert_eq!(
     (guess.profile.as_str(), guess.confidence),
@@ -271,12 +322,12 @@ fn a_320_kbps_stem_under_a_bed_reads_as_that_cut(gain: f32) {
 
 #[test]
 fn a_320_kbps_stem_under_a_bed_23_db_down_reads_as_that_cut() {
-  a_320_kbps_stem_under_a_bed_reads_as_that_cut(0.071);
+  a_320_kbps_stem_under_a_bed_reads_as_that_cut(0.071, Some(Codec::Mp3));
 }
 
 #[test]
 fn a_320_kbps_stem_under_a_bed_15_db_down_reads_as_that_cut() {
-  a_320_kbps_stem_under_a_bed_reads_as_that_cut(0.18);
+  a_320_kbps_stem_under_a_bed_reads_as_that_cut(0.18, None);
 }
 
 #[test]
@@ -470,6 +521,25 @@ fn a_long_file_is_sampled_at_windows_spread_over_it() {
 }
 
 #[test]
+fn a_sampled_file_scans_the_same_samples_for_a_grid_as_one_read_in_full() {
+  let dir = tempfile::tempdir().unwrap();
+  let through = fixtures::through_mp3(&music(1, 44_100, pink), Bitrate::Kbps128, dir.path());
+  let path = flac(dir.path(), "t.flac", &through, 16);
+  let full = engine::run(&path, &settings()).unwrap();
+  // the sampled windows miss the grid's stretches, which are sought and placed by their
+  // packets' timestamps
+  let sampled = Settings {
+    max_full_seconds: 10.0,
+    sampled_windows: 3,
+    ..settings()
+  };
+  let sampled = engine::run(&path, &sampled).unwrap();
+  assert!(sampled.sampled);
+  assert!(full.grid.is_some());
+  assert_eq!(sampled.grid, full.grid);
+}
+
+#[test]
 fn a_canceled_analysis_stops_and_one_out_of_time_reports_what_it_has() {
   let dir = tempfile::tempdir().unwrap();
   let path = flac(dir.path(), "a.flac", &music(1, 44_100, pink), 16);
@@ -495,7 +565,8 @@ fn a_canceled_analysis_stops_and_one_out_of_time_reports_what_it_has() {
   );
 }
 
-/// A transcode that reads as one with the thresholds the analyzer ships with.
+/// Content cut where an encoder cuts, which the cutoff alone reads as a transcode with the
+/// thresholds the analyzer ships with.
 fn a_17_khz_cut(dir: &Path) -> PathBuf {
   flac(
     dir,
@@ -509,14 +580,18 @@ fn a_17_khz_cut(dir: &Path) -> PathBuf {
 fn the_reading_uses_the_thresholds_it_is_given() {
   let dir = tempfile::tempdir().unwrap();
   let measured = engine::run(&a_17_khz_cut(dir.path()), &settings()).unwrap();
-  assert_eq!(read(&measured).verdict, Verdict::LikelyTranscode);
+  assert_eq!(read(&measured).cutoff_verdict, Verdict::LikelyTranscode);
   // no shelf is this sharp, so no window stops with an encoder's low-pass
   let blunt = ReadingThresholds {
     sharp_shelf_db: 1000.0,
     ..ReadingThresholds::default()
   };
   let reading = crate::reading::read(&measured, &blunt);
-  assert_ne!(reading.verdict, Verdict::LikelyTranscode, "{reading:#?}");
+  assert_ne!(
+    reading.cutoff_verdict,
+    Verdict::LikelyTranscode,
+    "{reading:#?}"
+  );
 }
 
 #[test]
@@ -592,26 +667,32 @@ fn a_20_5_khz_cut_at_48_khz_reads_as_that_cut() {
   a_cut_where_the_highest_bitrates_cut_reads_as_that_cut(48_000, 20_500.0);
 }
 
-/// A cut where a lower bitrate cuts is still a transcode at the sample `rate`.
-fn a_17_khz_cut_reads_as_a_transcode(rate: u32) {
+/// A cut where a lower bitrate cuts reads as that encoder's cutoff at the sample `rate`, and
+/// without a codec grid as possibly lossy.
+fn a_17_khz_cut_reads_as_an_encoders_cutoff(rate: u32) {
   let dir = tempfile::tempdir().unwrap();
   let audio = music(1, rate, fixtures::cut_at(17_000.0));
   let reading = analyzed(&flac(dir.path(), "cut.flac", &audio, 16));
   assert_eq!(
-    reading.verdict,
+    reading.cutoff_verdict,
     Verdict::LikelyTranscode,
+    "{rate}: {reading:#?}"
+  );
+  assert_eq!(
+    reading.verdict,
+    Verdict::PossiblyLossy,
     "{rate}: {reading:#?}"
   );
 }
 
 #[test]
-fn a_17_khz_cut_at_44_1_khz_reads_as_a_transcode() {
-  a_17_khz_cut_reads_as_a_transcode(44_100);
+fn a_17_khz_cut_at_44_1_khz_reads_as_an_encoders_cutoff() {
+  a_17_khz_cut_reads_as_an_encoders_cutoff(44_100);
 }
 
 #[test]
-fn a_17_khz_cut_at_48_khz_reads_as_a_transcode() {
-  a_17_khz_cut_reads_as_a_transcode(48_000);
+fn a_17_khz_cut_at_48_khz_reads_as_an_encoders_cutoff() {
+  a_17_khz_cut_reads_as_an_encoders_cutoff(48_000);
 }
 
 /// Writes a FLAC of `seconds` of music at `path` that states it holds `frames` sample frames.
@@ -848,7 +929,8 @@ fn a_cliff_at_an_old_equipment_rate_reads_as_its_encoder_and_says_so() {
   // 192 kbps MP3 cuts, and the reading cannot tell them apart
   let audio = music(1, 37_800, pink).resampled(44_100);
   let (reading, why) = explained(&flac(dir.path(), "xa.flac", &audio, 16));
-  assert_eq!(reading.verdict, Verdict::LikelyTranscode, "{why}");
+  assert_eq!(reading.cutoff_verdict, Verdict::LikelyTranscode, "{why}");
+  assert_eq!(reading.verdict, Verdict::PossiblyLossy, "{why}");
   assert!(
     reading.limitations.iter().any(|l| l.contains("37.8 kHz")),
     "{reading:#?}"

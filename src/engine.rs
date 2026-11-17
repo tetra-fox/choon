@@ -18,6 +18,7 @@ use symphonia::core::io::MediaSource;
 use tracing::debug;
 
 use crate::decode::{Claimed, Decoder, Filled};
+use crate::grid::{self, Scan, Segments};
 use crate::measure::{Analyzer, FFT_SIZE, Window};
 use crate::thresholds::MeasureThresholds;
 use crate::totals::Totals;
@@ -79,6 +80,11 @@ pub struct Measured {
   pub(crate) bits_used: Option<u32>,
   /// Whether only windows spread over the file were analyzed.
   pub sampled: bool,
+  /// Scan of the samples for a codec's frame grid.
+  ///
+  /// `None` for a file that claims a lossy codec, one too short for the scan, or one whose
+  /// scan could not run, which [`Reading::limitations`](crate::Reading::limitations) says.
+  pub grid: Option<Scan>,
   /// the channels left out of a file with more than two
   pub(crate) channels_left_out: u32,
   /// what made the analysis stop early or skip audio, in words for the report
@@ -225,6 +231,7 @@ fn unreadable(problem: String) -> Measured {
     totals: Totals::default(),
     bits_used: None,
     sampled: false,
+    grid: None,
     channels_left_out: 0,
     problems: vec![problem],
   }
@@ -237,6 +244,12 @@ fn measure(mut decoder: Decoder, settings: &Settings) -> Result<Measured, Cancel
   let stated = claimed.frames.map(|frames| frames as f64 / rate as f64);
   let mut analyzer = Analyzer::new(claimed.sample_rate, claimed.bit_depth, &settings.thresholds);
   let mut buffer = vec![Vec::with_capacity(rate); decoder.channels];
+  // a lossy file carries its own codec's grid, which says nothing
+  let mut segments = claimed
+    .frames
+    .filter(|_| claimed.lossless)
+    .and_then(Segments::of);
+  let unscanned = claimed.lossless && claimed.frames.is_none();
   let mut measured = Measured {
     duration: stated.unwrap_or(0.0),
     bitrate_kbps: None,
@@ -246,6 +259,7 @@ fn measure(mut decoder: Decoder, settings: &Settings) -> Result<Measured, Cancel
     totals: Totals::default(),
     bits_used: None,
     sampled: false,
+    grid: None,
     problems: Vec::new(),
   };
   let picks = stated
@@ -259,6 +273,7 @@ fn measure(mut decoder: Decoder, settings: &Settings) -> Result<Measured, Cancel
         &mut analyzer,
         &mut buffer,
         &picks,
+        &mut segments,
         settings,
         &mut measured,
       )?
@@ -271,6 +286,7 @@ fn measure(mut decoder: Decoder, settings: &Settings) -> Result<Measured, Cancel
         &mut analyzer,
         &mut buffer,
         Windows::Upto(longest),
+        &mut segments,
         settings,
         &mut measured,
       )?
@@ -288,7 +304,6 @@ fn measure(mut decoder: Decoder, settings: &Settings) -> Result<Measured, Cancel
       }
     }
   }
-  settings.report(1.0);
   measured.bits_used = decoder.bits_used();
   if measured.claimed.as_ref().is_some_and(|c| !c.lossless) {
     measured.bitrate_kbps = decoder.bitrate_kbps();
@@ -302,6 +317,16 @@ fn measure(mut decoder: Decoder, settings: &Settings) -> Result<Measured, Cancel
   if let Some(stopped) = decoder.stopped.take() {
     measured.problems.push(stopped);
   }
+  if unscanned {
+    measured.problems.push(UNSCANNED.to_string());
+  }
+  if let Some(mut segments) = segments {
+    if !segments.complete() && measured.sampled {
+      read_segments(&mut decoder, &mut segments, settings)?;
+    }
+    measured.grid = scan_grid(&segments, settings, &mut measured)?;
+  }
+  settings.report(1.0);
   debug!(
     windows = measured.windows.len(),
     sampled = measured.sampled,
@@ -309,6 +334,81 @@ fn measure(mut decoder: Decoder, settings: &Settings) -> Result<Measured, Cancel
     "audio measured"
   );
   Ok(measured)
+}
+
+/// What is said of a lossless file that states no length.
+const UNSCANNED: &str = "The file does not state its length, so its codec grid was not scanned";
+
+/// Reads the segments of the grid scan that sampled windows did not, seeking to each and
+/// placing its samples by the timestamps of their packets. A segment that cannot be read whole
+/// stays short.
+fn read_segments(
+  decoder: &mut Decoder,
+  segments: &mut Segments,
+  settings: &Settings,
+) -> Result<(), Canceled> {
+  // without whole frames per tick, a packet's timestamp does not place its first sample
+  if !decoder.ticks_fit_frames() {
+    return Ok(());
+  }
+  let channels = decoder.claimed.channels as usize;
+  let mut samples = Vec::new();
+  for index in segments.missing() {
+    while let Some(next) = segments.needs(index) {
+      if is_canceled(settings.canceled.as_ref()) {
+        return Err(Canceled);
+      }
+      if Instant::now() >= settings.deadline {
+        return Ok(());
+      }
+      if segments.untouched(index) && decoder.seek_frame(next) != Ok(true) {
+        debug!(frame = next, "seeking to a grid segment failed");
+        return Ok(());
+      }
+      let Some(frames) = decoder.next_interleaved(&mut samples) else {
+        return Ok(());
+      };
+      // a packet past the frame needed leaves a gap no later packet fills
+      if frames.start > next {
+        debug!(frame = next, "a grid segment's packets leave a gap");
+        return Ok(());
+      }
+      segments.take_interleaved(frames.start, &samples, channels);
+    }
+  }
+  Ok(())
+}
+
+/// Scans full `segments` for a codec's frame grid; `None`, noted in `measured`, when they are
+/// not full or the analysis runs out of time first.
+fn scan_grid(
+  segments: &Segments,
+  settings: &Settings,
+  measured: &mut Measured,
+) -> Result<Option<Scan>, Canceled> {
+  if !segments.complete() {
+    debug!("the grid segments were not all read");
+    measured.problems.push(
+      "The stretches the codec grid scan reads were not all read, so the scan did not run"
+        .to_string(),
+    );
+    return Ok(None);
+  }
+  let mut canceled = false;
+  let scan = grid::scan(segments, || {
+    canceled = is_canceled(settings.canceled.as_ref());
+    !canceled && Instant::now() < settings.deadline
+  });
+  if canceled {
+    return Err(Canceled);
+  }
+  if scan.is_none() {
+    debug!("grid scan out of time");
+    measured
+      .problems
+      .push("The analysis ran out of time before the codec grid scan finished".to_string());
+  }
+  Ok(scan)
 }
 
 /// The whole seconds `count` windows spread evenly over `seconds` of audio start at.
@@ -412,6 +512,7 @@ fn whole(
   analyzer: &mut Analyzer,
   buffer: &mut [Vec<f32>],
   read: Windows<'_>,
+  segments: &mut Option<Segments>,
   settings: &Settings,
   measured: &mut Measured,
 ) -> Result<Reached, Canceled> {
@@ -460,6 +561,9 @@ fn whole(
       Filled::Full => rate,
       Filled::End(length) => length,
     };
+    if let Some(segments) = segments {
+      segments.take(second * rate as u64, buffer);
+    }
     let wanted = match read {
       Windows::Upto(_) => true,
       Windows::Only(picks) => picks.contains(&second),
@@ -484,6 +588,7 @@ fn sampled(
   analyzer: &mut Analyzer,
   buffer: &mut [Vec<f32>],
   picks: &BTreeSet<u64>,
+  segments: &mut Option<Segments>,
   settings: &Settings,
   measured: &mut Measured,
 ) -> Result<Reached, Canceled> {
@@ -515,6 +620,7 @@ fn sampled(
         analyzer,
         buffer,
         Windows::Only(picks),
+        segments,
         settings,
         measured,
       )? {

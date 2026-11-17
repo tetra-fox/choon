@@ -111,7 +111,9 @@ fn main() -> Result<(), Canceled> {
   let reading = reading::read(&measured, &ReadingThresholds::default());
   match reading.verdict {
     Verdict::LikelyTranscode | Verdict::MixedSources => println!("lossy: {}", reading.summary),
-    Verdict::Consistent | Verdict::Inconclusive => println!("{:?}", reading.verdict),
+    Verdict::Consistent | Verdict::PossiblyLossy | Verdict::Inconclusive => {
+      println!("{:?}", reading.verdict)
+    }
   }
   Ok(())
 }

@@ -9,11 +9,12 @@ use std::time::{Duration, Instant};
 
 use choon::decode::Claimed;
 use choon::engine::{self, Measured, Settings};
+use choon::grid::Scan;
 use choon::{Flag, MeasureThresholds, Reading, ReadingThresholds, Verdict, reading};
 use clap::{Args, Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 
-/// Every file read is consistent with its format, or the analyzer cannot tell.
+/// Every file read is consistent with its format, possibly lossy, or the analyzer cannot tell.
 const CLEAN: u8 = 0;
 /// At least one file reads as lossy audio in a lossless file.
 const LOSSY: u8 = 1;
@@ -34,9 +35,9 @@ struct Cli {
 enum Command {
   /// Read each file and print what its audio is
   #[command(after_help = "\
-Exit status: 0 when every file is consistent with its format or inconclusive, 1 when at least \
-one reads as a likely transcode or mixed sources, 2 when a file could not be read or an argument \
-was wrong. A file the analyzer cannot open as audio is one that could not be read.")]
+Exit status: 0 when every file is consistent with its format, possibly lossy or inconclusive, 1 \
+when at least one reads as a likely transcode or mixed sources, 2 when a file could not be read or \
+an argument was wrong. A file the analyzer cannot open as audio is one that could not be read.")]
   Check(Check),
 }
 
@@ -102,6 +103,7 @@ struct Analyzed<'a> {
   bitrate_kbps: Option<u32>,
   sampled: bool,
   windows: usize,
+  grid: Option<&'a Scan>,
   readings: Vec<Read>,
 }
 
@@ -203,6 +205,7 @@ fn run(check: &Check) -> Result<u8, Failed> {
         bitrate_kbps: measured.bitrate_kbps,
         sampled: measured.sampled,
         windows: measured.windows.len(),
+        grid: measured.grid.as_ref(),
         readings,
       })
       .expect("a reading serializes")
@@ -233,7 +236,7 @@ fn print(out: &mut impl Write, line: &str) -> Result<bool, Failed> {
 fn lossy(verdict: Verdict) -> bool {
   match verdict {
     Verdict::LikelyTranscode | Verdict::MixedSources => true,
-    Verdict::Consistent | Verdict::Inconclusive => false,
+    Verdict::Consistent | Verdict::PossiblyLossy | Verdict::Inconclusive => false,
   }
 }
 
@@ -346,14 +349,42 @@ fn said(readings: &[Read]) -> String {
   }
 }
 
-/// A reading in a few words: the verdict, where the content stops and which encoder that
-/// matches, the findings beside it and how sure it is.
+/// A reading in a few words. A grid names its codec, offset and z, then where the content
+/// stops and which encoder that matches; a doubt says what the cutoff alone read; any other
+/// reading gives the verdict, the cutoff, the encoder of a lossy verdict, the findings beside it
+/// and how sure it is.
 fn words(reading: &Reading) -> String {
+  let cut = reading.cutoff_hz.map_or_else(
+    || "no cutoff found".to_string(),
+    |hz| format!("cut at {:.1} kHz", hz / 1000.0),
+  );
+  let guess = reading.encoder_guess.as_ref().map(|g| g.profile.as_str());
+  if let Some(grid) = &reading.grid {
+    let at = guess.map_or_else(String::new, |g| format!(", where {g} cuts"));
+    return format!(
+      "likely transcode: {} grid at offset {} (z {:.0}), {cut}{at}",
+      grid.codec.name(),
+      grid.scan.offset,
+      grid.scan.z
+    );
+  }
+  if reading.verdict == Verdict::PossiblyLossy {
+    let read_as = match reading.cutoff_verdict {
+      Verdict::MixedSources => "mixed sources",
+      _ => "an encoder's cutoff",
+    };
+    let like = guess.map_or_else(String::new, |g| format!(", like {g}"));
+    return format!(
+      "possibly lossy, cannot confirm: no codec grid; the spectrum reads as {read_as} \
+       ({cut}{like})"
+    );
+  }
   let mut parts = vec![
     match reading.verdict {
       Verdict::Consistent => "consistent",
       Verdict::LikelyTranscode => "likely transcode",
       Verdict::MixedSources => "mixed sources",
+      Verdict::PossiblyLossy => "possibly lossy",
       Verdict::Inconclusive => "inconclusive",
     }
     .to_string(),

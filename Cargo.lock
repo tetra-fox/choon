@@ -183,6 +183,7 @@ dependencies = [
  "mp3lame-encoder",
  "proptest",
  "realfft",
+ "rustfft",
  "serde",
  "serde_json",
  "symphonia",

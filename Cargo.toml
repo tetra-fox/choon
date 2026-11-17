@@ -26,6 +26,8 @@ required-features = ["cli"]
 
 [dependencies]
 realfft = "3.5.1"
+# the half-length complex transform of the codec grid scan's DCT-IV
+rustfft = "6.4.1"
 serde = { version = "1.0.229", features = ["derive"] }
 # decodes every audio format the analyzer reads, streamed
 symphonia = { version = "0.6.1", features = ["all"] }
@@ -59,6 +61,9 @@ unsafe_code = "forbid"
 all = { level = "warn", priority = -1 }
 
 # the transforms and decoders are slow unoptimized; tests analyze audio
+[profile.dev.package.choon]
+opt-level = 3
+
 [profile.dev.package.rustfft]
 opt-level = 3
 

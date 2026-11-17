@@ -160,6 +160,22 @@ pub struct ReadingThresholds {
   pub high_bitrate_kbps: u32,
   /// Cutoffs of common lossy encoder settings, lowest first.
   pub profiles: Vec<Profile>,
+  /// Robust z over which the AAC scan finds a frame grid.
+  ///
+  /// It is compared with [`CodecScan::z`](crate::grid::CodecScan::z). A lower value finds more
+  /// grids in decodes that hide them, such as clipped ones, and finds them in more lossless
+  /// files whose counts happen to dip at one offset.
+  pub aac_grid_z: f64,
+  /// Robust z over which the MP3 scan finds a frame grid.
+  ///
+  /// It is compared with [`CodecScan::z`](crate::grid::CodecScan::z), as `aac_grid_z` is.
+  pub mp3_grid_z: f64,
+  /// Fewest segments that put their lowest count at the file's offset, for a frame grid.
+  ///
+  /// A decode carries one grid from start to end, so every segment finds it at the same
+  /// offset. A lossless file whose counts dip somewhere by chance dips at a different offset in
+  /// each segment. A file that holds a lossy section only in part also falls short.
+  pub grid_segments_agreeing: usize,
 }
 
 /// Band top of a rate some old equipment recorded at.
@@ -255,6 +271,10 @@ impl Default for ReadingThresholds {
         ),
         Profile::new(20_500.0, "mp3 ~320 kbps", 320, None),
       ],
+      // the highest z of the lossless files of half the tuning masters
+      aac_grid_z: 7.79,
+      mp3_grid_z: 11.57,
+      grid_segments_agreeing: 3,
     }
   }
 }

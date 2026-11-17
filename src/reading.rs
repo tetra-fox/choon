@@ -1,23 +1,28 @@
 //! The analyzer's reading of its measures.
 //!
 //! A reading says whether the audio is consistent with the format it claims, a likely
-//! transcode, a mix of sources, or something the analyzer cannot tell, with how sure it is, the
-//! findings independent of that, one summary, and what made it less reliable. The reading works
-//! from the spread over windows, not an average, so a band-limited minority of the time or of
-//! the band reads as mixed sources rather than as a transcode.
+//! transcode, a mix of sources, possibly lossy, or something the analyzer cannot tell, with how
+//! sure it is, the findings independent of that, one summary, and what made it less reliable.
+//! The cutoff is read from the spread over windows, not an average, so a band-limited minority
+//! of the time or of the band reads as mixed sources rather than as a transcode.
+//!
+//! In a file that claims a lossless format, the cutoff is weighed with the scan for a codec's
+//! frame grid ([`grid`]). Only a grid calls the file a likely transcode; a cutoff
+//! that reads as lossy without one makes the file possibly lossy.
 
 use serde::Serialize;
 
 use crate::aggregate::{Measures, measures, middle, percentile, upsample_ratio};
 use crate::engine::Measured;
 use crate::flags::{Flag, findings};
+use crate::grid::{self, Codec, Found};
 use crate::measure::{Step, Window};
 use crate::thresholds::{Profile, ReadingThresholds};
 
 /// The top of the band of a 48 kHz recording; a file whose band goes past it is hi-res.
 const HI_RES_TOP_HZ: f64 = 24_000.0;
 
-/// What the analyzer makes of the cutoff.
+/// What the analyzer makes of a file.
 ///
 /// # Examples
 ///
@@ -40,7 +45,7 @@ const HI_RES_TOP_HZ: f64 = 24_000.0;
 /// let reading = reading::read(&measured, &ReadingThresholds::default());
 /// let lossy = match reading.verdict {
 ///   Verdict::LikelyTranscode | Verdict::MixedSources => true,
-///   Verdict::Consistent | Verdict::Inconclusive => false,
+///   Verdict::Consistent | Verdict::PossiblyLossy | Verdict::Inconclusive => false,
 /// };
 /// println!("{}", if lossy { "lossy" } else { "no lossy source found" });
 /// ```
@@ -51,12 +56,21 @@ pub enum Verdict {
   ///
   /// It does so without an encoder's shelf.
   Consistent,
-  /// Nearly every window stops at the same known encoder cutoff with a sharp shelf.
+  /// A codec's frame grid shows in the samples.
+  ///
+  /// Where no grid scan ran, as in a file that claims a lossy codec, nearly every window stops
+  /// at the same known encoder cutoff with a sharp shelf.
   LikelyTranscode,
   /// Part of the time or of the band is band-limited while the rest is full band.
   ///
-  /// It is what one low-bitrate stem mixed into a lossless track looks like.
+  /// It is what one low-bitrate stem mixed into a lossless track looks like. A file whose grid
+  /// was scanned reads as possibly lossy instead.
   MixedSources,
+  /// The cutoff reads as lossy, but no codec's frame grid shows.
+  ///
+  /// The cutoff alone reads as a transcode or as mixed sources. A recording filtered where an
+  /// encoder cuts and a decode resampled afterwards both look like this.
+  PossiblyLossy,
   /// Too little audio, or measures that fit no pattern.
   Inconclusive,
 }
@@ -74,8 +88,12 @@ pub struct EncoderGuess {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Reading {
-  /// Reading of the cutoff.
+  /// Reading of the file, the cutoff weighed with the grid scan.
   pub verdict: Verdict,
+  /// Reading of the cutoff alone.
+  pub cutoff_verdict: Verdict,
+  /// Codec frame grid the samples show.
+  pub grid: Option<Found>,
   /// How sure the reading is, from 0 to the confidence cap.
   pub confidence: f64,
   /// Findings independent of the cutoff.
@@ -258,6 +276,8 @@ pub fn read(measured: &Measured, thresholds: &ReadingThresholds) -> Reading {
   let Some(claimed) = &measured.claimed else {
     return Reading {
       verdict: Verdict::Inconclusive,
+      cutoff_verdict: Verdict::Inconclusive,
+      grid: None,
       confidence: 0.0,
       flags: Vec::new(),
       encoder_guess: None,
@@ -357,9 +377,19 @@ pub fn read(measured: &Measured, thresholds: &ReadingThresholds) -> Reading {
       khz(edge.hz)
     ));
   }
+  let cutoff_verdict = found.verdict;
+  let grid = measured
+    .grid
+    .as_ref()
+    .and_then(|scan| grid::found(scan, thresholds));
+  if measured.grid.is_some() {
+    found = weighed(found, grid.as_ref(), thresholds);
+  }
   limitations.extend(found.limitations);
   Reading {
     verdict: found.verdict,
+    cutoff_verdict,
+    grid,
     confidence: found.confidence,
     flags: found_beside.flags,
     encoder_guess: found.encoder_guess,
@@ -370,6 +400,55 @@ pub fn read(measured: &Measured, thresholds: &ReadingThresholds) -> Reading {
     measures,
     limitations,
     cutoff_hz: found.cutoff_hz,
+  }
+}
+
+/// The cutoff reading `found` weighed with the grid scan, which found `grid`: a grid makes a
+/// likely transcode, and a cutoff that reads as lossy without one makes a doubt.
+fn weighed(
+  found: CutoffReading,
+  grid: Option<&Found>,
+  thresholds: &ReadingThresholds,
+) -> CutoffReading {
+  if let Some(grid) = grid {
+    let name = grid.codec.name();
+    let mut limitations = found.limitations;
+    if grid.codec == Codec::Aac {
+      limitations.push("A Vorbis decode's frame grid reads as AAC's".to_string());
+    }
+    return CutoffReading {
+      verdict: Verdict::LikelyTranscode,
+      confidence: thresholds.confidence_cap,
+      summary: format!(
+        "The samples carry an {name} frame grid at offset {} (z {:.0}, {} of 4 segments \
+         agreeing), as audio decoded from {name} does. {}",
+        grid.scan.offset, grid.scan.z, grid.scan.agree, found.summary
+      ),
+      limitations,
+      ..found
+    };
+  }
+  match found.verdict {
+    Verdict::LikelyTranscode | Verdict::MixedSources => {
+      let mut limitations = found.limitations;
+      limitations.push(
+        "A recording filtered where an encoder cuts, and a decode resampled afterwards, stop at \
+         an encoder's cutoff without a frame grid"
+          .to_string(),
+      );
+      CutoffReading {
+        verdict: Verdict::PossiblyLossy,
+        confidence: 0.4,
+        summary: format!(
+          "{} No MP3 or AAC frame grid shows in the samples, so the cutoff alone cannot confirm \
+           a lossy source.",
+          found.summary
+        ),
+        limitations,
+        ..found
+      }
+    }
+    Verdict::Consistent | Verdict::PossiblyLossy | Verdict::Inconclusive => found,
   }
 }
 
