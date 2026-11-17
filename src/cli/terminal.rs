@@ -48,12 +48,26 @@ pub fn painted(verdict: Option<Verdict>, text: &str, colour: bool) -> String {
   }
 }
 
+/// `path` as a terminal shows it. a control character in a file's name is written as its
+/// escape, so a name cannot move the cursor, colour what follows it or start a line
+pub fn legible(path: &Path) -> String {
+  let mut text = String::new();
+  for character in path.to_string_lossy().chars() {
+    if character.is_control() {
+      text.extend(character.escape_default());
+    } else {
+      text.push(character);
+    }
+  }
+  text
+}
+
 /// a file under way
 struct Flying {
   file: usize,
   name: String,
-  /// how far the analysis says it is, in thousandths
-  progress: Arc<AtomicU32>,
+  /// how far each measuring of it says it is, in thousandths
+  progress: Vec<Arc<AtomicU32>>,
   /// its bar, when the terminal has a line for one
   bar: Option<ProgressBar>,
 }
@@ -104,7 +118,7 @@ impl Bars {
     }
   }
 
-  pub fn started(&mut self, file: usize, name: String, progress: Arc<AtomicU32>) {
+  pub fn started(&mut self, file: usize, name: String, progress: Vec<Arc<AtomicU32>>) {
     self.flying.push(Flying {
       file,
       name,
@@ -192,7 +206,12 @@ impl Bars {
       });
       let name = console::truncate_str(&flying.name, name_width, "...");
       bar.set_prefix(console::pad_str(&name, name_width, Alignment::Left, None).into_owned());
-      bar.set_position(u64::from(flying.progress.load(Ordering::Relaxed)));
+      let measured: u64 = flying
+        .progress
+        .iter()
+        .map(|measuring| u64::from(measuring.load(Ordering::Relaxed)))
+        .sum();
+      bar.set_position(measured / flying.progress.len().max(1) as u64);
     }
   }
 
@@ -237,14 +256,14 @@ fn room(rows: u16, overall: bool, flying: usize) -> usize {
   }
 }
 
-/// a table without borders, as wide as the terminal at most, its header underlined when it has
+/// a table without borders, `width` columns wide at most, its header underlined when it has
 /// one
-fn table() -> Table {
+fn table(width: u16) -> Table {
   let mut table = Table::new();
   table
     .load_style(TableStyle::new().header_separator(LineStyle::none().fill('-').junction(' ')))
     .set_content_arrangement(ContentArrangement::Dynamic)
-    .set_width(Term::stdout().size().1);
+    .set_width(width);
   table
 }
 
@@ -276,8 +295,8 @@ fn length(time: Duration) -> String {
 }
 
 /// one file's reading in detail, under each profile when `profiled`: aligned lines of a label
-/// and its value
-pub fn readout(path: &Path, checked: &Checked, profiled: bool, colour: bool) -> String {
+/// and its value, wrapped at `width` columns
+pub fn readout(path: &Path, checked: &Checked, profiled: bool, colour: bool, width: u16) -> String {
   let claimed = &checked.claimed;
   let mut format = vec![claimed.codec.clone(), format!("{} Hz", claimed.sample_rate)];
   if let Some(bits) = claimed.bit_depth {
@@ -297,12 +316,12 @@ pub fn readout(path: &Path, checked: &Checked, profiled: bool, colour: bool) -> 
   let mut text = String::new();
   for read in &checked.readings {
     let reading = &read.reading;
-    text += &path.display().to_string();
+    text += &legible(path);
     if profiled {
       text += &format!(" [{}]", read.profile);
     }
     text += "\n";
-    let mut table = table();
+    let mut table = table(width);
     let mut add = |label: &str, value: String| {
       table.add_row([label, &value]);
     };
@@ -371,6 +390,7 @@ pub fn tables(
   verbose: bool,
   took: Duration,
   colour: bool,
+  width: u16,
 ) -> String {
   let read: Vec<(&Path, &Checked)> = rows
     .iter()
@@ -391,7 +411,7 @@ pub fn tables(
       .collect()
   });
   if !profiles.is_empty() {
-    let mut counts = table();
+    let mut counts = table(width);
     let mut header = vec!["Verdict"];
     if profiled {
       header.extend(&profiles);
@@ -415,7 +435,7 @@ pub fn tables(
     text += "\n";
   }
 
-  let mut totals = table();
+  let mut totals = table(width);
   totals.add_row(["Files read", &read.len().to_string()]);
   totals.add_row(["Files not read", &not_read.len().to_string()]);
   totals.add_row(["Wall time", &length(took)]);
@@ -433,7 +453,7 @@ pub fn tables(
     .collect();
   // a path comes last in its line and is never wrapped, so it can be copied whole
   if !found.is_empty() {
-    let mut list = table();
+    let mut list = table(width);
     list.set_content_arrangement(ContentArrangement::Disabled);
     let mut header = vec!["Verdict", "Grid", "Cutoff", "Encoder guess"];
     if profiled {
@@ -458,7 +478,7 @@ pub fn tables(
         if profiled {
           row.push(read.profile.clone());
         }
-        row.push(path.display().to_string());
+        row.push(legible(path));
         list.add_row(row);
       }
     }
@@ -469,14 +489,14 @@ pub fn tables(
   if !not_read.is_empty() {
     text += "\nNot read\n--------\n";
     for (path, why) in &not_read {
-      text += &format!("{}: {why}\n", path.display());
+      text += &format!("{}: {why}\n", legible(path));
     }
   }
 
   if verbose && !found.is_empty() {
     text += "\n";
     for (path, checked) in &found {
-      text += &readout(path, checked, profiled, colour);
+      text += &readout(path, checked, profiled, colour, width);
     }
   }
   text
@@ -491,7 +511,152 @@ fn right_align(table: &mut Table, first: usize) {
 
 #[cfg(test)]
 mod tests {
-  use super::room;
+  use std::path::Path;
+  use std::sync::Arc;
+  use std::time::Duration;
+
+  use choon::fixtures::{self, Bitrate, music, pink};
+  use choon::{CancelCheck, Coverage};
+
+  use super::{Row, legible, readout, room, tables};
+  use crate::{Checked, Thresholds, analyzed};
+
+  /// what the shipped thresholds make of an honest FLAC and of one made from a 128 kbps MP3
+  fn honest_and_fake() -> (Box<Checked>, Box<Checked>) {
+    let dir = tempfile::tempdir().unwrap();
+    let honest = dir.path().join("honest.flac");
+    fixtures::write_flac(&music(1, 44_100, pink), 16, false, &honest);
+    let fake = dir.path().join("fake.flac");
+    let through = fixtures::through_mp3(&music(1, 44_100, pink), Bitrate::Kbps128, dir.path());
+    fixtures::write_flac(&through, 16, false, &fake);
+    let profiles = [("default".to_string(), Thresholds::default())];
+    let never: CancelCheck = Arc::new(|| false);
+    let checked = |path: &Path| {
+      Box::new(analyzed(path, &profiles, Coverage::Full, &[Arc::default()], &never).unwrap())
+    };
+    (checked(&honest), checked(&fake))
+  }
+
+  /// `text` without the codes that colour it
+  fn uncoloured(text: &str) -> String {
+    let mut plain = String::new();
+    let mut rest = text;
+    while let Some(at) = rest.find("\u{1b}[") {
+      plain += &rest[..at];
+      let code = &rest[at..];
+      rest = &code[code.find('m').unwrap() + 1..];
+    }
+    plain + rest
+  }
+
+  #[test]
+  fn a_control_character_in_a_name_is_written_as_its_escape() {
+    assert_eq!(
+      legible(Path::new("a\nb\u{1b}[31m \u{e9}.flac")),
+      "a\\nb\\u{1b}[31m \u{e9}.flac"
+    );
+  }
+
+  #[test]
+  fn a_readout_lines_up_its_values_and_wraps_them_under_themselves() {
+    let (_, fake) = honest_and_fake();
+    let text = readout(Path::new("album/fake.flac"), &fake, false, false, 60);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines[0], "album/fake.flac");
+    assert!(
+      lines.contains(&"  Verdict         likely transcode"),
+      "{text}"
+    );
+    assert!(lines.contains(&"  Encoder guess   mp3 ~128 kbps"), "{text}");
+    assert!(
+      lines
+        .iter()
+        .any(|line| line.starts_with("  Grid            MP3 at offset ")),
+      "{text}"
+    );
+    // the summary is longer than a line: what follows its first line starts under its value
+    let summary = lines
+      .iter()
+      .position(|line| line.starts_with("  Summary"))
+      .unwrap();
+    assert!(
+      lines[summary + 1].starts_with("                  "),
+      "{text}"
+    );
+    assert!(lines.iter().all(|line| line.len() <= 60), "{text}");
+
+    let coloured = readout(Path::new("album/fake.flac"), &fake, false, true, 60);
+    assert!(
+      coloured.contains("\u{1b}[31mlikely transcode\u{1b}[0m"),
+      "{coloured}"
+    );
+    assert_eq!(uncoloured(&coloured), text);
+  }
+
+  #[test]
+  fn tables_count_each_verdict_and_list_the_flagged_and_the_unread() {
+    let (honest, fake) = honest_and_fake();
+    let rows = [
+      Row {
+        path: Path::new("album/ev\u{1b}[31mil\n.flac"),
+        outcome: Ok(fake),
+      },
+      Row {
+        path: Path::new("album/honest.flac"),
+        outcome: Ok(honest),
+      },
+      Row {
+        path: Path::new("album/text.flac"),
+        outcome: Err("the container was not recognized".to_string()),
+      },
+    ];
+    let text = tables(&rows, false, false, Duration::from_secs(30), false, 100);
+    let lines: Vec<&str> = text.lines().collect();
+    let cells = |start: &str| -> Vec<&str> {
+      let line = lines.iter().find(|line| line.starts_with(start));
+      line
+        .unwrap_or_else(|| panic!("{start}: {text}"))
+        .split("  ")
+        .filter(|cell| !cell.is_empty())
+        .map(str::trim)
+        .collect()
+    };
+    assert!(lines.contains(&"Verdict            Files"), "{text}");
+    assert!(lines.contains(&"consistent             1"), "{text}");
+    assert!(lines.contains(&"likely transcode       1"), "{text}");
+    assert!(lines.contains(&"possibly lossy         0"), "{text}");
+    assert_eq!(cells("Files read"), ["Files read", "2"]);
+    assert_eq!(cells("Files not read"), ["Files not read", "1"]);
+    assert_eq!(cells("Wall time"), ["Wall time", "30 s"]);
+    assert_eq!(cells("Files per minute"), ["Files per minute", "6"]);
+    assert_eq!(
+      cells("Verdict            Grid"),
+      ["Verdict", "Grid", "Cutoff", "Encoder guess", "Path"]
+    );
+    // the one flagged file, its name on one line with nothing a terminal would act on
+    let flagged = cells("likely transcode   MP3");
+    assert_eq!(
+      flagged[3..],
+      ["mp3 ~128 kbps", "album/ev\\u{1b}[31mil\\n.flac"]
+    );
+    assert!(!text.contains('\u{1b}'), "{text}");
+    let unread = lines.iter().position(|line| *line == "Not read").unwrap();
+    assert_eq!(
+      lines[unread + 1..],
+      [
+        "--------",
+        "album/text.flac: the container was not recognized"
+      ]
+    );
+
+    // colour changes no column
+    let coloured = tables(&rows, false, false, Duration::from_secs(30), true, 100);
+    assert!(
+      coloured.contains("\u{1b}[31mlikely transcode\u{1b}[0m"),
+      "{coloured}"
+    );
+    assert_eq!(uncoloured(&coloured), text);
+  }
 
   #[test]
   fn the_bars_take_at_most_half_the_terminal() {

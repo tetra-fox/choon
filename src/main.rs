@@ -217,10 +217,11 @@ enum Failed {
 
 /// what the threads reading files tell the one that prints
 enum Event {
-  /// the file at this index is being read, and says here how far it is, in thousandths
+  /// the file at this index is being read, and says here how far each measuring of it is, in
+  /// thousandths
   Started {
     file: usize,
-    progress: Arc<AtomicU32>,
+    progress: Vec<Arc<AtomicU32>>,
   },
   Done {
     file: usize,
@@ -244,12 +245,11 @@ impl std::fmt::Display for Failed {
 
 /// reads every file named and returns the exit status
 fn run(check: &Check) -> Result<u8, Failed> {
-  let mut out = io::stdout().lock();
   if check.defaults {
     // the defaults are numbers, strings and lists of them, which always serialize
     let defaults =
       serde_json::to_string_pretty(&Thresholds::default()).expect("thresholds serialize");
-    print(&mut out, &defaults)?;
+    print(&mut io::stdout().lock(), &defaults)?;
     return Ok(CLEAN);
   }
   let profiles = if check.profile.is_empty() {
@@ -278,7 +278,7 @@ fn run(check: &Check) -> Result<u8, Failed> {
   .map_err(Failed::Stdin)?;
   let mut code = CLEAN;
   for problem in &inputs.problems {
-    eprintln!("choon: {}: {}", problem.path.display(), problem.why);
+    eprintln!("{}", complaint(&problem.path, &problem.why));
     if problem.unread {
       code = FAILED;
     }
@@ -304,6 +304,16 @@ fn run(check: &Check) -> Result<u8, Failed> {
     let stop = stop.clone();
     Arc::new(move || stop.load(Ordering::Relaxed))
   };
+  // profiles that measure alike share one measuring of a file
+  let measurings = profiles
+    .iter()
+    .enumerate()
+    .filter(|(at, (_, thresholds))| {
+      profiles[..*at]
+        .iter()
+        .all(|(_, earlier)| earlier.measure != thresholds.measure)
+    })
+    .count();
   let (events, received) = mpsc::sync_channel(jobs);
   let read = {
     let (stop, profiles) = (&*stop, &profiles);
@@ -311,7 +321,7 @@ fn run(check: &Check) -> Result<u8, Failed> {
       if stop.load(Ordering::Relaxed) {
         return;
       }
-      let progress = Arc::new(AtomicU32::new(0));
+      let progress: Vec<Arc<AtomicU32>> = (0..measurings).map(|_| Arc::default()).collect();
       let event = Event::Started {
         file,
         progress: progress.clone(),
@@ -395,7 +405,7 @@ fn printed(
         }
       }
       Err(Error::Open(e)) => {
-        eprintln!("choon: {}: {e}", file.display());
+        eprintln!("{}", complaint(file, e));
         continue;
       }
       Err(Error::NotAudio(why) | Error::Unsupported(why)) => {
@@ -445,7 +455,7 @@ fn shown(
     match received.recv_timeout(TICK) {
       Ok(Event::Started { file, progress }) => {
         let name = files[file].file_name().unwrap_or(files[file].as_os_str());
-        bars.started(file, name.to_string_lossy().into_owned(), progress);
+        bars.started(file, terminal::legible(Path::new(name)), progress);
       }
       Ok(Event::Done { file, result }) => {
         bars.ended(file);
@@ -458,19 +468,23 @@ fn shown(
               .iter()
               .any(|read| flagged(read.reading.verdict));
             if !one && (flagged || check.verbose) {
-              let line = format!("{}: {}", path.display(), said(&checked.readings, colour));
+              let line = format!(
+                "{}: {}",
+                terminal::legible(path),
+                said(&checked.readings, colour)
+              );
               bars.say(&line).map_err(Failed::Output)?;
             }
             Ok(checked)
           }
           Err(Error::Open(e)) => {
-            bars.complain(&format!("choon: {}: {e}", path.display()));
+            bars.complain(&complaint(path, &e));
             Err(e.to_string())
           }
           Err(Error::NotAudio(why) | Error::Unsupported(why)) => {
             let line = format!(
               "{}: {}: {why}",
-              path.display(),
+              terminal::legible(path),
               terminal::painted(None, "not read as audio", colour)
             );
             bars.say(&line).map_err(Failed::Output)?;
@@ -489,19 +503,37 @@ fn shown(
   }
   bars.finish();
   rows.sort_by_key(|row| row.path);
+  let width = console::Term::stdout().size().1;
   let text = match &rows[..] {
     [
       Row {
         path,
         outcome: Ok(checked),
       },
-    ] => terminal::readout(path, checked, profiled, colour),
+    ] => terminal::readout(path, checked, profiled, colour, width),
     // its failure is already on the screen
     [_] => return Ok(code),
-    _ => terminal::tables(&rows, profiled, check.verbose, started.elapsed(), colour),
+    _ => terminal::tables(
+      &rows,
+      profiled,
+      check.verbose,
+      started.elapsed(),
+      colour,
+      width,
+    ),
   };
   print(&mut io::stdout().lock(), text.trim_end())?;
   Ok(code)
+}
+
+/// an error about `path` as stderr shows it, with the path made legible when stderr is a
+/// terminal
+fn complaint(path: &Path, why: impl std::fmt::Display) -> String {
+  if io::stderr().is_terminal() {
+    format!("choon: {}: {why}", terminal::legible(path))
+  } else {
+    format!("choon: {}: {why}", path.display())
+  }
 }
 
 /// writes `line` to `out`; false when the reader has closed the pipe, as `head` does once it has
@@ -572,11 +604,12 @@ fn profile(path: &Path) -> Result<(String, Thresholds), Failed> {
 
 /// what the file at `path` measured, and its readings under each of `profiles`. profiles whose
 /// measure thresholds are the same share one measuring, so the file is decoded once for them.
+/// each measuring says how far it is in the next of `progress`, which holds one for each.
 fn analyzed(
   path: &Path,
   profiles: &[(String, Thresholds)],
   coverage: Coverage,
-  progress: &Arc<AtomicU32>,
+  progress: &[Arc<AtomicU32>],
   canceled: &CancelCheck,
 ) -> Result<Checked, Error> {
   let mut measured: Vec<(&MeasureThresholds, Measured, f64)> = Vec::new();
@@ -591,7 +624,7 @@ fn analyzed(
         let settings = Settings {
           coverage,
           thresholds: thresholds.measure.clone(),
-          progress: Some(progress.clone()),
+          progress: Some(progress[measured.len()].clone()),
           canceled: Some(canceled.clone()),
           ..Settings::default()
         };
