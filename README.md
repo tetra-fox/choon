@@ -5,9 +5,11 @@
 [![ci](https://github.com/tetra-fox/choon/actions/workflows/ci.yml/badge.svg)](https://github.com/tetra-fox/choon/actions/workflows/ci.yml)
 [![license](https://img.shields.io/crates/l/choon)](#license)
 
+Checks if a choon is proper, mate.
+
 Reads an audio file's spectrum a second at a time and judges whether the audio is what its
 format claims, such as a FLAC made from an MP3. It comes as a program, `choon`, and as a
-library. "Choon" is British dance-music slang for a great track.
+library.
 
 ## What it reads
 
@@ -145,6 +147,30 @@ written as FLAC and through the LAME MP3 encoder) the crate's own tests read. It
 from source, so it needs a C compiler and `make`.
 
 The library logs through `tracing` and installs no subscriber.
+
+## References
+
+The frame-grid detection under development builds on this work on the compression history of
+decoded audio:
+
+- O. Derrien, "Detection of genuine lossless audio files. Application to the MPEG-AAC codec",
+  *Journal of the Audio Engineering Society* 67(3), pp. 116-123, 2019.
+  [doi:10.17743/jaes.2019.0002](https://doi.org/10.17743/jaes.2019.0002),
+  [author's version](https://hal.science/hal-02055742).
+- J. Lacroix, Y. Prime, A. Remy, O. Derrien, "Lossless Audio Checker: a software for the
+  detection of upscaling, upsampling and transcoding in lossless musical tracks", AES 139th
+  Convention, paper 9416, 2015. [AES E-Library](https://www.aes.org/e-lib/browse.cfm?elib=17972).
+- R. Yang, Z. Qu, J. Huang, "Detecting digital audio forgeries by checking frame offsets",
+  *Proceedings of the 10th ACM Workshop on Multimedia and Security*, pp. 21-26, 2008.
+- R. Korycki, "Detection of montage in lossy compressed digital audio recordings", *Archives of
+  Acoustics* 39(1), pp. 65-72, 2014.
+- T. Bianchi, A. De Rosa, M. Fontani, G. Rocciolo, A. Piva, "Detection and classification of
+  double compressed MP3 audio tracks", *Proceedings of the 1st ACM Workshop on Information Hiding
+  and Multimedia Security*, 2013.
+  [Open access](https://iris.polito.it/bitstream/11583/2508475/2/bianchi_IHMMSEC13_OA.pdf).
+
+The filterbanks follow the codec standards: ISO/IEC 11172-3 (MPEG-1 Audio Layer III) and
+ISO/IEC 13818-7 (MPEG-2 AAC).
 
 ## License
 
