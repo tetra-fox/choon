@@ -18,6 +18,7 @@ command-line tool and a Rust library.
 - Guesses the encoder setting behind a transcode, such as `mp3 ~128 kbps`
 - Flags upsampled audio, bit-padded samples and two channels holding the same audio
 - Finds lossy parts mixed into lossless audio (an intro, a stem)
+- Checks a whole library in one run: directories, a list of paths on stdin, files in parallel
 - Exit codes and JSON output for scripts
 - Every threshold is data, readable from a profile file
 
@@ -83,20 +84,62 @@ cargo install choon
 ### CLI
 
 ```console
-$ choon check *.flac
-honest.flac: consistent, confidence 0.80
-fake-128.flac: likely transcode: MP3 grid at offset 48 (z 226), cut at 16.7 kHz, where mp3 ~128 kbps cuts
-fake-320.flac: likely transcode: MP3 grid at offset 48 (z 131), cut at 20.2 kHz, where mp3 ~320 kbps or aac cuts
-cut-19.flac: possibly lossy, cannot confirm: no codec grid; the spectrum reads as an encoder's cutoff (cut at 19.3 kHz, like mp3 ~224 kbps)
+$ choon check music/
+music/fake-128.flac: likely transcode: MP3 grid at offset 1 (z 110), cut at 16.8 kHz, where mp3 ~128 kbps cuts
+music/cut-19.flac: possibly lossy, cannot confirm: no codec grid; the spectrum reads as an encoder's cutoff (cut at 19.4 kHz, like mp3 ~224 kbps)
+music/fake-320.flac: likely transcode: MP3 grid at offset 1 (z 126), cut at 20.2 kHz, where mp3 ~320 kbps or aac cuts
+
+Verdict            Files
+------------------ -------
+consistent             1
+likely transcode       2
+mixed sources          0
+possibly lossy         1
+inconclusive           0
+
+Files read             4
+Files not read         0
+Wall time          0.9 s
+Files per minute     255
+
+Verdict            Grid            Cutoff     Encoder guess          Path
+------------------ --------------- ---------- ---------------------- ---------------------
+possibly lossy                     19.4 kHz   mp3 ~224 kbps          music/cut-19.flac
+likely transcode   MP3, offset 1   16.8 kHz   mp3 ~128 kbps          music/fake-128.flac
+likely transcode   MP3, offset 1   20.2 kHz   mp3 ~320 kbps or aac   music/fake-320.flac
 ```
+
+A terminal shows a progress bar per file and one for the run, each flagged file as it is found,
+then these tables. One file alone gets its reading in detail. Piped or with `--json`, each file is
+one line, in the order files finish:
+
+```console
+$ fd -e flac . music/ | choon check - | sort
+music/cut-19.flac: possibly lossy, cannot confirm: no codec grid; the spectrum reads as an encoder's cutoff (cut at 19.4 kHz, like mp3 ~224 kbps)
+music/fake-128.flac: likely transcode: MP3 grid at offset 1 (z 110), cut at 16.8 kHz, where mp3 ~128 kbps cuts
+music/fake-320.flac: likely transcode: MP3 grid at offset 1 (z 126), cut at 20.2 kHz, where mp3 ~320 kbps or aac cuts
+music/honest.flac: consistent, confidence 0.73
+```
+
+| Argument    | Description                                                         |
+| ----------- | ------------------------------------------------------------------- |
+| a file      | read whatever its name                                              |
+| a directory | read with the directories under it, by audio extension              |
+| `-`         | the paths listed on stdin, one per line, or NUL-separated with `-0` |
 
 | Option                                     | Description                                               |
 | ------------------------------------------ | --------------------------------------------------------- |
+| `-j`, `--jobs N`                           | read up to N files at once, on N threads                  |
+| `-L`, `--follow`                           | follow symbolic links in a directory                      |
+| `-v`, `--verbose`                          | print every file in a terminal, flagged ones in detail    |
+| `--color WHEN`                             | colour the verdicts: `auto`, `always` or `never`          |
 | `--json`                                   | print each file as one line of JSON                       |
 | `--profile FILE`                           | read with the thresholds in FILE in place of the defaults |
 | `--defaults`                               | print the default thresholds as JSON                      |
 | `--max-full-minutes M --sampled-windows N` | read files longer than M minutes at N one-second windows  |
 
+- A walk skips hidden files and directories; `choon check --help` lists the extensions it reads
+- `--jobs` defaults to the number of cores; a file's grid scan runs on the same threads
 - A JSON line holds the claimed format, the length, the windows read, the grid scan and every
   reading
 - A profile is `{"measure": {...}, "reading": {...}}`; keys left out keep their default and
