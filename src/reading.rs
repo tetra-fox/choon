@@ -492,7 +492,7 @@ fn verdict(
   }) / clustered.max(f64::EPSILON);
   // a lossy file's own encoder cuts off too: only a cutoff well below its bitrate's counts
   let below_claim =
-    |profile: &Profile| lossless || bitrate.is_some_and(|kbps| profile.kbps * 3 / 2 <= kbps);
+    |profile: &Profile| lossless || bitrate.is_some_and(|kbps| below_bitrate(profile.kbps, kbps));
 
   if let Some(profile) = lower_profile_at(t, median).filter(|p| below_claim(p))
     && clustered >= t.transcode_share
@@ -742,6 +742,12 @@ fn verdict(
   reading
 }
 
+/// Whether a profile at `profile_kbps` cuts well below what a file of `kbps` keeps: the file's
+/// bitrate is at least one and a half times the profile's.
+fn below_bitrate(profile_kbps: u32, kbps: u32) -> bool {
+  u64::from(profile_kbps) * 3 / 2 <= u64::from(kbps)
+}
+
 /// Whether a cut at `edge` keeps what a file of `kbps` does: it sits at the cutoff of a bitrate
 /// no lower than the highest one up to `kbps`, or past every cutoff of that bitrate. A file below
 /// every bitrate known keeps whatever it does.
@@ -799,6 +805,13 @@ mod tests {
 
   fn spread(cuts: &[(f64, usize)]) -> Vec<f64> {
     cuts.iter().flat_map(|(c, n)| [*c].repeat(*n)).collect()
+  }
+
+  #[test]
+  fn a_bitrate_at_the_top_of_its_type_is_compared_without_overflow() {
+    assert!(below_bitrate(128, 192));
+    assert!(!below_bitrate(128, 191));
+    assert!(!below_bitrate(u32::MAX, u32::MAX));
   }
 
   #[test]
