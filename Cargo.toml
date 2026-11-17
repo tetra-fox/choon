@@ -1,6 +1,6 @@
 [package]
 name = "choon"
-description = "Tells whether an audio file is what its format claims, such as a FLAC made from an MP3"
+description = "Detect lossless audio files made from lossy ones, such as a FLAC transcoded from an MP3"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"
@@ -57,13 +57,19 @@ anstream = { version = "1.0.0", optional = true }
 anstyle = { version = "1.0.14", optional = true }
 clap = { version = "4.6.7", features = ["derive"], optional = true }
 # custom_styling measures a cell around the colour codes already in its text
-comfy-table = { version = "8.0.1", features = ["custom_styling"], optional = true }
+comfy-table = { version = "8.0.1", features = [
+  "custom_styling",
+], optional = true }
 console = { version = "0.16.6", optional = true }
 # without its wasm support
-indicatif = { version = "0.18.6", default-features = false, features = ["unicode-width"], optional = true }
+indicatif = { version = "0.18.6", default-features = false, features = [
+  "unicode-width",
+], optional = true }
 walkdir = { version = "2.5.0", optional = true }
 # a float written and read back is the same float, to its last digit
-serde_json = { version = "1.0.154", features = ["float_roundtrip"], optional = true }
+serde_json = { version = "1.0.154", features = [
+  "float_roundtrip",
+], optional = true }
 
 # make the lossless and lossy audio the analyzer is tested on. mp3lame-encoder builds the LAME
 # source it carries with autotools (`configure`, `make`, a C compiler)
