@@ -362,7 +362,7 @@ impl Segments {
 #[derive(Clone, Copy)]
 pub(crate) struct Opus {
   /// the file's sample rate
-  pub(crate) rate: u32,
+  pub(crate) rate: lattice::Rate,
   /// the bits of its samples, whose rounding noise a band must stand over
   pub(crate) bits: u32,
   /// the frames counted in the windows measured, on the grid of an uncut decode
@@ -387,78 +387,79 @@ pub(crate) fn scan(
   ended: impl Fn() + Sync,
 ) -> Option<Scan> {
   assert!(segments.complete(), "every segment is full before a scan");
-  let codecs = [
-    Some(Codec::Aac),
-    Some(Codec::Mp3),
-    opus.map(|_| Codec::Opus),
-  ];
-  let jobs: Vec<(Codec, &Segment)> = segments
+  let kinds = [Some(Job::Aac), Some(Job::Mp3), opus.map(Job::Opus)];
+  let jobs: Vec<(Job, &Segment)> = segments
     .0
     .iter()
-    .flat_map(|segment| {
-      codecs
-        .into_iter()
-        .flatten()
-        .map(move |codec| (codec, segment))
-    })
+    .flat_map(|segment| kinds.into_iter().flatten().map(move |job| (job, segment)))
     .collect();
-  let curves: Vec<(Codec, Vec<f64>)> = jobs
+  let curves: Vec<Curve> = jobs
     .into_par_iter()
-    .map(|(codec, segment)| {
+    .map(|(job, segment)| {
       go_on().then(|| {
-        let curve = match (codec, opus) {
-          (Codec::Aac, _) => in_file(&Aac::curve(segment), segment.start),
-          (Codec::Mp3, _) => in_file(&Mp3::new().curve(segment), segment.start),
-          // the counts come in the file's offsets, and are whole numbers far below 2^53
-          (Codec::Opus, Some(opus)) => {
+        let curve = match job {
+          Job::Aac => Curve::Aac(in_file(&Aac::curve(segment), segment.start)),
+          Job::Mp3 => Curve::Mp3(in_file(&Mp3::new().curve(segment), segment.start)),
+          // the counts come in the file's offsets
+          Job::Opus(opus) => {
             let channels = [&segment.left[..], &segment.right[..]];
-            lattice::curve(&channels, segment.start, opus.rate, opus.bits)
-              .into_iter()
-              .map(|count| count as f64)
-              .collect()
+            Curve::Opus(lattice::curve(
+              &channels,
+              segment.start,
+              opus.rate,
+              opus.bits,
+            ))
           }
-          (Codec::Opus, None) => unreachable!("opus is a job only with what it needs"),
         };
         ended();
-        (codec, curve)
+        curve
       })
     })
     .collect::<Option<_>>()?;
-  let of = |wanted: Codec| -> Vec<Vec<f64>> {
-    curves
-      .iter()
-      .filter(|(codec, _)| *codec == wanted)
-      .map(|(_, curve)| curve.clone())
-      .collect()
-  };
+  let (mut aac, mut mp3, mut frames) = (Vec::new(), Vec::new(), Vec::new());
+  for curve in curves {
+    match curve {
+      Curve::Aac(curve) => aac.push(curve),
+      Curve::Mp3(curve) => mp3.push(curve),
+      Curve::Opus(curve) => frames.push(curve),
+    }
+  }
   Some(Scan {
-    aac: codec_scan(&of(Codec::Aac)),
-    mp3: codec_scan(&of(Codec::Mp3)),
-    opus: opus.map(|opus| opus_scan(&of(Codec::Opus), opus.uncut_frames)),
+    aac: codec_scan(&aac),
+    mp3: codec_scan(&mp3),
+    opus: opus.map(|opus| opus_scan(&frames, opus.uncut_frames)),
   })
+}
+
+/// what one job of a scan looks for in its segment
+#[derive(Clone, Copy)]
+enum Job {
+  Aac,
+  Mp3,
+  Opus(Opus),
+}
+
+/// what a job found at each offset of the file's grid: MP3's and AAC's counts of transform
+/// values on a log scale, Opus's counts of frames
+enum Curve {
+  Aac(Vec<f64>),
+  Mp3(Vec<f64>),
+  Opus(Vec<usize>),
 }
 
 /// the scan for Opus from its segments' counts in the file's offsets: the first offset with the
 /// most frames over the segments, the uncut decode's when none has any
-fn opus_scan(curves: &[Vec<f64>], uncut_frames: usize) -> OpusScan {
-  let summed: Vec<f64> = (0..lattice::FRAME)
-    .map(|o| curves.iter().map(|c| c[o]).sum())
-    .collect();
-  let (offset, frames) =
-    summed
-      .iter()
-      .enumerate()
-      .fold((OPUS_UNCUT_OFFSET, 0.0), |(at, most), (o, count)| {
-        if *count > most {
-          (o, *count)
-        } else {
-          (at, most)
-        }
-      });
+fn opus_scan(curves: &[Vec<usize>], uncut_frames: usize) -> OpusScan {
+  let (offset, frames) = (0..lattice::FRAME)
+    .map(|o| curves.iter().map(|c| c[o]).sum::<usize>())
+    .enumerate()
+    .fold((OPUS_UNCUT_OFFSET, 0), |(at, most), (o, count)| {
+      if count > most { (o, count) } else { (at, most) }
+    });
   OpusScan {
     offset,
-    frames: frames as usize,
-    segment_frames: std::array::from_fn(|i| curves[i][offset] as usize),
+    frames,
+    segment_frames: std::array::from_fn(|i| curves[i][offset]),
     uncut_frames,
   }
 }

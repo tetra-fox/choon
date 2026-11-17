@@ -404,10 +404,10 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
   let stated = claimed.frames.map(|frames| frames as f64 / rate as f64);
   // samples without a stated depth are floats, which round no coarser than 24 bits
   let bits = claimed.bit_depth.unwrap_or(24);
-  let scans_opus = claimed.lossless && lattice::reads(claimed.sample_rate);
+  let opus_rate = lattice::Rate::of(claimed.sample_rate).filter(|_| claimed.lossless);
   let mut measuring = Measuring {
     analyzer: Analyzer::new(claimed.sample_rate, claimed.bit_depth, &settings.thresholds),
-    uncut: scans_opus.then(|| Uncut::new(claimed.sample_rate, bits)),
+    uncut: opus_rate.map(|rate| Uncut::new(rate, bits)),
   };
   let mut buffer: Vec<Vec<f32>> = (0..decoder.channels)
     .map(|_| Vec::with_capacity(rate))
@@ -450,7 +450,7 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
     settings,
     // a file with segments states its length, so its count of windows is finite
     windows_share: if segments.is_some() {
-      windows / (windows + grid::jobs(scans_opus) as f64 * SCAN_JOB_WINDOWS)
+      windows / (windows + grid::jobs(opus_rate.is_some()) as f64 * SCAN_JOB_WINDOWS)
     } else {
       1.0
     },
@@ -513,11 +513,13 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
     measured.problems.push(Limitation::GridNotScanned);
   }
   if let Some(segments) = &segments {
-    let opus = measuring.uncut.as_ref().map(|uncut| grid::Opus {
-      rate: measured.claimed.sample_rate,
-      bits,
-      uncut_frames: uncut.frames(),
-    });
+    let opus = opus_rate
+      .zip(measuring.uncut.as_ref())
+      .map(|(rate, uncut)| grid::Opus {
+        rate,
+        bits,
+        uncut_frames: uncut.frames(),
+      });
     measured.grid = scan_grid(segments, opus, &run, &mut measured)?;
   }
   settings.report(1.0);

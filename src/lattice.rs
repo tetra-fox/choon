@@ -69,9 +69,24 @@ const KAISER_BETA: f64 = 12.0;
 /// the output samples at each end of a resampled stretch that lack input the filter reads
 const EDGE: usize = 70;
 
-/// whether samples at `rate` are looked at: 48 kHz, and 44.1 kHz brought back to it
-pub(crate) fn reads(rate: u32) -> bool {
-  rate == RATE || rate == 44_100
+/// a sample rate the analysis reads
+#[derive(Clone, Copy)]
+pub(crate) enum Rate {
+  /// 48 kHz, the rate CELT runs at
+  Native,
+  /// 44.1 kHz, brought back to 48 kHz
+  From44100,
+}
+
+impl Rate {
+  /// `rate` in Hz when it is one the analysis reads
+  pub(crate) fn of(rate: u32) -> Option<Self> {
+    match rate {
+      RATE => Some(Self::Native),
+      44_100 => Some(Self::From44100),
+      _ => None,
+    }
+  }
 }
 
 /// the rounding noise of a transform value in each band of pre-emphasized `bits`-bit samples
@@ -249,17 +264,19 @@ struct Stretch {
 impl Stretch {
   /// the stretch of `channels` at `rate` whose first sample is frame `first` of the file;
   /// `None` when nothing is left of it at 48 kHz
-  fn of(channels: &[&[f64]], first: u64, rate: u32) -> Option<Self> {
-    if rate == RATE {
-      return Some(Self {
-        channels: channels
-          .iter()
-          .map(|c| pre_emphasized(c.iter().copied()))
-          .collect(),
-        start: first,
-      });
-    }
-    let resampler = Resampler::get(rate);
+  fn of(channels: &[&[f64]], first: u64, rate: Rate) -> Option<Self> {
+    let resampler = match rate {
+      Rate::Native => {
+        return Some(Self {
+          channels: channels
+            .iter()
+            .map(|c| pre_emphasized(c.iter().copied()))
+            .collect(),
+          start: first,
+        });
+      }
+      Rate::From44100 => Resampler::from_44100(),
+    };
     // start on a sample that is also one of the 48 kHz lattice
     let down = resampler.down as u64;
     let skip = ((down - first % down) % down) as usize;
@@ -302,7 +319,7 @@ impl Stretch {
 
 /// for each offset of the file's frame grid at 48 kHz, how many frames of the stretch of
 /// `channels` at `rate`, whose first sample is frame `first` of the file, sit on the lattice
-pub(crate) fn curve(channels: &[&[f64]], first: u64, rate: u32, bits: u32) -> Vec<usize> {
+pub(crate) fn curve(channels: &[&[f64]], first: u64, rate: Rate, bits: u32) -> Vec<usize> {
   match Stretch::of(channels, first, rate) {
     Some(stretch) => stretch.curve(bits),
     None => vec![0; FRAME],
@@ -313,13 +330,13 @@ pub(crate) fn curve(channels: &[&[f64]], first: u64, rate: u32, bits: u32) -> Ve
 /// of a decode whose start was not cut
 pub(crate) struct Uncut {
   celt: Celt,
-  rate: u32,
+  rate: Rate,
   windows: usize,
   frames: usize,
 }
 
 impl Uncut {
-  pub(crate) fn new(rate: u32, bits: u32) -> Self {
+  pub(crate) fn new(rate: Rate, bits: u32) -> Self {
     Self {
       celt: Celt::new(bits),
       rate,
@@ -370,11 +387,10 @@ struct Resampler {
 }
 
 impl Resampler {
-  /// the filter from `rate`, made once
-  fn get(rate: u32) -> &'static Self {
+  /// the filter from 44.1 kHz, made once
+  fn from_44100() -> &'static Self {
     static FROM_44100: std::sync::LazyLock<Resampler> =
       std::sync::LazyLock::new(|| Resampler::new(44_100));
-    assert_eq!(rate, 44_100, "only 44.1 kHz is brought to 48 kHz");
     &FROM_44100
   }
 
@@ -491,7 +507,7 @@ mod tests {
     // 1 kHz at 44.1 kHz, read at 48 kHz: sample j is the tone at j / 48000 s
     let tone = |n: usize, rate: f64| (2.0 * std::f64::consts::PI * 1000.0 * n as f64 / rate).sin();
     let input: Vec<f64> = (0..4410).map(|n| tone(n, 44_100.0)).collect();
-    let output = Resampler::get(44_100).run(&input);
+    let output = Resampler::from_44100().run(&input);
     assert_eq!(output.len(), 4800);
     for (j, sample) in output.iter().enumerate().take(4800 - EDGE).skip(EDGE) {
       assert!((sample - tone(j, 48_000.0)).abs() < 1e-5, "{j}: {sample}");
