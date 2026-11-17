@@ -1,0 +1,83 @@
+[package]
+name = "earwitness"
+description = "Reads an audio file's spectrum a second at a time and judges whether it is what its format claims, such as a FLAC made from an MP3"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "AGPL-3.0-only"
+repository = "https://github.com/tetra-fox/earwitness"
+readme = "README.md"
+keywords = ["audio", "flac", "lossless", "transcode", "spectrum"]
+categories = ["multimedia::audio", "command-line-utilities"]
+include = ["/src/", "/README.md", "/LICENSE"]
+
+[features]
+default = ["cli"]
+# the `earwitness` program; a library user turns default features off and builds none of it
+cli = ["dep:clap", "dep:serde_json"]
+# the generated audio and the sample file the analyzer is tested on, for the tests of the crates
+# that use this one
+testing = ["dep:flacenc", "dep:mp3lame-encoder"]
+
+[[bin]]
+name = "earwitness"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[dependencies]
+realfft = "3.5.1"
+serde = { version = "1.0.229", features = ["derive"] }
+# decodes every audio format the analyzer reads, streamed
+symphonia = { version = "0.6.1", features = ["all"] }
+symphonia-common = "0.6.1"
+tracing = "0.1.44"
+
+clap = { version = "4.6.7", features = ["derive"], optional = true }
+# a float written and read back is the same float, to its last digit
+serde_json = { version = "1.0.154", features = ["float_roundtrip"], optional = true }
+
+# make the lossless and lossy audio the analyzer is tested on. mp3lame-encoder builds the LAME
+# source it carries with autotools (`configure`, `make`, a C compiler)
+flacenc = { version = "0.5.1", default-features = false, optional = true }
+mp3lame-encoder = { version = "0.3.0", optional = true }
+
+[dev-dependencies]
+# the crate itself with `testing`, for the generated audio its tests read
+earwitness = { path = ".", features = ["testing"] }
+proptest = "1.12.0"
+serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
+tempfile = "3.27.0"
+
+[[test]]
+name = "cli"
+required-features = ["cli"]
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+
+# the transforms and decoders are slow unoptimized; tests analyze audio
+[profile.dev.package.rustfft]
+opt-level = 3
+
+[profile.dev.package.symphonia-bundle-mp3]
+opt-level = 3
+
+[profile.dev.package.symphonia-bundle-flac]
+opt-level = 3
+
+[profile.dev.package.symphonia-core]
+opt-level = 3
+
+# a WAV test builds a fragment of 2^30 samples, which the demuxer walks one by one
+[profile.dev.package.symphonia-format-isomp4]
+opt-level = 3
+
+# the encoders the tests make audio with
+[profile.dev.package.flacenc]
+opt-level = 3
+
+[profile.dev.package.mp3lame-sys]
+opt-level = 3

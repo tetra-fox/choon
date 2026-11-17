@@ -1,0 +1,337 @@
+//! The `earwitness` program: reads audio files and says, a line or a JSON object for each,
+//! whether each is what its format claims, with an exit status a script can act on.
+
+use std::borrow::Cow;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+use std::time::{Duration, Instant};
+
+use clap::{Args, Parser, Subcommand};
+use earwitness::decode::Claimed;
+use earwitness::engine::{self, Measured, Settings};
+use earwitness::{Flag, MeasureThresholds, Reading, ReadingThresholds, Verdict, reading};
+use serde::{Deserialize, Serialize};
+
+/// Every file read is consistent with its format, or the analyzer cannot tell.
+const CLEAN: u8 = 0;
+/// At least one file reads as lossy audio in a lossless file.
+const LOSSY: u8 = 1;
+/// A file could not be read or an argument was wrong.
+const FAILED: u8 = 2;
+
+#[derive(Parser)]
+#[command(
+  version,
+  about = "Tells whether audio files are what their format claims, such as a FLAC made from an MP3"
+)]
+struct Cli {
+  #[command(subcommand)]
+  command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+  /// Read each file and print what its audio is
+  #[command(after_help = "\
+Exit status: 0 when every file is consistent with its format or inconclusive, 1 when at least \
+one reads as a likely transcode or mixed sources, 2 when a file could not be read or an argument \
+was wrong. A file that opens but is not audio the analyzer can decode reads as inconclusive.")]
+  Check(Check),
+}
+
+#[derive(Args)]
+struct Check {
+  /// The audio files to read
+  #[arg(required_unless_present = "defaults")]
+  files: Vec<PathBuf>,
+
+  /// Print each file as one line of JSON, with every measure and reading
+  #[arg(long)]
+  json: bool,
+
+  /// Read with the thresholds in FILE, a JSON object like the one --defaults prints, in place of
+  /// the defaults. Keys left out keep their default, unknown keys are refused. Repeat it to read
+  /// each file with several profiles, each named after its file
+  #[arg(long, value_name = "FILE")]
+  profile: Vec<PathBuf>,
+
+  /// Print the default thresholds as JSON and exit
+  #[arg(long, exclusive = true)]
+  defaults: bool,
+
+  /// Read files up to this many minutes long in full and longer ones at windows spread over
+  /// them. Without it every file is read in full
+  #[arg(
+    long,
+    value_name = "MINUTES",
+    requires = "sampled_windows",
+    value_parser = minutes
+  )]
+  max_full_minutes: Option<f64>,
+
+  /// How many one-second windows a file longer than --max-full-minutes is read at
+  #[arg(
+    long,
+    value_name = "COUNT",
+    requires = "max_full_minutes",
+    value_parser = clap::value_parser!(u32).range(1..)
+  )]
+  sampled_windows: Option<u32>,
+}
+
+/// What a file is measured and read with: a profile.
+#[derive(Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct Thresholds {
+  measure: MeasureThresholds,
+  reading: ReadingThresholds,
+}
+
+/// What is printed for a file with `--json`.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Analyzed<'a> {
+  file: Cow<'a, str>,
+  claimed: Option<&'a Claimed>,
+  duration_seconds: f64,
+  bitrate_kbps: Option<u32>,
+  sampled: bool,
+  windows: usize,
+  readings: Vec<Read>,
+}
+
+/// One profile's reading of a file, with how long it took.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Read {
+  profile: String,
+  /// how long decoding and measuring the file took, shared by the profiles that measure alike
+  measure_seconds: f64,
+  read_seconds: f64,
+  #[serde(flatten)]
+  reading: Reading,
+}
+
+/// How files are read: in full up to a length, sampled past it.
+struct Reach {
+  max_full_seconds: f64,
+  sampled_windows: usize,
+}
+
+fn main() -> ExitCode {
+  let Command::Check(check) = Cli::parse().command;
+  match run(&check) {
+    Ok(code) => ExitCode::from(code),
+    // a reader that stopped reading, as `head` does, has what it wanted
+    Err(Failed::Output(e)) if e.kind() == io::ErrorKind::BrokenPipe => ExitCode::from(CLEAN),
+    Err(e) => {
+      eprintln!("earwitness: {e}");
+      ExitCode::from(FAILED)
+    }
+  }
+}
+
+/// What ends a check before every file is read.
+enum Failed {
+  Profile(PathBuf, String),
+  Output(io::Error),
+}
+
+impl std::fmt::Display for Failed {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      Self::Profile(path, e) => write!(f, "{}: {e}", path.display()),
+      Self::Output(e) => write!(f, "writing the output: {e}"),
+    }
+  }
+}
+
+/// Reads every file named and returns the exit status.
+fn run(check: &Check) -> Result<u8, Failed> {
+  let mut out = io::stdout().lock();
+  if check.defaults {
+    // the defaults are numbers, strings and lists of them, which always serialize
+    let defaults =
+      serde_json::to_string_pretty(&Thresholds::default()).expect("thresholds serialize");
+    writeln!(out, "{defaults}").map_err(Failed::Output)?;
+    return Ok(CLEAN);
+  }
+  let profiles = if check.profile.is_empty() {
+    vec![("default".to_string(), Thresholds::default())]
+  } else {
+    check
+      .profile
+      .iter()
+      .map(|path| profile(path))
+      .collect::<Result<_, _>>()?
+  };
+  let reach = match (check.max_full_minutes, check.sampled_windows) {
+    (Some(minutes), Some(count)) => Reach {
+      max_full_seconds: minutes * 60.0,
+      sampled_windows: count as usize,
+    },
+    // clap lets neither through without the other
+    _ => Reach {
+      max_full_seconds: f64::INFINITY,
+      sampled_windows: 0,
+    },
+  };
+  let mut code = CLEAN;
+  for file in &check.files {
+    if let Err(e) = openable(file) {
+      eprintln!("earwitness: {}: {e}", file.display());
+      code = FAILED;
+      continue;
+    }
+    let analyzed = analyzed(file, &profiles, &reach);
+    let lossy = analyzed.1.iter().any(|read| {
+      matches!(
+        read.reading.verdict,
+        Verdict::LikelyTranscode | Verdict::MixedSources
+      )
+    });
+    if lossy && code == CLEAN {
+      code = LOSSY;
+    }
+    let line = if check.json {
+      let (measured, readings) = analyzed;
+      // the readings are numbers, strings and lists of them, which always serialize
+      serde_json::to_string(&Analyzed {
+        file: file.to_string_lossy(),
+        claimed: measured.claimed.as_ref(),
+        duration_seconds: measured.duration,
+        bitrate_kbps: measured.bitrate_kbps,
+        sampled: measured.sampled,
+        windows: measured.windows.len(),
+        readings,
+      })
+      .expect("a reading serializes")
+    } else {
+      format!("{}: {}", file.display(), said(&analyzed.1))
+    };
+    writeln!(out, "{line}").map_err(Failed::Output)?;
+  }
+  Ok(code)
+}
+
+/// The minutes `text` names, refusing a negative or endless length.
+fn minutes(text: &str) -> Result<f64, String> {
+  let minutes: f64 = text.parse().map_err(|e| format!("{e}"))?;
+  if !minutes.is_finite() || minutes < 0.0 {
+    return Err("not a length in minutes".to_string());
+  }
+  Ok(minutes)
+}
+
+/// Whether the file at `path` can be opened for reading.
+fn openable(path: &Path) -> io::Result<()> {
+  let file = std::fs::File::open(path)?;
+  if file.metadata()?.is_dir() {
+    return Err(io::Error::other("it is a directory"));
+  }
+  Ok(())
+}
+
+/// The profile in the file at `path`, named after the file.
+fn profile(path: &Path) -> Result<(String, Thresholds), Failed> {
+  let failed = |e: String| Failed::Profile(path.to_path_buf(), e);
+  let text = std::fs::read_to_string(path).map_err(|e| failed(e.to_string()))?;
+  let thresholds = serde_json::from_str(&text).map_err(|e| failed(e.to_string()))?;
+  let name = path.file_stem().map_or_else(
+    || path.display().to_string(),
+    |stem| stem.to_string_lossy().into_owned(),
+  );
+  Ok((name, thresholds))
+}
+
+/// What the file at `path` measured, and its readings under each of `profiles`. Profiles whose
+/// measure thresholds are the same share one measuring, so the file is decoded once for them.
+fn analyzed(
+  path: &Path,
+  profiles: &[(String, Thresholds)],
+  reach: &Reach,
+) -> (Measured, Vec<Read>) {
+  let mut measured: Vec<(&MeasureThresholds, Measured, f64)> = Vec::new();
+  let mut readings = Vec::new();
+  for (name, thresholds) in profiles {
+    let at = match measured
+      .iter()
+      .position(|(alike, ..)| **alike == thresholds.measure)
+    {
+      Some(at) => at,
+      None => {
+        let settings = Settings {
+          max_full_seconds: reach.max_full_seconds,
+          sampled_windows: reach.sampled_windows,
+          // a day, which no single file takes: the reading covers the whole file
+          deadline: Instant::now() + Duration::from_secs(24 * 60 * 60),
+          progress: None,
+          canceled: None,
+          thresholds: thresholds.measure.clone(),
+        };
+        let started = Instant::now();
+        let Ok(done) = engine::run(path, &settings) else {
+          unreachable!("nothing cancels the analysis")
+        };
+        measured.push((&thresholds.measure, done, started.elapsed().as_secs_f64()));
+        measured.len() - 1
+      }
+    };
+    let (_, done, measure_seconds) = &measured[at];
+    let started = Instant::now();
+    let reading = reading::read(done, &thresholds.reading);
+    readings.push(Read {
+      profile: name.clone(),
+      measure_seconds: *measure_seconds,
+      read_seconds: started.elapsed().as_secs_f64(),
+      reading,
+    });
+  }
+  // every profile reads the same windows of the file; what differs is what is made of them
+  let (_, first, _) = measured.swap_remove(0);
+  (first, readings)
+}
+
+/// The readings in a few words each, named after their profile when there are several.
+fn said(readings: &[Read]) -> String {
+  match readings {
+    [read] => words(&read.reading),
+    _ => readings
+      .iter()
+      .map(|read| format!("[{}] {}", read.profile, words(&read.reading)))
+      .collect::<Vec<_>>()
+      .join("; "),
+  }
+}
+
+/// A reading in a few words: the verdict, where the content stops and which encoder that
+/// matches, the findings beside it and how sure it is.
+fn words(reading: &Reading) -> String {
+  let mut parts = vec![
+    match reading.verdict {
+      Verdict::Consistent => "consistent",
+      Verdict::LikelyTranscode => "likely transcode",
+      Verdict::MixedSources => "mixed sources",
+      Verdict::Inconclusive => "inconclusive",
+    }
+    .to_string(),
+  ];
+  if let Some(hz) = reading.cutoff_hz {
+    parts.push(format!("cutoff {:.1} kHz", hz / 1000.0));
+  }
+  if let Some(guess) = &reading.encoder_guess {
+    parts.push(guess.profile.clone());
+  }
+  parts.extend(reading.flags.iter().map(|flag| {
+    match flag {
+      Flag::Upsampled => "upsampled",
+      Flag::BitPadded => "bit padded",
+    }
+    .to_string()
+  }));
+  if reading.verdict != Verdict::Inconclusive {
+    parts.push(format!("confidence {:.2}", reading.confidence));
+  }
+  parts.join(", ")
+}

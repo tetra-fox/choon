@@ -1,0 +1,54 @@
+//! Judges whether an audio file is what its format claims, such as a FLAC that is really a
+//! converted MP3, from its spectrum.
+//!
+//! [`engine::run`] decodes a file a second at a time, in full or at windows spread over a long
+//! one, and measures each window: its loudness, where its spectrum stops (the cutoff) and how
+//! sharply, gaps below the cutoff, steps inside a full band, and what a spectrogram and a
+//! waveform show of it ([`picture`]). [`reading::read`] turns the measures into a [`Reading`]:
+//! a [`Verdict`] with how sure it is, the encoder setting the cutoff matches, findings beside it
+//! ([`Flag`]), a summary in words and what made it less reliable. Every threshold either step
+//! uses is data ([`MeasureThresholds`], [`ReadingThresholds`]), so a caller can sweep them;
+//! `Default` holds the values the analyzer ships with.
+//!
+//! ```no_run
+//! use std::path::Path;
+//! use std::time::{Duration, Instant};
+//!
+//! use earwitness::engine::{self, Settings};
+//! use earwitness::{MeasureThresholds, ReadingThresholds, reading};
+//!
+//! let settings = Settings {
+//!   max_full_seconds: 900.0,
+//!   sampled_windows: 240,
+//!   deadline: Instant::now() + Duration::from_secs(120),
+//!   progress: None,
+//!   canceled: None,
+//!   thresholds: MeasureThresholds::default(),
+//! };
+//! let measured = engine::run(Path::new("track.flac"), &settings).expect("nothing cancels it");
+//! let reading = reading::read(&measured, &ReadingThresholds::default());
+//! println!("{:?}: {}", reading.verdict, reading.summary);
+//! ```
+//!
+//! The `earwitness` program, built with the default `cli` feature, prints a reading of each file
+//! it is given, as a line of text or of JSON, under one or more sets of thresholds.
+
+pub mod aggregate;
+pub mod decode;
+pub mod engine;
+pub mod flags;
+pub mod measure;
+pub mod picture;
+pub mod reading;
+pub mod thresholds;
+mod totals;
+
+#[cfg(any(test, feature = "testing"))]
+pub mod fixtures;
+#[cfg(test)]
+mod tests;
+
+pub use aggregate::Measures;
+pub use flags::Flag;
+pub use reading::{EncoderGuess, Reading, Verdict};
+pub use thresholds::{MeasureThresholds, Profile, RateEdge, ReadingThresholds};
