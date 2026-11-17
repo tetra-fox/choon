@@ -1,20 +1,34 @@
-//! the `choon` program: prints a line or a JSON object per file saying whether it is what its
-//! format claims, and exits with a status a script can act on
+//! the `choon` program: reads the files it is given, several at once, says of each whether it
+//! is what its format claims, as a line or a JSON object or, in a terminal, with progress and
+//! tables, and exits with a status a script can act on
+
+mod cli {
+  pub mod inputs;
+  pub mod terminal;
+}
 
 use std::borrow::Cow;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::time::Instant;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use choon::grid::Scan;
 use choon::{
-  Claimed, Coverage, Error, Flag, MeasureThresholds, Measured, Reading, ReadingThresholds,
-  Settings, Verdict,
+  CancelCheck, Claimed, Coverage, Error, Flag, MeasureThresholds, Measured, Reading,
+  ReadingThresholds, Settings, Verdict,
 };
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, ColorChoice, Parser, Subcommand};
+use rayon::iter::{ParallelBridge, ParallelIterator};
 use serde::{Deserialize, Serialize};
+
+use crate::cli::inputs::{EXTENSIONS, Inputs};
+use crate::cli::terminal::{self, Bars, Row};
 
 /// every file read is consistent with its format, possibly lossy, or the analyzer cannot tell
 const CLEAN: u8 = 0;
@@ -48,9 +62,13 @@ A file the analyzer cannot open as audio is one that could not be read.")]
 
 #[derive(Args)]
 struct Check {
-  /// Audio files to read
-  #[arg(required_unless_present = "defaults")]
-  files: Vec<PathBuf>,
+  /// Audio files and directories to read, or - for the paths listed on stdin
+  #[arg(
+    required_unless_present = "defaults",
+    value_name = "PATH",
+    long_help = paths_help()
+  )]
+  paths: Vec<PathBuf>,
 
   /// Print each file as one line of JSON, with every measure and reading
   #[arg(long)]
@@ -83,6 +101,47 @@ struct Check {
   /// Read a file longer than --max-full-minutes at COUNT one-second windows
   #[arg(long, value_name = "COUNT", requires = "max_full_minutes")]
   sampled_windows: Option<NonZeroUsize>,
+
+  /// Read up to N files at once, on N threads
+  ///
+  /// Without this option N is the number of cores. A file's grid scan runs on the same threads,
+  /// so one file alone uses them all.
+  #[arg(short, long, value_name = "N")]
+  jobs: Option<NonZeroUsize>,
+
+  /// Take the paths on stdin as ended by NUL in place of a newline
+  #[arg(short = '0', long)]
+  null: bool,
+
+  /// Follow symbolic links in a directory
+  ///
+  /// A link that leads back to a directory it is in is reported and not followed.
+  #[arg(short = 'L', long)]
+  follow: bool,
+
+  /// Print every file in a terminal, and every flagged file in detail
+  ///
+  /// A terminal otherwise lists only the flagged files, read as a likely transcode, mixed
+  /// sources or possibly lossy, and those not read. Lines and JSON always hold every file.
+  #[arg(short, long)]
+  verbose: bool,
+
+  /// Colour the verdicts in a terminal
+  ///
+  /// Lines and JSON written to a pipe or a file are never coloured.
+  #[arg(long, value_name = "WHEN", default_value_t = ColorChoice::Auto)]
+  color: ColorChoice,
+}
+
+/// the long help of the paths, which names the extensions a walk reads
+fn paths_help() -> String {
+  format!(
+    "Audio files and directories to read, or - for the paths listed on stdin\n\n\
+     A directory is read with the directories under it. Hidden files and directories are left \
+     out, and of the others those with an audio extension are read, in any case: {}. A file \
+     named here or on stdin is read whatever its name. Stdin lists one path per line.",
+    EXTENSIONS.join(", ")
+  )
 }
 
 /// what a file is measured and read with: a profile
@@ -91,6 +150,17 @@ struct Check {
 struct Thresholds {
   measure: MeasureThresholds,
   reading: ReadingThresholds,
+}
+
+/// what a file measured, without its windows, and its reading under each profile
+struct Checked {
+  claimed: Claimed,
+  duration: f64,
+  bitrate_kbps: Option<u32>,
+  sampled: bool,
+  windows: usize,
+  grid: Option<Scan>,
+  readings: Vec<Read>,
 }
 
 /// what is printed for a file with `--json`
@@ -104,7 +174,7 @@ struct Analyzed<'a> {
   sampled: bool,
   windows: usize,
   grid: Option<&'a Scan>,
-  readings: Vec<Read>,
+  readings: &'a [Read],
 }
 
 /// one profile's reading of a file, with how long it took
@@ -140,13 +210,33 @@ fn main() -> ExitCode {
 /// what ends a check before every file is read
 enum Failed {
   Profile(PathBuf, String),
+  Stdin(io::Error),
+  Threads(rayon::ThreadPoolBuildError),
   Output(io::Error),
 }
+
+/// what the threads reading files tell the one that prints
+enum Event {
+  /// the file at this index is being read, and says here how far it is, in thousandths
+  Started {
+    file: usize,
+    progress: Arc<AtomicU32>,
+  },
+  Done {
+    file: usize,
+    result: Result<Box<Checked>, Error>,
+  },
+}
+
+/// how often a terminal's bars are brought up to date
+const TICK: Duration = Duration::from_millis(100);
 
 impl std::fmt::Display for Failed {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
       Self::Profile(path, e) => write!(f, "{}: {e}", path.display()),
+      Self::Stdin(e) => write!(f, "reading the paths on stdin: {e}"),
+      Self::Threads(e) => write!(f, "starting the threads: {e}"),
       Self::Output(e) => write!(f, "writing the output: {e}"),
     }
   }
@@ -179,38 +269,137 @@ fn run(check: &Check) -> Result<u8, Failed> {
     // clap lets neither through without the other
     _ => Coverage::Full,
   };
+  let inputs = Inputs::gather(
+    &check.paths,
+    &mut io::stdin().lock(),
+    check.null,
+    check.follow,
+  )
+  .map_err(Failed::Stdin)?;
   let mut code = CLEAN;
-  for file in &check.files {
-    let line = match analyzed(file, &profiles, coverage) {
-      Ok((measured, readings)) => {
-        if code == CLEAN && readings.iter().any(|read| lossy(read.reading.verdict)) {
-          code = LOSSY;
-        }
-        if check.json {
+  for problem in &inputs.problems {
+    eprintln!("choon: {}: {}", problem.path.display(), problem.why);
+    if problem.unread {
+      code = FAILED;
+    }
+  }
+  let files = inputs.files;
+  if files.is_empty() {
+    eprintln!("choon: no audio files found");
+    return Ok(code);
+  }
+  let jobs = match check.jobs {
+    Some(jobs) => jobs.get(),
+    // one job where the system does not say how many cores it has
+    None => thread::available_parallelism().map_or(1, NonZeroUsize::get),
+  };
+  // files and each file's grid scan share these threads, so no more than `jobs` are ever busy
+  let pool = rayon::ThreadPoolBuilder::new()
+    .num_threads(jobs)
+    .build()
+    .map_err(Failed::Threads)?;
+  let started = Instant::now();
+  let stop = Arc::new(AtomicBool::new(false));
+  let canceled: CancelCheck = {
+    let stop = stop.clone();
+    Arc::new(move || stop.load(Ordering::Relaxed))
+  };
+  let (events, received) = mpsc::sync_channel(jobs);
+  let read = {
+    let (stop, profiles) = (&*stop, &profiles);
+    move |(file, path): (usize, &PathBuf)| {
+      if stop.load(Ordering::Relaxed) {
+        return;
+      }
+      let progress = Arc::new(AtomicU32::new(0));
+      let event = Event::Started {
+        file,
+        progress: progress.clone(),
+      };
+      // nothing receives once the output is closed, which `stop` says to the files not begun
+      if events.send(event).is_err() {
+        return;
+      }
+      let result = analyzed(path, profiles, coverage, &progress, &canceled).map(Box::new);
+      if matches!(result, Err(Error::Canceled)) {
+        return;
+      }
+      // as above: a closed output has no use for the result
+      let _ = events.send(Event::Done { file, result });
+    }
+  };
+  thread::scope(|scope| {
+    let (pool, files) = (&pool, &files);
+    // the files start in the order given, each thread taking the next when it is free
+    scope.spawn(move || pool.install(|| files.iter().enumerate().par_bridge().for_each(read)));
+    let code = if !check.json && io::stdout().is_terminal() {
+      shown(received, files, check, profiles.len() > 1, started, code)
+    } else {
+      printed(received, files, check.json, code)
+    };
+    // an output that ended early stops the files under way, and the scope waits for them
+    stop.store(true, Ordering::Relaxed);
+    code
+  })
+}
+
+/// the exit status `result` asks for
+fn status(result: &Result<Box<Checked>, Error>) -> u8 {
+  match result {
+    Ok(checked)
+      if checked
+        .readings
+        .iter()
+        .any(|read| lossy(read.reading.verdict)) =>
+    {
+      LOSSY
+    }
+    Ok(_) => CLEAN,
+    Err(_) => FAILED,
+  }
+}
+
+/// prints each file as it is done, a line or a JSON object, and returns the exit status, which
+/// starts at `code`
+fn printed(
+  received: Receiver<Event>,
+  files: &[PathBuf],
+  json: bool,
+  mut code: u8,
+) -> Result<u8, Failed> {
+  let mut out = io::stdout().lock();
+  for event in received {
+    let Event::Done { file, result } = event else {
+      // only a terminal shows the files under way
+      continue;
+    };
+    let file = &files[file];
+    code = code.max(status(&result));
+    let line = match result {
+      Ok(checked) => {
+        if json {
           // the readings are numbers, strings and lists of them, which always serialize
           serde_json::to_string(&Analyzed {
             file: file.to_string_lossy(),
-            claimed: &measured.claimed,
-            duration_seconds: measured.duration,
-            bitrate_kbps: measured.bitrate_kbps,
-            sampled: measured.sampled,
-            windows: measured.windows.len(),
-            grid: measured.grid.as_ref(),
-            readings,
+            claimed: &checked.claimed,
+            duration_seconds: checked.duration,
+            bitrate_kbps: checked.bitrate_kbps,
+            sampled: checked.sampled,
+            windows: checked.windows,
+            grid: checked.grid.as_ref(),
+            readings: &checked.readings,
           })
           .expect("a reading serializes")
         } else {
-          format!("{}: {}", file.display(), said(&readings))
+          format!("{}: {}", file.display(), said(&checked.readings, false))
         }
       }
       Err(Error::Open(e)) => {
         eprintln!("choon: {}: {e}", file.display());
-        code = FAILED;
         continue;
       }
       Err(Error::NotAudio(why) | Error::Unsupported(why)) => {
-        code = FAILED;
-        if check.json {
+        if json {
           serde_json::to_string(&NotAudio {
             file: file.to_string_lossy(),
             error: why,
@@ -221,14 +410,97 @@ fn run(check: &Check) -> Result<u8, Failed> {
         }
       }
       Err(Error::Canceled | Error::OutOfTime) => {
-        unreachable!("the analysis has no cancel check and no deadline")
+        unreachable!("a canceled analysis is not sent, and none has a deadline")
       }
     };
     if !print(&mut out, &line)? {
-      // the files read so far decide the status
+      // the files printed so far decide the status
       return Ok(code);
     }
   }
+  Ok(code)
+}
+
+/// shows the files under way in a terminal with each finding above them, then one file's reading
+/// in detail or the tables of many, and returns the exit status, which starts at `code`
+fn shown(
+  received: Receiver<Event>,
+  files: &[PathBuf],
+  check: &Check,
+  profiled: bool,
+  started: Instant,
+  mut code: u8,
+) -> Result<u8, Failed> {
+  let colour = match check.color {
+    ColorChoice::Always => true,
+    ColorChoice::Never => false,
+    ColorChoice::Auto => {
+      anstream::AutoStream::choice(&io::stdout()) != anstream::ColorChoice::Never
+    }
+  };
+  let one = files.len() == 1;
+  let mut bars = Bars::new(files.len());
+  let mut rows = Vec::with_capacity(files.len());
+  loop {
+    match received.recv_timeout(TICK) {
+      Ok(Event::Started { file, progress }) => {
+        let name = files[file].file_name().unwrap_or(files[file].as_os_str());
+        bars.started(file, name.to_string_lossy().into_owned(), progress);
+      }
+      Ok(Event::Done { file, result }) => {
+        bars.ended(file);
+        let path = &files[file];
+        code = code.max(status(&result));
+        let outcome = match result {
+          Ok(checked) => {
+            let flagged = checked
+              .readings
+              .iter()
+              .any(|read| flagged(read.reading.verdict));
+            if !one && (flagged || check.verbose) {
+              let line = format!("{}: {}", path.display(), said(&checked.readings, colour));
+              bars.say(&line).map_err(Failed::Output)?;
+            }
+            Ok(checked)
+          }
+          Err(Error::Open(e)) => {
+            bars.complain(&format!("choon: {}: {e}", path.display()));
+            Err(e.to_string())
+          }
+          Err(Error::NotAudio(why) | Error::Unsupported(why)) => {
+            let line = format!(
+              "{}: {}: {why}",
+              path.display(),
+              terminal::painted(None, "not read as audio", colour)
+            );
+            bars.say(&line).map_err(Failed::Output)?;
+            Err(why)
+          }
+          Err(Error::Canceled | Error::OutOfTime) => {
+            unreachable!("a canceled analysis is not sent, and none has a deadline")
+          }
+        };
+        rows.push(Row { path, outcome });
+      }
+      Err(RecvTimeoutError::Timeout) => {}
+      Err(RecvTimeoutError::Disconnected) => break,
+    }
+    bars.tick();
+  }
+  bars.finish();
+  rows.sort_by_key(|row| row.path);
+  let text = match &rows[..] {
+    [
+      Row {
+        path,
+        outcome: Ok(checked),
+      },
+    ] => terminal::readout(path, checked, profiled, colour),
+    // its failure is already on the screen
+    [_] => return Ok(code),
+    _ => terminal::tables(&rows, profiled, check.verbose, started.elapsed(), colour),
+  };
+  print(&mut io::stdout().lock(), text.trim_end())?;
   Ok(code)
 }
 
@@ -248,6 +520,32 @@ fn lossy(verdict: Verdict) -> bool {
     Verdict::LikelyTranscode | Verdict::MixedSources => true,
     Verdict::Consistent | Verdict::PossiblyLossy | Verdict::Inconclusive => false,
   }
+}
+
+/// whether a terminal lists a file read as `verdict` among its findings
+fn flagged(verdict: Verdict) -> bool {
+  lossy(verdict) || verdict == Verdict::PossiblyLossy
+}
+
+/// `verdict` in words
+fn label(verdict: Verdict) -> &'static str {
+  match verdict {
+    Verdict::Consistent => "consistent",
+    Verdict::LikelyTranscode => "likely transcode",
+    Verdict::MixedSources => "mixed sources",
+    Verdict::PossiblyLossy => "possibly lossy",
+    Verdict::Inconclusive => "inconclusive",
+  }
+}
+
+/// the encoder setting a reading names. beside a verdict that finds no lossy audio, a named
+/// encoder would read as a finding
+fn named_guess(reading: &Reading) -> Option<&str> {
+  reading
+    .encoder_guess
+    .as_ref()
+    .filter(|_| flagged(reading.verdict))
+    .map(|guess| guess.profile.as_str())
 }
 
 /// the minutes `text` names, refusing an endless length and one of no time, under which a file
@@ -278,7 +576,9 @@ fn analyzed(
   path: &Path,
   profiles: &[(String, Thresholds)],
   coverage: Coverage,
-) -> Result<(Measured, Vec<Read>), Error> {
+  progress: &Arc<AtomicU32>,
+  canceled: &CancelCheck,
+) -> Result<Checked, Error> {
   let mut measured: Vec<(&MeasureThresholds, Measured, f64)> = Vec::new();
   let mut readings = Vec::new();
   for (name, thresholds) in profiles {
@@ -291,6 +591,8 @@ fn analyzed(
         let settings = Settings {
           coverage,
           thresholds: thresholds.measure.clone(),
+          progress: Some(progress.clone()),
+          canceled: Some(canceled.clone()),
           ..Settings::default()
         };
         let started = Instant::now();
@@ -311,11 +613,24 @@ fn analyzed(
   }
   // every profile reads the same windows of the file; what differs is what is made of them
   let (_, first, _) = measured.swap_remove(0);
-  Ok((first, readings))
+  Ok(Checked {
+    claimed: first.claimed,
+    duration: first.duration,
+    bitrate_kbps: first.bitrate_kbps,
+    sampled: first.sampled,
+    windows: first.windows.len(),
+    grid: first.grid,
+    readings,
+  })
 }
 
-/// the readings in a few words each, named after their profile when there are several
-fn said(readings: &[Read]) -> String {
+/// the readings in a few words each, named after their profile when there are several, with
+/// the verdicts coloured when `colour`
+fn said(readings: &[Read], colour: bool) -> String {
+  let words = |reading: &Reading| {
+    let (verdict, rest) = words(reading);
+    terminal::painted(Some(reading.verdict), verdict, colour) + &rest
+  };
   match readings {
     [read] => words(&read.reading),
     _ => readings
@@ -326,19 +641,21 @@ fn said(readings: &[Read]) -> String {
   }
 }
 
-/// a reading in a few words
-fn words(reading: &Reading) -> String {
+/// a reading in a few words: its verdict, and what follows it
+fn words(reading: &Reading) -> (&'static str, String) {
+  let verdict = label(reading.verdict);
   let cut = reading.cutoff_hz.map_or_else(
     || "no cutoff found".to_string(),
     |hz| format!("cut at {:.1} kHz", hz / 1000.0),
   );
-  let guess = reading.encoder_guess.as_ref().map(|g| g.profile.as_str());
+  let guess = named_guess(reading);
   if let Some(grid) = &reading.grid {
     let at = guess.map_or_else(String::new, |g| format!(", where {g} cuts"));
-    return format!(
-      "likely transcode: {} grid at offset {} (z {:.0}), {cut}{at}",
+    let rest = format!(
+      ": {} grid at offset {} (z {:.0}), {cut}{at}",
       grid.codec, grid.scan.offset, grid.scan.z
     );
+    return (verdict, rest);
   }
   if reading.verdict == Verdict::PossiblyLossy {
     let read_as = match reading.cutoff_verdict {
@@ -346,42 +663,32 @@ fn words(reading: &Reading) -> String {
       _ => "an encoder's cutoff",
     };
     let like = guess.map_or_else(String::new, |g| format!(", like {g}"));
-    return format!(
-      "possibly lossy, cannot confirm: no codec grid; the spectrum reads as {read_as} \
-       ({cut}{like})"
-    );
+    let rest =
+      format!(", cannot confirm: no codec grid; the spectrum reads as {read_as} ({cut}{like})");
+    return (verdict, rest);
   }
-  let mut parts = vec![
-    match reading.verdict {
-      Verdict::Consistent => "consistent",
-      Verdict::LikelyTranscode => "likely transcode",
-      Verdict::MixedSources => "mixed sources",
-      Verdict::PossiblyLossy => "possibly lossy",
-      Verdict::Inconclusive => "inconclusive",
-    }
-    .to_string(),
-  ];
+  let mut rest = String::new();
   if let Some(hz) = reading.cutoff_hz {
-    parts.push(format!("cutoff {:.1} kHz", hz / 1000.0));
+    rest += &format!(", cutoff {:.1} kHz", hz / 1000.0);
   }
-  // beside a verdict that finds no lossy audio, a named encoder would read as a finding
-  if let Some(guess) = reading
-    .encoder_guess
-    .as_ref()
-    .filter(|_| lossy(reading.verdict))
-  {
-    parts.push(guess.profile.clone());
+  if let Some(guess) = guess {
+    rest += &format!(", {guess}");
   }
-  parts.extend(reading.flags.iter().map(|flag| {
-    match flag {
-      Flag::Upsampled => "upsampled",
-      Flag::BitPadded => "bit padded",
-      Flag::DualMono => "dual mono",
-    }
-    .to_string()
-  }));
+  for flag in &reading.flags {
+    rest += ", ";
+    rest += flag_words(*flag);
+  }
   if reading.verdict != Verdict::Inconclusive {
-    parts.push(format!("confidence {:.2}", reading.confidence));
+    rest += &format!(", confidence {:.2}", reading.confidence);
   }
-  parts.join(", ")
+  (verdict, rest)
+}
+
+/// `flag` in words
+fn flag_words(flag: Flag) -> &'static str {
+  match flag {
+    Flag::Upsampled => "upsampled",
+    Flag::BitPadded => "bit padded",
+    Flag::DualMono => "dual mono",
+  }
 }

@@ -14,7 +14,17 @@ include = ["/src/", "/README.md", "/LICENSE"]
 [features]
 default = ["cli"]
 # the `choon` program; a library user turns default features off and builds none of it
-cli = ["dep:clap", "dep:serde_json", "serde"]
+cli = [
+  "dep:anstream",
+  "dep:anstyle",
+  "dep:clap",
+  "dep:comfy-table",
+  "dep:console",
+  "dep:indicatif",
+  "dep:serde_json",
+  "dep:walkdir",
+  "serde",
+]
 # `Serialize` and `Deserialize` on the thresholds and the measures, `Serialize` on the reading
 serde = ["dep:serde"]
 # the generated audio and the sample file the analyzer is tested on, for the program's tests here
@@ -42,7 +52,16 @@ symphonia = { version = "0.6.1", features = ["all"] }
 symphonia-common = "0.6.1"
 tracing = "0.1.44"
 
+# the program's own: arguments, the walk of a directory, the terminal's progress, colour and tables
+anstream = { version = "1.0.0", optional = true }
+anstyle = { version = "1.0.14", optional = true }
 clap = { version = "4.6.7", features = ["derive"], optional = true }
+# custom_styling measures a cell around the colour codes already in its text
+comfy-table = { version = "8.0.1", features = ["custom_styling"], optional = true }
+console = { version = "0.16.6", optional = true }
+# without its wasm support
+indicatif = { version = "0.18.6", default-features = false, features = ["unicode-width"], optional = true }
+walkdir = { version = "2.5.0", optional = true }
 # a float written and read back is the same float, to its last digit
 serde_json = { version = "1.0.154", features = ["float_roundtrip"], optional = true }
 

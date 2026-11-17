@@ -1,6 +1,6 @@
 //! what scripts act on: the program's exit status, its lines and its JSON
 
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
@@ -42,6 +42,48 @@ fn choon(args: &[&str]) -> Output {
     .unwrap()
 }
 
+/// `choon check` with `input` on its stdin
+fn choon_fed(args: &[&str], input: &[u8]) -> Output {
+  let mut child = Command::new(env!("CARGO_BIN_EXE_choon"))
+    .arg("check")
+    .args(args)
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()
+    .unwrap();
+  child.stdin.take().unwrap().write_all(input).unwrap();
+  child.wait_with_output().unwrap()
+}
+
+/// the lines of `output`, sorted: files are printed in the order they finish
+fn sorted_lines(output: &Output) -> Vec<String> {
+  let mut lines: Vec<String> = String::from_utf8(output.stdout.clone())
+    .unwrap()
+    .lines()
+    .map(str::to_string)
+    .collect();
+  lines.sort();
+  lines
+}
+
+/// the JSON objects of `output` without the times each took, sorted by file
+fn sorted_json(output: &Output) -> Vec<serde_json::Value> {
+  let mut objects: Vec<serde_json::Value> = sorted_lines(output)
+    .iter()
+    .map(|line| serde_json::from_str(line).unwrap())
+    .collect();
+  for object in &mut objects {
+    for reading in object["readings"].as_array_mut().into_iter().flatten() {
+      let reading = reading.as_object_mut().unwrap();
+      reading.remove("measureSeconds").unwrap();
+      reading.remove("readSeconds").unwrap();
+    }
+  }
+  objects.sort_by_key(|object| object["file"].as_str().unwrap().to_string());
+  objects
+}
+
 fn status(output: &Output) -> i32 {
   output.status.code().unwrap()
 }
@@ -64,7 +106,8 @@ fn the_exit_status_says_whether_a_file_read_as_lossy_or_could_not_be_read() {
   let output = choon(&[&honest, &fake]);
   assert_eq!(status(&output), 1, "{output:?}");
   let lines = String::from_utf8(output.stdout).unwrap();
-  let fake_line = lines.lines().nth(1).unwrap();
+  assert_eq!(lines.lines().count(), 2);
+  let fake_line = lines.lines().find(|line| line.starts_with(&fake)).unwrap();
   assert!(
     fake_line.starts_with(&format!("{fake}: likely transcode: MP3 grid at offset "))
       && fake_line.contains("), cut at 16.")
@@ -90,7 +133,8 @@ fn json_is_a_line_per_file_with_a_reading_per_profile() {
   let strict = path(&dir.path().join("strict.json"));
   std::fs::write(&strict, r#"{"reading": {"minSeconds": 1000.0}}"#).unwrap();
 
-  let output = choon(&["--json", &honest, &fake]);
+  // one job reads the files in the order given
+  let output = choon(&["--json", "--jobs", "1", &honest, &fake]);
   assert_eq!(status(&output), 1, "{output:?}");
   let lines: Vec<serde_json::Value> = String::from_utf8(output.stdout)
     .unwrap()
@@ -164,6 +208,7 @@ fn a_wrong_argument_is_refused_before_any_file_is_read() {
       &audio,
     ],
     vec!["--max-full-minutes", "15", "--sampled-windows", "0", &audio],
+    vec!["--jobs", "0", &audio],
     vec![],
   ] {
     let output = choon(&args);
@@ -214,13 +259,141 @@ fn a_file_not_read_as_audio_fails_the_run_and_says_so() {
     error.starts_with("the container was not recognized"),
     "{error}"
   );
+}
 
-  // a directory is a file that could not be opened, which goes to stderr
-  let output = choon(&[&path(dir.path())]);
-  assert_eq!(status(&output), 2, "{output:?}");
-  assert!(output.stdout.is_empty(), "{output:?}");
+#[cfg(unix)]
+#[test]
+fn a_directory_is_read_through_for_its_audio_files() {
+  let dir = tempfile::tempdir().unwrap();
+  let (honest, fake) = honest_and_fake(dir.path());
+  let at = |name: &str| dir.path().join(name);
+  for made in ["music/album", "music/.hidden", "aside"] {
+    std::fs::create_dir_all(at(made)).unwrap();
+  }
+  std::fs::rename(&honest, at("music/honest.flac")).unwrap();
+  // an extension counts in any case
+  std::fs::copy(&fake, at("music/album/fake.FLAC")).unwrap();
+  std::fs::copy(&fake, at("music/.hidden/fake.flac")).unwrap();
+  std::fs::copy(&fake, at("music/.fake.flac")).unwrap();
+  std::fs::write(at("music/album/cover.jpg"), "not audio").unwrap();
+  std::fs::write(at("music/album/rip.log"), "not audio").unwrap();
+  // audio under a name no walk takes
+  std::fs::rename(&fake, at("aside/fake.bin")).unwrap();
+  std::os::unix::fs::symlink(at("music"), at("music/album/back")).unwrap();
+  std::os::unix::fs::symlink(at("aside/fake.bin"), at("music/linked.flac")).unwrap();
+  let music = path(&at("music"));
+  let named = path(&at("aside/fake.bin"));
+  let read = |output: &Output| -> Vec<String> {
+    sorted_lines(output)
+      .iter()
+      .map(|line| line.split_once(": ").unwrap().0.to_string())
+      .collect()
+  };
+
+  // a file and a directory together: the file is read whatever its name
+  let output = choon(&[&named, &music]);
+  assert_eq!(status(&output), 1, "{output:?}");
+  assert!(output.stderr.is_empty(), "{output:?}");
+  assert_eq!(
+    read(&output),
+    [
+      named.clone(),
+      format!("{music}/album/fake.FLAC"),
+      format!("{music}/honest.flac")
+    ]
+  );
+
+  // with links followed, the linked file is read and the link back to the directory is
+  // reported once and leaves the status alone
+  let output = choon(&["--follow", &music]);
+  assert_eq!(status(&output), 1, "{output:?}");
+  assert_eq!(
+    read(&output),
+    [
+      format!("{music}/album/fake.FLAC"),
+      format!("{music}/honest.flac"),
+      format!("{music}/linked.flac")
+    ]
+  );
   let errors = String::from_utf8(output.stderr).unwrap();
-  assert!(errors.contains("is a directory"), "{errors}");
+  assert_eq!(errors.lines().count(), 1, "{errors}");
+  assert!(
+    errors.starts_with(&format!(
+      "choon: {music}/album/back: the link loops back to {music}"
+    )),
+    "{errors}"
+  );
+
+  // a directory named is read even when hidden
+  let output = choon(&[&path(&at("music/.hidden"))]);
+  assert_eq!(read(&output), [format!("{music}/.hidden/fake.flac")]);
+
+  // a directory without audio reads nothing and says so
+  let output = choon(&[&path(&at("aside"))]);
+  assert_eq!(status(&output), 0, "{output:?}");
+  assert!(output.stdout.is_empty(), "{output:?}");
+  assert_eq!(
+    String::from_utf8(output.stderr).unwrap(),
+    "choon: no audio files found\n"
+  );
+}
+
+#[test]
+fn paths_are_read_from_stdin_by_line_or_by_nul() {
+  let dir = tempfile::tempdir().unwrap();
+  let (honest, fake) = honest_and_fake(dir.path());
+  let named = choon(&[&honest, &fake]);
+
+  let output = choon_fed(&["-"], format!("{honest}\n\n{fake}\n").as_bytes());
+  assert_eq!(status(&output), 1, "{output:?}");
+  assert_eq!(sorted_lines(&output), sorted_lines(&named));
+
+  // a name with a newline in it comes through whole when NUL ends each path
+  let odd = path(&dir.path().join("a\nb.flac"));
+  std::fs::copy(&honest, &odd).unwrap();
+  let output = choon_fed(&["-0", "-"], format!("{odd}\0{fake}\0").as_bytes());
+  assert_eq!(status(&output), 1, "{output:?}");
+  let lines = String::from_utf8(output.stdout).unwrap();
+  assert!(lines.contains(&format!("{odd}: consistent")), "{lines}");
+  assert!(
+    lines.contains(&format!("{fake}: likely transcode")),
+    "{lines}"
+  );
+}
+
+#[test]
+fn many_files_at_once_print_what_each_prints_alone() {
+  let dir = tempfile::tempdir().unwrap();
+  // the two FLACs, the MP3 the fake was made through, a cut one and one that is not audio
+  honest_and_fake(dir.path());
+  cut_20(dir.path());
+  std::fs::write(dir.path().join("text.flac"), "not audio\n").unwrap();
+  let files: Vec<String> = std::fs::read_dir(dir.path())
+    .unwrap()
+    .map(|entry| path(&entry.unwrap().path()))
+    .collect();
+  assert_eq!(files.len(), 5);
+  let all = path(dir.path());
+
+  let mut alone: Vec<String> = files
+    .iter()
+    .flat_map(|file| sorted_lines(&choon(&[file])))
+    .collect();
+  alone.sort();
+  for jobs in ["1", "3"] {
+    let output = choon(&["--jobs", jobs, &all]);
+    assert_eq!(status(&output), 2, "{output:?}");
+    assert_eq!(sorted_lines(&output), alone, "{jobs} jobs");
+  }
+
+  let mut alone: Vec<serde_json::Value> = files
+    .iter()
+    .flat_map(|file| sorted_json(&choon(&["--json", file])))
+    .collect();
+  alone.sort_by_key(|object| object["file"].as_str().unwrap().to_string());
+  let output = choon(&["--json", &all]);
+  assert_eq!(status(&output), 2, "{output:?}");
+  assert_eq!(sorted_json(&output), alone);
 }
 
 #[test]
@@ -229,7 +402,8 @@ fn a_closed_pipe_ends_the_run_with_the_status_of_the_files_read() {
   let (honest, fake) = honest_and_fake(dir.path());
   let missing = path(&dir.path().join("missing.flac"));
   let mut child = Command::new(env!("CARGO_BIN_EXE_choon"))
-    .args(["check", &fake, &honest, &missing])
+    // one job reads the files in the order given
+    .args(["check", "--jobs", "1", &fake, &honest, &missing])
     .stdout(Stdio::piped())
     .stderr(Stdio::piped())
     .spawn()
@@ -258,7 +432,17 @@ fn several_profiles_share_a_line_and_only_a_lossy_verdict_names_an_encoder() {
   let strict = path(&dir.path().join("strict.json"));
   std::fs::write(&strict, r#"{"reading": {"minSeconds": 1000.0}}"#).unwrap();
 
-  let output = choon(&["--profile", &shipped, "--profile", &strict, &fake, &cut_20]);
+  // one job reads the files in the order given
+  let output = choon(&[
+    "--jobs",
+    "1",
+    "--profile",
+    &shipped,
+    "--profile",
+    &strict,
+    &fake,
+    &cut_20,
+  ]);
   assert_eq!(status(&output), 1, "{output:?}");
   let lines = String::from_utf8(output.stdout).unwrap();
   let lines: Vec<&str> = lines.lines().collect();
