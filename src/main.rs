@@ -692,7 +692,7 @@ fn words(reading: &Reading) -> (&'static str, String) {
     let at = guess.map_or_else(String::new, |g| format!(", where {g} cuts"));
     let how = match &grid.evidence {
       Evidence::Count(scan) => format!("z {:.0}", scan.z),
-      Evidence::Lattice(scan) => format!("{} frames", scan.frames.max(scan.uncut_frames)),
+      Evidence::Lattice(scan) => format!("{} frames", scan.most().1),
     };
     let rest = format!(
       ": {} grid at offset {} ({how}), {cut}{at}",

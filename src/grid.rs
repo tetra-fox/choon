@@ -152,6 +152,19 @@ pub struct OpusScan {
   pub uncut_frames: usize,
 }
 
+impl OpusScan {
+  /// Returns the offset and the number of frames of the larger of the two counts.
+  ///
+  /// The segments are counted at [`OpusScan::offset`], the windows at [`OPUS_UNCUT_OFFSET`].
+  pub fn most(&self) -> (usize, usize) {
+    if self.uncut_frames > self.frames {
+      (OPUS_UNCUT_OFFSET, self.uncut_frames)
+    } else {
+      (self.offset, self.frames)
+    }
+  }
+}
+
 /// Scan of a file for the frame grids of MP3, AAC and Opus.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -178,10 +191,12 @@ pub enum Evidence {
 
 impl Evidence {
   /// Returns the offset of the frame grid, in samples.
+  ///
+  /// For Opus it is the offset of the larger count, as [`OpusScan::most`] gives it.
   pub fn offset(&self) -> usize {
     match self {
       Self::Count(scan) => scan.offset,
-      Self::Lattice(scan) => scan.offset,
+      Self::Lattice(scan) => scan.most().0,
     }
   }
 }
@@ -928,6 +943,26 @@ impl Mp3 {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn an_opus_count_is_named_with_the_offset_it_was_counted_at() {
+    // one chance frame in the segments, a decode's frames in the windows
+    let scan = OpusScan {
+      offset: 517,
+      frames: 1,
+      segment_frames: [0, 1, 0, 0],
+      uncut_frames: 40,
+    };
+    assert_eq!(scan.most(), (OPUS_UNCUT_OFFSET, 40));
+    assert_eq!(Evidence::Lattice(scan.clone()).offset(), OPUS_UNCUT_OFFSET);
+    // a decode whose start was cut shows in the segments alone
+    let cut = OpusScan {
+      frames: 150,
+      uncut_frames: 0,
+      ..scan
+    };
+    assert_eq!(cut.most(), (517, 150));
+  }
 
   #[test]
   fn the_mdct_is_the_direct_sum() {
