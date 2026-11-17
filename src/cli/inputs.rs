@@ -102,9 +102,23 @@ fn listed(stdin: &mut impl Read, null: bool) -> io::Result<Vec<PathBuf>> {
   stdin.read_to_end(&mut bytes)?;
   bytes
     .split(|byte| *byte == if null { 0 } else { b'\n' })
+    .map(|path| if null { path } else { without_return(path) })
     .filter(|path| !path.is_empty())
     .map(|path| os_string(path).map(PathBuf::from))
     .collect()
+}
+
+/// a line without the carriage return Windows programs end it with, which no file name there
+/// can hold
+#[cfg(windows)]
+fn without_return(line: &[u8]) -> &[u8] {
+  line.strip_suffix(b"\r").unwrap_or(line)
+}
+
+/// a line as it is: a carriage return can be part of a file's name
+#[cfg(not(windows))]
+fn without_return(line: &[u8]) -> &[u8] {
+  line
 }
 
 /// a path's bytes as the system names it: any bytes on Unix
