@@ -608,7 +608,7 @@ fn verdict(
       reading.verdict = Verdict::Consistent;
       reading.confidence = 0.7;
       reading.summary = format!(
-        "The content rolls off gently from about {}, not at the sharp cutoff of an encoder.",
+        "The content rolls off gently from about {}, without the sharp cutoff of an encoder.",
         khz(median)
       );
       return reading;

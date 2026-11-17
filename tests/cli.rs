@@ -242,7 +242,10 @@ fn a_closed_pipe_ends_the_run_with_the_status_of_the_files_read() {
   assert!(first.contains("likely transcode"), "{first}");
   let output = child.wait_with_output().unwrap();
   assert_eq!(status(&output), 1, "{output:?}");
-  assert!(output.stderr.is_empty(), "the run went on: {output:?}");
+  assert!(
+    output.stderr.is_empty(),
+    "the run stops at the closed pipe: {output:?}"
+  );
 }
 
 #[test]

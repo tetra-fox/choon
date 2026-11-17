@@ -37,9 +37,12 @@ struct Cli {
 enum Command {
   /// Read each file and print what its audio is
   #[command(after_help = "\
-Exit status: 0 when every file is consistent with its format, possibly lossy or inconclusive, 1 \
-when at least one reads as a likely transcode or mixed sources, 2 when a file could not be read or \
-an argument was wrong. A file the analyzer cannot open as audio is one that could not be read.")]
+Exit status:
+  0  every file is consistent with its format, possibly lossy or inconclusive
+  1  at least one file reads as a likely transcode or mixed sources
+  2  a file could not be read, or an argument was wrong
+
+A file the analyzer cannot open as audio is one that could not be read.")]
   Check(Check),
 }
 

@@ -647,7 +647,7 @@ fn whole(
       }
       debug!(
         seconds = second,
-        "reading in full stopped at the longest file read so"
+        "reading in full stopped at the longest length read in full"
       );
       measured.problems.push(match decoder.claimed.frames {
         None => Limitation::LengthNotStated { seconds: second },

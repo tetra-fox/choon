@@ -324,7 +324,10 @@ mod tests {
   }
 
   fn refused<T: serde::de::DeserializeOwned>(json: &str) {
-    assert!(serde_json::from_str::<T>(json).is_err(), "{json} was taken");
+    assert!(
+      serde_json::from_str::<T>(json).is_err(),
+      "{json} is refused"
+    );
   }
 
   #[test]
