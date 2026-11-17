@@ -612,6 +612,24 @@ fn measuring_uses_the_thresholds_it_is_given() {
 }
 
 #[test]
+fn no_reading_is_surer_than_the_confidence_cap() {
+  let dir = tempfile::tempdir().unwrap();
+  let capped = ReadingThresholds {
+    confidence_cap: 0.1,
+    ..ReadingThresholds::default()
+  };
+  let short = engine::read_bytes(fixtures::TONE.to_vec(), &settings()).unwrap();
+  let reading = crate::reading::read(&short, &capped);
+  assert_eq!(reading.verdict, Verdict::Inconclusive);
+  assert_eq!(reading.confidence, 0.1);
+  let honest = flac(dir.path(), "a.flac", &music(1, 44_100, pink), 16);
+  let honest = engine::run(&honest, &settings()).unwrap();
+  let reading = crate::reading::read(&honest, &capped);
+  assert_eq!(reading.verdict, Verdict::Consistent);
+  assert_eq!(reading.confidence, 0.1);
+}
+
+#[test]
 fn a_step_search_from_far_below_the_spectrum_ends() {
   let far = Settings {
     thresholds: MeasureThresholds {

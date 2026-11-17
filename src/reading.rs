@@ -390,7 +390,7 @@ pub fn read(measured: &Measured, thresholds: &ReadingThresholds) -> Reading {
     verdict: found.verdict,
     cutoff_verdict,
     grid,
-    confidence: found.confidence,
+    confidence: found.confidence.min(thresholds.confidence_cap),
     flags: found_beside.flags,
     encoder_guess: found.encoder_guess,
     summary: std::iter::once(found.summary)
@@ -506,7 +506,7 @@ fn verdict(
       .limitations
       .push("Of several lossy generations, only the lowest cutoff shows".to_string());
     reading.verdict = Verdict::LikelyTranscode;
-    reading.confidence = confidence.min(t.confidence_cap);
+    reading.confidence = confidence;
     reading.encoder_guess = Some(EncoderGuess {
       profile: profile.name.to_string(),
       confidence: (clustered * (0.5 + 0.5 * sharp_share)).min(t.confidence_cap),
@@ -633,7 +633,7 @@ fn verdict(
         confidence -= 0.1;
       }
       reading.verdict = Verdict::Consistent;
-      reading.confidence = confidence.min(t.confidence_cap);
+      reading.confidence = confidence;
       // a step that is no encoder's cutoff can still lie under the band
       let stepped = heard
         .windows
