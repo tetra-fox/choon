@@ -111,20 +111,26 @@ user turns it off.
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use earwitness::engine::{self, Settings};
-use earwitness::{MeasureThresholds, ReadingThresholds, reading};
+use earwitness::engine::{self, Canceled, Settings};
+use earwitness::{MeasureThresholds, ReadingThresholds, Verdict, reading};
 
-let settings = Settings {
-  max_full_seconds: 900.0,
-  sampled_windows: 240,
-  deadline: Instant::now() + Duration::from_secs(120),
-  progress: None,
-  canceled: None,
-  thresholds: MeasureThresholds::default(),
-};
-let measured = engine::run(Path::new("track.flac"), &settings).expect("nothing cancels it");
-let reading = reading::read(&measured, &ReadingThresholds::default());
-println!("{:?}: {}", reading.verdict, reading.summary);
+fn main() -> Result<(), Canceled> {
+  let settings = Settings {
+    max_full_seconds: 900.0,
+    sampled_windows: 240,
+    deadline: Instant::now() + Duration::from_secs(120),
+    progress: None,
+    canceled: None,
+    thresholds: MeasureThresholds::default(),
+  };
+  let measured = engine::run(Path::new("track.flac"), &settings)?;
+  let reading = reading::read(&measured, &ReadingThresholds::default());
+  match reading.verdict {
+    Verdict::LikelyTranscode | Verdict::MixedSources => println!("lossy: {}", reading.summary),
+    Verdict::Consistent | Verdict::Inconclusive => println!("{:?}", reading.verdict),
+  }
+  Ok(())
+}
 ```
 
 `engine::run` blocks the thread it runs on. It reports progress through `progress`, stops and

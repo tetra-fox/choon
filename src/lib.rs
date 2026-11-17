@@ -12,6 +12,7 @@
 //! use earwitness::engine::{self, Settings};
 //! use earwitness::{MeasureThresholds, ReadingThresholds, reading};
 //!
+//! # fn main() -> Result<(), earwitness::engine::Canceled> {
 //! let settings = Settings {
 //!   max_full_seconds: 900.0,
 //!   sampled_windows: 240,
@@ -20,9 +21,11 @@
 //!   canceled: None,
 //!   thresholds: MeasureThresholds::default(),
 //! };
-//! let measured = engine::run(Path::new("track.flac"), &settings).expect("nothing cancels it");
+//! let measured = engine::run(Path::new("track.flac"), &settings)?;
 //! let reading = reading::read(&measured, &ReadingThresholds::default());
 //! println!("{:?}: {}", reading.verdict, reading.summary);
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Measuring and reading
@@ -60,6 +63,10 @@ mod totals;
 pub mod fixtures;
 #[cfg(test)]
 mod tests;
+
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctest;
 
 pub use aggregate::Measures;
 pub use flags::Flag;

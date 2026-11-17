@@ -143,6 +143,39 @@ impl MediaSource for Watched {
 /// # Errors
 ///
 /// Returns [`Canceled`] if [`Settings::canceled`] says so before the analysis ends.
+///
+/// # Examples
+///
+/// Measuring is the slow step, so a file measured once can be read under several thresholds:
+///
+/// ```no_run
+/// use std::path::Path;
+/// use std::time::{Duration, Instant};
+///
+/// use earwitness::engine::{self, Settings};
+/// use earwitness::{MeasureThresholds, ReadingThresholds, reading};
+///
+/// # fn main() -> Result<(), earwitness::engine::Canceled> {
+/// let settings = Settings {
+///   max_full_seconds: 900.0,
+///   sampled_windows: 240,
+///   deadline: Instant::now() + Duration::from_secs(120),
+///   progress: None,
+///   canceled: None,
+///   thresholds: MeasureThresholds::default(),
+/// };
+/// let measured = engine::run(Path::new("track.flac"), &settings)?;
+/// for sharp_shelf_db in [20.0, 25.0, 30.0] {
+///   let thresholds = ReadingThresholds {
+///     sharp_shelf_db,
+///     ..ReadingThresholds::default()
+///   };
+///   let reading = reading::read(&measured, &thresholds);
+///   println!("{sharp_shelf_db} dB: {:?}", reading.verdict);
+/// }
+/// # Ok(())
+/// # }
+/// ```
 pub fn run(path: &Path, settings: &Settings) -> Result<Measured, Canceled> {
   let opened = Decoder::open_through(path, |file| {
     Box::new(Watched::new(Box::new(file), settings))

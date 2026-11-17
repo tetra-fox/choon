@@ -18,6 +18,32 @@ use crate::thresholds::{Profile, ReadingThresholds};
 const HI_RES_TOP_HZ: f64 = 24_000.0;
 
 /// What the analyzer makes of the cutoff.
+///
+/// # Examples
+///
+/// ```
+/// use earwitness::{ReadingThresholds, Verdict, reading};
+///
+/// # use std::time::{Duration, Instant};
+/// # use earwitness::engine::{self, Settings};
+/// # use earwitness::MeasureThresholds;
+/// # let settings = Settings {
+/// #   max_full_seconds: 900.0,
+/// #   sampled_windows: 240,
+/// #   deadline: Instant::now() + Duration::from_secs(120),
+/// #   progress: None,
+/// #   canceled: None,
+/// #   thresholds: MeasureThresholds::default(),
+/// # };
+/// # let measured = engine::read_bytes(earwitness::fixtures::TONE.to_vec(), &settings)
+/// #   .expect("nothing cancels it");
+/// let reading = reading::read(&measured, &ReadingThresholds::default());
+/// let lossy = match reading.verdict {
+///   Verdict::LikelyTranscode | Verdict::MixedSources => true,
+///   Verdict::Consistent | Verdict::Inconclusive => false,
+/// };
+/// println!("{}", if lossy { "lossy" } else { "no lossy source found" });
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Verdict {
@@ -200,6 +226,34 @@ fn lower_profile_at(thresholds: &ReadingThresholds, hz: f64) -> Option<&Profile>
 }
 
 /// Reads what `measured` found with `thresholds`.
+///
+/// # Examples
+///
+/// Thresholds can come from JSON, as a profile; keys left out keep their default:
+///
+/// ```
+/// use earwitness::{ReadingThresholds, reading};
+///
+/// # fn main() -> Result<(), serde_json::Error> {
+/// # use std::time::{Duration, Instant};
+/// # use earwitness::engine::{self, Settings};
+/// # use earwitness::MeasureThresholds;
+/// # let settings = Settings {
+/// #   max_full_seconds: 900.0,
+/// #   sampled_windows: 240,
+/// #   deadline: Instant::now() + Duration::from_secs(120),
+/// #   progress: None,
+/// #   canceled: None,
+/// #   thresholds: MeasureThresholds::default(),
+/// # };
+/// # let measured = engine::read_bytes(earwitness::fixtures::TONE.to_vec(), &settings)
+/// #   .expect("nothing cancels it");
+/// let thresholds: ReadingThresholds = serde_json::from_str(r#"{"sharpShelfDb": 25.0}"#)?;
+/// let reading = reading::read(&measured, &thresholds);
+/// println!("{:?}, {}", reading.verdict, reading.summary);
+/// # Ok(())
+/// # }
+/// ```
 pub fn read(measured: &Measured, thresholds: &ReadingThresholds) -> Reading {
   let Some(claimed) = &measured.claimed else {
     return Reading {
