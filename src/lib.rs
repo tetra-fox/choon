@@ -53,7 +53,7 @@
 //! the analyzer is tested on.
 
 pub mod aggregate;
-pub mod decode;
+mod decode;
 pub mod engine;
 pub mod flags;
 pub mod grid;
@@ -73,6 +73,7 @@ mod tests;
 struct ReadmeDoctest;
 
 pub use aggregate::Measures;
+pub use decode::Claimed;
 pub use flags::Flag;
 pub use reading::{EncoderGuess, Reading, Verdict};
 pub use thresholds::{MeasureThresholds, Profile, RateEdge, ReadingThresholds};

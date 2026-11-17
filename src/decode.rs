@@ -19,19 +19,13 @@ use symphonia::core::codecs::audio::{
   AudioCodecId, AudioCodecParameters, AudioDecoder, AudioDecoderOptions,
 };
 use symphonia::core::errors::{Error, SeekErrorKind};
+use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, TrackType};
-use symphonia::core::io::MediaSourceStream;
+use symphonia::core::io::{MediaSource, MediaSourceStream};
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::units::{Time, TimeBase, Timestamp};
 use symphonia_common::apple::audio::alac::MagicCookie;
 use tracing::{debug, trace};
-
-/// Hint of what audio from a source of the caller's own might be.
-///
-/// With a [`MediaSource`], it is what [`Decoder::from_source`] opens audio from.
-pub use symphonia::core::formats::probe::Hint;
-/// Source of audio bytes the caller opens audio from, with a [`Hint`].
-pub use symphonia::core::io::MediaSource;
 
 /// The most channels the analyzer reads; the rest of a surround file is left out.
 const ANALYZED_CHANNELS: usize = 2;
@@ -61,15 +55,15 @@ pub struct Claimed {
   pub frames: Option<u64>,
 }
 
-/// Audio file open for decoding.
-pub struct Decoder {
+/// An audio file open for decoding.
+pub(crate) struct Decoder {
   format: Box<dyn FormatReader>,
   decoder: Box<dyn AudioDecoder>,
   track: u32,
   /// what the track's timestamps count, when the container says
   time_base: Option<TimeBase>,
-  /// Format the file claims.
-  pub claimed: Claimed,
+  /// the format the file claims
+  pub(crate) claimed: Claimed,
   /// the channels analyzed: one for mono, else the first two
   pub(crate) channels: usize,
   /// decoded samples not taken yet, one vector per analyzed channel
@@ -89,13 +83,8 @@ pub struct Decoder {
   densest: Option<(u64, u64)>,
   /// packets the decoder could not read and skipped
   pub(crate) skipped: u32,
-  /// Why the last packet skipped could not be read.
-  pub last_skipped: Option<String>,
-  /// Why decoding stopped before the end of the file, when it did.
-  pub stopped: Option<String>,
-  /// the sample frame reading is to go on from: the track's packets that end before it are
-  /// passed over without being decoded
-  skip_until: Option<u64>,
+  /// why decoding stopped before the end of the file, when it did
+  pub(crate) stopped: Option<String>,
 }
 
 /// What filling a window gave.
@@ -122,15 +111,12 @@ impl Decoder {
     Self::from_source(through(file), &hint)
   }
 
-  /// Opens audio from any source of bytes, with `hint` naming what it might be.
-  ///
-  /// # Errors
-  ///
-  /// Returns why, in words, if the container is not recognized, the file holds no audio track
-  /// or its track has no codec parameters, the codec is not one the analyzer decodes, the
-  /// decoder cannot start, the sample rate or the channels are not stated, or the rate is above
-  /// what the analyzer reads.
-  pub fn from_source(source: Box<dyn MediaSource>, hint: &Hint) -> Result<Self, String> {
+  /// Opens audio from any source of bytes, with `hint` naming what it might be. The error says
+  /// why, in words: the container is not recognized, the file holds no audio track or its track
+  /// has no codec parameters, the codec is not one the analyzer decodes, the decoder cannot
+  /// start, the sample rate or the channels are not stated, or the rate is above what the
+  /// analyzer reads.
+  pub(crate) fn from_source(source: Box<dyn MediaSource>, hint: &Hint) -> Result<Self, String> {
     let file_bytes = source.byte_len();
     let stream = MediaSourceStream::new(source, Default::default());
     let format = symphonia::default::get_probe()
@@ -198,9 +184,7 @@ impl Decoder {
       file_bytes,
       densest: None,
       skipped: 0,
-      last_skipped: None,
       stopped: None,
-      skip_until: None,
     })
   }
 
@@ -273,20 +257,14 @@ impl Decoder {
       pending.clear();
     }
     self.taken = 0;
-    self.skip_until = None;
     Ok(())
   }
 
-  /// Moves to the packet holding sample frame `frame`.
-  ///
-  /// Returns false when the container cannot place the frame among the packets it indexes,
-  /// which is also so when another track of the file ends before it, since every track is
-  /// moved. The container may then not read on.
-  ///
-  /// # Errors
-  ///
-  /// Returns why, in words, if the position is out of range or the seek fails otherwise.
-  pub fn seek_frame(&mut self, frame: u64) -> Result<bool, String> {
+  /// Moves to the packet holding sample frame `frame`; false when the container cannot place
+  /// the frame among the packets it indexes, which is also so when another track of the file
+  /// ends before it, since every track is moved. The container may then not read on. The error
+  /// says why, in words, when the position is out of range or the seek fails otherwise.
+  pub(crate) fn seek_frame(&mut self, frame: u64) -> Result<bool, String> {
     let (numer, denom) = self.ticks();
     let rate = u128::from(self.claimed.sample_rate);
     let ticks = u128::from(frame) * denom / (numer * rate);
@@ -301,7 +279,6 @@ impl Decoder {
     match sought {
       Ok(_) => {
         self.decoder.reset();
-        self.skip_until = None;
         Ok(true)
       }
       Err(Error::SeekError(SeekErrorKind::OutOfRange)) => Ok(false),
@@ -309,25 +286,12 @@ impl Decoder {
     }
   }
 
-  /// Reads on from the packet that holds sample frame `frame`.
-  ///
-  /// Reading goes on from the packet of the track that holds the frame, or the first after it,
-  /// passing over the packets before it without decoding them, so getting there takes only the
-  /// time the container takes to read them. It is for a frame a seek cannot place. A codec that
-  /// decodes each packet on its own, as ALAC does, gives the same samples from there as when
-  /// every packet before was decoded.
-  pub fn skip_to_frame(&mut self, frame: u64) {
-    self.skip_until = Some(frame);
-  }
-
-  /// Decodes the next packet into `samples` and returns the frames it covers.
-  ///
-  /// The samples are interleaved over every channel, each at the top of its 32 bits. The
-  /// returned range is the sample frames the container says the packet covers, from its
-  /// timestamp for its duration, which the samples can fall short of or run past. Returns
-  /// `None` at the end of the file or when decoding cannot go on, with the reason in
-  /// [`stopped`](Self::stopped).
-  pub fn next_interleaved(&mut self, samples: &mut Vec<i32>) -> Option<Range<u64>> {
+  /// Decodes the next packet into `samples` and returns the frames it covers. The samples are
+  /// interleaved over every channel, each at the top of its 32 bits. The range is the sample
+  /// frames the container says the packet covers, from its timestamp for its duration, which
+  /// the samples can fall short of or run past. `None` at the end of the file or when decoding
+  /// cannot go on, with the reason in `stopped`.
+  pub(crate) fn next_interleaved(&mut self, samples: &mut Vec<i32>) -> Option<Range<u64>> {
     let (pts, dur) = self.step()?;
     self.decoder.last_decoded().copy_to_vec_interleaved(samples);
     let frames = self.frames_of(pts, dur);
@@ -338,11 +302,9 @@ impl Decoder {
     frames
   }
 
-  /// Returns whether a sample frame lasts a whole number of timestamp ticks.
-  ///
-  /// When every sample frame lasts a whole number of the container's timestamp ticks, a
+  /// Whether a sample frame lasts a whole number of the container's timestamp ticks, so that a
   /// packet's timestamp and duration place its first and last frame exactly.
-  pub fn ticks_fit_frames(&self) -> bool {
+  pub(crate) fn ticks_fit_frames(&self) -> bool {
     let (numer, denom) = self.ticks();
     denom % (numer * u128::from(self.claimed.sample_rate)) == 0
   }
@@ -419,28 +381,18 @@ impl Decoder {
       if packet.track_id != self.track {
         continue;
       }
-      if let Some(until) = self.skip_until {
-        // a packet whose frames are out of range is decoded, which says so
-        let before = self
-          .frames_of(packet.pts.get(), packet.dur.get())
-          .is_some_and(|frames| frames.end <= until);
-        if before {
-          continue;
-        }
-        self.skip_until = None;
-      }
       let decoded = match self.decoder.decode(&packet) {
         Ok(decoded) => decoded,
         Err(Error::DecodeError(reason)) => {
           trace!(reason, "audio packet skipped");
-          if self.skip(reason.to_string()) {
+          if self.skip() {
             return None;
           }
           continue;
         }
         Err(Error::IoError(e)) => {
           trace!(error = %e, "audio packet skipped");
-          if self.skip(e.to_string()) {
+          if self.skip() {
             return None;
           }
           continue;
@@ -466,11 +418,10 @@ impl Decoder {
     }
   }
 
-  /// Counts a packet skipped because of `reason`; true, with the reason in `stopped`, once so
+  /// Counts a packet skipped; true, with the reason in `stopped`, once so
   /// many were skipped that reading on is not worth it.
-  fn skip(&mut self, reason: String) -> bool {
+  fn skip(&mut self) -> bool {
     self.skipped += 1;
-    self.last_skipped = Some(reason);
     if self.skipped < MAX_SKIPPED {
       return false;
     }
@@ -543,19 +494,6 @@ mod tests {
     let mut hint = Hint::new();
     hint.with_extension("m4a");
     Decoder::from_source(Box::new(std::io::Cursor::new(bytes)), &hint).unwrap()
-  }
-
-  #[test]
-  fn a_skip_decodes_only_from_the_packet_holding_the_frame() {
-    let mut decoder = opened(TONE.to_vec());
-    decoder.skip_to_frame(12_000);
-    let mut samples = Vec::new();
-    assert_eq!(decoder.next_interleaved(&mut samples), Some(8192..12_288));
-    assert_eq!(
-      decoder.decoded.1, 4096,
-      "the packets before it were not decoded"
-    );
-    assert_eq!(samples.len(), 4096 * 2);
   }
 
   #[test]

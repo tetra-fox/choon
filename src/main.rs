@@ -7,10 +7,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-use choon::decode::Claimed;
 use choon::engine::{self, Measured, Settings};
 use choon::grid::Scan;
-use choon::{Flag, MeasureThresholds, Reading, ReadingThresholds, Verdict, reading};
+use choon::{Claimed, Flag, MeasureThresholds, Reading, ReadingThresholds, Verdict, reading};
 use clap::{Args, Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 
