@@ -42,7 +42,7 @@ was wrong. A file that opens but is not audio the analyzer can decode reads as i
 
 #[derive(Args)]
 struct Check {
-  /// The audio files to read
+  /// Audio files to read
   #[arg(required_unless_present = "defaults")]
   files: Vec<PathBuf>,
 
@@ -50,9 +50,11 @@ struct Check {
   #[arg(long)]
   json: bool,
 
-  /// Read with the thresholds in FILE, a JSON object like the one --defaults prints, in place of
-  /// the defaults. Keys left out keep their default, unknown keys are refused. Repeat it to read
-  /// each file with several profiles, each named after its file
+  /// Read with the thresholds in FILE in place of the defaults
+  ///
+  /// FILE holds a JSON object like the one --defaults prints. Keys left out keep their default,
+  /// and unknown keys are refused. Repeat the option to read each file with several profiles,
+  /// each named after its file.
   #[arg(long, value_name = "FILE")]
   profile: Vec<PathBuf>,
 
@@ -60,8 +62,10 @@ struct Check {
   #[arg(long, exclusive = true)]
   defaults: bool,
 
-  /// Read files up to this many minutes long in full and longer ones at windows spread over
-  /// them. Without it every file is read in full
+  /// Read files up to MINUTES long in full and sample longer ones
+  ///
+  /// A longer file is read at windows spread over it, as many as --sampled-windows says.
+  /// Without this option every file is read in full.
   #[arg(
     long,
     value_name = "MINUTES",
@@ -70,7 +74,7 @@ struct Check {
   )]
   max_full_minutes: Option<f64>,
 
-  /// How many one-second windows a file longer than --max-full-minutes is read at
+  /// Read a file longer than --max-full-minutes at COUNT one-second windows
   #[arg(
     long,
     value_name = "COUNT",
