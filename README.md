@@ -1,13 +1,13 @@
-# earwitness
+# choon
 
-[![crates.io](https://img.shields.io/crates/v/earwitness)](https://crates.io/crates/earwitness)
-[![docs.rs](https://img.shields.io/docsrs/earwitness)](https://docs.rs/earwitness)
-[![ci](https://github.com/tetra-fox/earwitness/actions/workflows/ci.yml/badge.svg)](https://github.com/tetra-fox/earwitness/actions/workflows/ci.yml)
-[![license](https://img.shields.io/crates/l/earwitness)](#license)
+[![crates.io](https://img.shields.io/crates/v/choon)](https://crates.io/crates/choon)
+[![docs.rs](https://img.shields.io/docsrs/choon)](https://docs.rs/choon)
+[![ci](https://github.com/tetra-fox/choon/actions/workflows/ci.yml/badge.svg)](https://github.com/tetra-fox/choon/actions/workflows/ci.yml)
+[![license](https://img.shields.io/crates/l/choon)](#license)
 
 Reads an audio file's spectrum a second at a time and judges whether the audio is what its
-format claims, such as a FLAC made from an MP3. It comes as a program, `earwitness`, and as a
-library.
+format claims, such as a FLAC made from an MP3. It comes as a program, `choon`, and as a
+library. "Choon" is British dance-music slang for a great track.
 
 ## What it reads
 
@@ -59,11 +59,11 @@ A reading is evidence, not proof. The analyzer looks at where and how the conten
 ## The program
 
 ```sh
-cargo install earwitness
+cargo install choon
 ```
 
 ```console
-$ earwitness check *.flac
+$ choon check *.flac
 honest.flac: consistent, confidence 0.73
 fake-128.flac: likely transcode, cutoff 16.8 kHz, mp3 ~128 kbps, confidence 0.98
 fake-320.flac: inconclusive, cutoff 20.2 kHz
@@ -79,7 +79,7 @@ wrong, so a script can act on it. A file the analyzer cannot open as audio print
 audio` with the reason, and counts as one that could not be read:
 
 ```sh
-for f in *.flac; do earwitness check "$f" > /dev/null || mv "$f" suspect/; done
+for f in *.flac; do choon check "$f" > /dev/null || mv "$f" suspect/; done
 ```
 
 Every file is read in full unless `--max-full-minutes MINUTES --sampled-windows COUNT` say how
@@ -87,7 +87,7 @@ long a file read in full may be and how many one-second windows a longer one is 
 
 ### Thresholds
 
-Every threshold is data. `earwitness check --defaults` prints the defaults as JSON:
+Every threshold is data. `choon check --defaults` prints the defaults as JSON:
 
 ```json
 { "measure": { "silenceDbfs": -70.0, "cutoffRangeDb": 60.0, ... },
@@ -103,7 +103,7 @@ one decode of the file.
 
 ```toml
 [dependencies]
-earwitness = { version = "0.1", default-features = false }
+choon = { version = "0.1", default-features = false }
 ```
 
 The default `cli` feature builds the program and its dependencies (clap, serde_json); a library
@@ -113,8 +113,8 @@ user turns it off.
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use earwitness::engine::{self, Canceled, Settings};
-use earwitness::{MeasureThresholds, ReadingThresholds, Verdict, reading};
+use choon::engine::{self, Canceled, Settings};
+use choon::{MeasureThresholds, ReadingThresholds, Verdict, reading};
 
 fn main() -> Result<(), Canceled> {
   let settings = Settings {

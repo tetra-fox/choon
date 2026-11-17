@@ -9,10 +9,10 @@
 //! use std::path::Path;
 //! use std::time::{Duration, Instant};
 //!
-//! use earwitness::engine::{self, Settings};
-//! use earwitness::{MeasureThresholds, ReadingThresholds, reading};
+//! use choon::engine::{self, Settings};
+//! use choon::{MeasureThresholds, ReadingThresholds, reading};
 //!
-//! # fn main() -> Result<(), earwitness::engine::Canceled> {
+//! # fn main() -> Result<(), choon::engine::Canceled> {
 //! let settings = Settings {
 //!   max_full_seconds: 900.0,
 //!   sampled_windows: 240,
@@ -44,7 +44,7 @@
 //!
 //! # Features
 //!
-//! `cli`, on by default, builds the `earwitness` program, which prints a reading of each file it
+//! `cli`, on by default, builds the `choon` program, which prints a reading of each file it
 //! is given, as a line of text or of JSON, under one or more sets of thresholds. A library user
 //! turns default features off. `testing` adds `fixtures`, the generated audio and the sample file
 //! the analyzer is tested on.

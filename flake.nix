@@ -1,5 +1,5 @@
 {
-  description = "earwitness, which tells whether an audio file is what its format claims";
+  description = "choon, which tells whether an audio file is what its format claims";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";

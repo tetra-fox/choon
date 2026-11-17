@@ -22,11 +22,11 @@ const HI_RES_TOP_HZ: f64 = 24_000.0;
 /// # Examples
 ///
 /// ```
-/// use earwitness::{ReadingThresholds, Verdict, reading};
+/// use choon::{ReadingThresholds, Verdict, reading};
 ///
 /// # use std::time::{Duration, Instant};
-/// # use earwitness::engine::{self, Settings};
-/// # use earwitness::MeasureThresholds;
+/// # use choon::engine::{self, Settings};
+/// # use choon::MeasureThresholds;
 /// # let settings = Settings {
 /// #   max_full_seconds: 900.0,
 /// #   sampled_windows: 240,
@@ -35,7 +35,7 @@ const HI_RES_TOP_HZ: f64 = 24_000.0;
 /// #   canceled: None,
 /// #   thresholds: MeasureThresholds::default(),
 /// # };
-/// # let measured = engine::read_bytes(earwitness::fixtures::TONE.to_vec(), &settings)
+/// # let measured = engine::read_bytes(choon::fixtures::TONE.to_vec(), &settings)
 /// #   .expect("nothing cancels it");
 /// let reading = reading::read(&measured, &ReadingThresholds::default());
 /// let lossy = match reading.verdict {
@@ -232,12 +232,12 @@ fn lower_profile_at(thresholds: &ReadingThresholds, hz: f64) -> Option<&Profile>
 /// Thresholds can come from JSON, as a profile; keys left out keep their default:
 ///
 /// ```
-/// use earwitness::{ReadingThresholds, reading};
+/// use choon::{ReadingThresholds, reading};
 ///
 /// # fn main() -> Result<(), serde_json::Error> {
 /// # use std::time::{Duration, Instant};
-/// # use earwitness::engine::{self, Settings};
-/// # use earwitness::MeasureThresholds;
+/// # use choon::engine::{self, Settings};
+/// # use choon::MeasureThresholds;
 /// # let settings = Settings {
 /// #   max_full_seconds: 900.0,
 /// #   sampled_windows: 240,
@@ -246,7 +246,7 @@ fn lower_profile_at(thresholds: &ReadingThresholds, hz: f64) -> Option<&Profile>
 /// #   canceled: None,
 /// #   thresholds: MeasureThresholds::default(),
 /// # };
-/// # let measured = engine::read_bytes(earwitness::fixtures::TONE.to_vec(), &settings)
+/// # let measured = engine::read_bytes(choon::fixtures::TONE.to_vec(), &settings)
 /// #   .expect("nothing cancels it");
 /// let thresholds: ReadingThresholds = serde_json::from_str(r#"{"sharpShelfDb": 25.0}"#)?;
 /// let reading = reading::read(&measured, &thresholds);

@@ -1,4 +1,4 @@
-//! The `earwitness` program: reads audio files and says, a line or a JSON object for each,
+//! The `choon` program: reads audio files and says, a line or a JSON object for each,
 //! whether each is what its format claims, with an exit status a script can act on.
 
 use std::borrow::Cow;
@@ -7,10 +7,10 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
+use choon::decode::Claimed;
+use choon::engine::{self, Measured, Settings};
+use choon::{Flag, MeasureThresholds, Reading, ReadingThresholds, Verdict, reading};
 use clap::{Args, Parser, Subcommand};
-use earwitness::decode::Claimed;
-use earwitness::engine::{self, Measured, Settings};
-use earwitness::{Flag, MeasureThresholds, Reading, ReadingThresholds, Verdict, reading};
 use serde::{Deserialize, Serialize};
 
 /// Every file read is consistent with its format, or the analyzer cannot tell.
@@ -128,7 +128,7 @@ fn main() -> ExitCode {
   match run(&check) {
     Ok(code) => ExitCode::from(code),
     Err(e) => {
-      eprintln!("earwitness: {e}");
+      eprintln!("choon: {e}");
       ExitCode::from(FAILED)
     }
   }
@@ -182,7 +182,7 @@ fn run(check: &Check) -> Result<u8, Failed> {
   let mut code = CLEAN;
   for file in &check.files {
     if let Err(e) = openable(file) {
-      eprintln!("earwitness: {}: {e}", file.display());
+      eprintln!("choon: {}: {e}", file.display());
       code = FAILED;
       continue;
     }

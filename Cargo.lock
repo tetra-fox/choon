@@ -174,6 +174,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "choon"
+version = "0.1.0"
+dependencies = [
+ "choon",
+ "clap",
+ "flacenc",
+ "mp3lame-encoder",
+ "proptest",
+ "realfft",
+ "serde",
+ "serde_json",
+ "symphonia",
+ "symphonia-common",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "clap"
 version = "4.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -267,24 +285,6 @@ checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer",
  "crypto-common",
-]
-
-[[package]]
-name = "earwitness"
-version = "0.1.0"
-dependencies = [
- "clap",
- "earwitness",
- "flacenc",
- "mp3lame-encoder",
- "proptest",
- "realfft",
- "serde",
- "serde_json",
- "symphonia",
- "symphonia-common",
- "tempfile",
- "tracing",
 ]
 
 [[package]]

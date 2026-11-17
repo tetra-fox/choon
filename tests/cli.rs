@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
-use earwitness::fixtures::{self, music, pink};
+use choon::fixtures::{self, music, pink};
 use mp3lame_encoder::Bitrate;
 
 /// The paths of an honest FLAC and of one made from a 128 kbps MP3, written in `dir`.
@@ -30,8 +30,8 @@ fn path(path: &Path) -> String {
   path.to_str().unwrap().to_string()
 }
 
-fn earwitness(args: &[&str]) -> Output {
-  Command::new(env!("CARGO_BIN_EXE_earwitness"))
+fn choon(args: &[&str]) -> Output {
+  Command::new(env!("CARGO_BIN_EXE_choon"))
     .arg("check")
     .args(args)
     .output()
@@ -48,7 +48,7 @@ fn the_exit_status_says_whether_a_file_read_as_lossy_or_could_not_be_read() {
   let (honest, fake) = honest_and_fake(dir.path());
   let missing = path(&dir.path().join("missing.flac"));
 
-  let output = earwitness(&[&honest]);
+  let output = choon(&[&honest]);
   assert_eq!(status(&output), 0, "{output:?}");
   let lines = String::from_utf8(output.stdout).unwrap();
   assert!(
@@ -57,7 +57,7 @@ fn the_exit_status_says_whether_a_file_read_as_lossy_or_could_not_be_read() {
   );
   assert_eq!(lines.lines().count(), 1);
 
-  let output = earwitness(&[&honest, &fake]);
+  let output = choon(&[&honest, &fake]);
   assert_eq!(status(&output), 1, "{output:?}");
   let lines = String::from_utf8(output.stdout).unwrap();
   let fake_line = lines.lines().nth(1).unwrap();
@@ -70,7 +70,7 @@ fn the_exit_status_says_whether_a_file_read_as_lossy_or_could_not_be_read() {
   // a file that cannot be read outranks one read as lossy, wherever it comes, and the others
   // are still read
   for files in [[&fake, &missing], [&missing, &fake]] {
-    let output = earwitness(&files.map(String::as_str));
+    let output = choon(&files.map(String::as_str));
     assert_eq!(status(&output), 2, "{output:?}");
     assert_eq!(String::from_utf8(output.stdout).unwrap().lines().count(), 1);
     let errors = String::from_utf8(output.stderr).unwrap();
@@ -85,7 +85,7 @@ fn json_is_a_line_per_file_with_a_reading_per_profile() {
   let strict = path(&dir.path().join("strict.json"));
   std::fs::write(&strict, r#"{"reading": {"minSeconds": 1000.0}}"#).unwrap();
 
-  let output = earwitness(&["--json", &honest, &fake]);
+  let output = choon(&["--json", &honest, &fake]);
   assert_eq!(status(&output), 1, "{output:?}");
   let lines: Vec<serde_json::Value> = String::from_utf8(output.stdout)
     .unwrap()
@@ -104,7 +104,7 @@ fn json_is_a_line_per_file_with_a_reading_per_profile() {
   );
 
   // a profile takes the defaults' place, and too little audio for it is no lossy reading
-  let output = earwitness(&["--json", "--profile", &strict, &fake]);
+  let output = choon(&["--json", "--profile", &strict, &fake]);
   assert_eq!(status(&output), 0, "{output:?}");
   let line: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
   let readings = line["readings"].as_array().unwrap();
@@ -136,12 +136,12 @@ fn a_wrong_argument_is_refused_before_any_file_is_read() {
     vec!["--max-full-minutes", "15", "--sampled-windows", "0", &audio],
     vec![],
   ] {
-    let output = earwitness(&args);
+    let output = choon(&args);
     assert_eq!(status(&output), 2, "{args:?}: {output:?}");
     assert!(output.stdout.is_empty(), "{output:?}");
   }
 
-  let output = earwitness(&["--defaults"]);
+  let output = choon(&["--defaults"]);
   assert_eq!(status(&output), 0, "{output:?}");
   let defaults: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
   assert_eq!(defaults["reading"]["sharpShelfDb"], 30.0);
@@ -157,7 +157,7 @@ fn a_file_not_read_as_audio_fails_the_run_and_says_so() {
   std::fs::write(&empty, "").unwrap();
 
   for bad in [&text, &empty] {
-    let output = earwitness(&[bad]);
+    let output = choon(&[bad]);
     assert_eq!(status(&output), 2, "{output:?}");
     let line = String::from_utf8(output.stdout).unwrap();
     assert!(
@@ -170,12 +170,12 @@ fn a_file_not_read_as_audio_fails_the_run_and_says_so() {
 
   // the other files are still read, and a lossy one does not hide the failure
   for files in [[&honest, &text], [&text, &fake]] {
-    let output = earwitness(&files.map(String::as_str));
+    let output = choon(&files.map(String::as_str));
     assert_eq!(status(&output), 2, "{output:?}");
     assert_eq!(String::from_utf8(output.stdout).unwrap().lines().count(), 2);
   }
 
-  let output = earwitness(&["--json", &text]);
+  let output = choon(&["--json", &text]);
   assert_eq!(status(&output), 2, "{output:?}");
   let line: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
   assert_eq!(line["claimed"], serde_json::Value::Null);
@@ -187,7 +187,7 @@ fn a_closed_pipe_ends_the_run_with_the_status_of_the_files_read() {
   let dir = tempfile::tempdir().unwrap();
   let (honest, fake) = honest_and_fake(dir.path());
   let missing = path(&dir.path().join("missing.flac"));
-  let mut child = Command::new(env!("CARGO_BIN_EXE_earwitness"))
+  let mut child = Command::new(env!("CARGO_BIN_EXE_choon"))
     .args(["check", &fake, &honest, &missing])
     .stdout(Stdio::piped())
     .stderr(Stdio::piped())
@@ -214,7 +214,7 @@ fn several_profiles_share_a_line_and_only_a_lossy_verdict_names_an_encoder() {
   let strict = path(&dir.path().join("strict.json"));
   std::fs::write(&strict, r#"{"reading": {"minSeconds": 1000.0}}"#).unwrap();
 
-  let output = earwitness(&[
+  let output = choon(&[
     "--profile",
     &shipped,
     "--profile",

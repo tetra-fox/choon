@@ -152,10 +152,10 @@ impl MediaSource for Watched {
 /// use std::path::Path;
 /// use std::time::{Duration, Instant};
 ///
-/// use earwitness::engine::{self, Settings};
-/// use earwitness::{MeasureThresholds, ReadingThresholds, reading};
+/// use choon::engine::{self, Settings};
+/// use choon::{MeasureThresholds, ReadingThresholds, reading};
 ///
-/// # fn main() -> Result<(), earwitness::engine::Canceled> {
+/// # fn main() -> Result<(), choon::engine::Canceled> {
 /// let settings = Settings {
 ///   max_full_seconds: 900.0,
 ///   sampled_windows: 240,
