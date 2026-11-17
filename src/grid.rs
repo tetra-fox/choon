@@ -23,6 +23,7 @@
 
 use std::sync::Arc;
 
+use rayon::prelude::*;
 use rustfft::num_complex::Complex;
 use rustfft::num_traits::Float;
 use rustfft::{Fft, FftPlanner};
@@ -232,31 +233,40 @@ impl Segments {
   }
 }
 
-/// The scan of full `segments`, one codec of one segment at a time, asking `go_on` before each
-/// whether to carry on; `None` once it says not to.
+/// The scan of full `segments`, each codec of each segment a job of its own on rayon's thread
+/// pool, asking `go_on` before each job whether to carry on; `None` once it says not to.
 ///
 /// # Panics
 ///
 /// When a segment is not full.
-pub(crate) fn scan(segments: &Segments, mut go_on: impl FnMut() -> bool) -> Option<Scan> {
+pub(crate) fn scan(segments: &Segments, go_on: impl Fn() -> bool + Sync) -> Option<Scan> {
   assert!(segments.complete(), "every segment is full before a scan");
-  let mut aac = Aac::new();
-  let mut mp3 = Mp3::new();
-  let mut aac_curves = Vec::with_capacity(SEGMENTS);
-  let mut mp3_curves = Vec::with_capacity(SEGMENTS);
-  for segment in &segments.0 {
-    if !go_on() {
-      return None;
-    }
-    aac_curves.push(in_file(&aac.curve(segment), segment.start));
-    if !go_on() {
-      return None;
-    }
-    mp3_curves.push(in_file(&mp3.curve(segment), segment.start));
-  }
+  let jobs: Vec<(Codec, &Segment)> = segments
+    .0
+    .iter()
+    .flat_map(|segment| [(Codec::Aac, segment), (Codec::Mp3, segment)])
+    .collect();
+  let curves: Vec<(Codec, Vec<f64>)> = jobs
+    .into_par_iter()
+    .map(|(codec, segment)| {
+      go_on().then(|| {
+        let curve = match codec {
+          Codec::Aac => Aac::new().curve(segment),
+          Codec::Mp3 => Mp3::new().curve(segment),
+        };
+        (codec, in_file(&curve, segment.start))
+      })
+    })
+    .collect::<Option<_>>()?;
+  let (aac, mp3): (Vec<_>, Vec<_>) = curves
+    .into_iter()
+    .partition(|(codec, _)| *codec == Codec::Aac);
+  let only = |pairs: Vec<(Codec, Vec<f64>)>| -> Vec<Vec<f64>> {
+    pairs.into_iter().map(|(_, curve)| curve).collect()
+  };
   Some(Scan {
-    aac: codec_scan(&aac_curves),
-    mp3: codec_scan(&mp3_curves),
+    aac: codec_scan(&only(aac)),
+    mp3: codec_scan(&only(mp3)),
   })
 }
 

@@ -5,6 +5,11 @@
 //! promptly when canceled, and stops with what it has when its time is up. The file's bytes are
 //! read through a source that stops giving them at either, so a container that is slow to open
 //! or to seek in holds the thread no longer than a window does.
+//!
+//! A file that claims a lossless format is then scanned for a codec's frame grid in four
+//! stretches of its samples ([`grid`]). The scan's eight jobs, each codec in each stretch, run on
+//! rayon's thread pool: the global one, or the one the analysis is called from inside.
+//! Cancellation and the deadline are checked before each job.
 
 use std::collections::BTreeSet;
 use std::io::{Read, Seek, SeekFrom};
@@ -394,12 +399,10 @@ fn scan_grid(
     );
     return Ok(None);
   }
-  let mut canceled = false;
   let scan = grid::scan(segments, || {
-    canceled = is_canceled(settings.canceled.as_ref());
-    !canceled && Instant::now() < settings.deadline
+    !is_canceled(settings.canceled.as_ref()) && Instant::now() < settings.deadline
   });
-  if canceled {
+  if scan.is_none() && is_canceled(settings.canceled.as_ref()) {
     return Err(Canceled);
   }
   if scan.is_none() {

@@ -25,6 +25,8 @@ path = "src/main.rs"
 required-features = ["cli"]
 
 [dependencies]
+# runs the codec grid scan's stretches side by side
+rayon = "1.12.0"
 realfft = "3.5.1"
 # the half-length complex transform of the codec grid scan's DCT-IV
 rustfft = "6.4.1"
