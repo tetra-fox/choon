@@ -1,13 +1,13 @@
 # choon
 
-_Checks if a choon is proper, mate._
+_Proper lossless, innit?_
 
 [![crates.io](https://img.shields.io/crates/v/choon)](https://crates.io/crates/choon)
 [![docs.rs](https://img.shields.io/docsrs/choon)](https://docs.rs/choon)
 [![ci](https://github.com/tetra-fox/choon/actions/workflows/ci.yml/badge.svg)](https://github.com/tetra-fox/choon/actions/workflows/ci.yml)
 [![license](https://img.shields.io/crates/l/choon)](#license)
 
-Tells whether an audio file is what its format claims, such as a FLAC made from an MP3. A
+Detect lossless audio files made from lossy ones, such as a FLAC transcoded from an MP3. A
 command-line tool and a Rust library.
 
 ## Features
