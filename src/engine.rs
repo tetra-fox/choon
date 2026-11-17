@@ -18,6 +18,7 @@ use tracing::debug;
 
 use crate::decode::{self, Claimed, Decoder, Filled};
 use crate::grid::{self, Scan, Segments};
+use crate::limitation::Limitation;
 use crate::thresholds::MeasureThresholds;
 use crate::totals::Totals;
 use crate::window::{Analyzer, FFT_SIZE, Window};
@@ -138,8 +139,8 @@ pub struct Measured {
   pub grid: Option<Scan>,
   /// the channels left out of a file with more than two
   pub(crate) channels_left_out: u32,
-  /// what made the analysis stop early or skip audio, in words for the report
-  pub(crate) problems: Vec<String>,
+  /// what made the analysis stop early or skip audio
+  pub(crate) problems: Vec<Limitation>,
 }
 
 /// Error of an analysis that measured nothing.
@@ -180,9 +181,6 @@ impl std::error::Error for Error {
     }
   }
 }
-
-/// What an analysis that ran out of time says of it.
-const OUT_OF_TIME: &str = "The analysis ran out of time and covers only the part read by then";
 
 /// A source of audio bytes that stops giving them once the analysis is canceled or its time is
 /// up, which ends whatever the decoder was doing with an error.
@@ -407,16 +405,15 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
     measured.bitrate_kbps = decoder.bitrate_kbps();
   }
   if decoder.skipped > 0 {
-    measured.problems.push(format!(
-      "{} packets could not be decoded and were skipped",
-      decoder.skipped
-    ));
+    measured.problems.push(Limitation::PacketsSkipped {
+      count: decoder.skipped,
+    });
   }
   if let Some(stopped) = decoder.stopped.take() {
-    measured.problems.push(stopped);
+    measured.problems.push(Limitation::Decoder(stopped));
   }
   if unscanned {
-    measured.problems.push(UNSCANNED.to_string());
+    measured.problems.push(Limitation::GridNotScanned);
   }
   if let Some(segments) = &segments {
     measured.grid = scan_grid(segments, settings, &mut measured)?;
@@ -430,9 +427,6 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
   );
   Ok(measured)
 }
-
-/// What is said of a lossless file that states no length.
-const UNSCANNED: &str = "The file does not state its length, so its codec grid was not scanned";
 
 /// Reads the segments of the grid scan that sampled windows did not, seeking to each and
 /// placing its samples by the timestamps of their packets. A segment that cannot be read whole
@@ -469,7 +463,7 @@ fn read_segments(
             // a seek the analysis's own stop cut short only says its source gave no more bytes
             if !halted(settings)? {
               debug!(problem, frame = next, "seeking to a grid segment failed");
-              measured.problems.push(problem);
+              measured.problems.push(Limitation::Decoder(problem));
             }
             return Ok(());
           }
@@ -502,10 +496,7 @@ fn scan_grid(
 ) -> Result<Option<Scan>, Error> {
   if !segments.complete() {
     debug!("the grid segments were not all read");
-    measured.problems.push(
-      "The stretches the codec grid scan reads were not all read, so the scan did not run"
-        .to_string(),
-    );
+    measured.problems.push(Limitation::GridScanIncomplete);
     return Ok(None);
   }
   let scan = grid::scan(segments, || {
@@ -516,9 +507,7 @@ fn scan_grid(
   }
   if scan.is_none() {
     debug!("grid scan out of time");
-    measured
-      .problems
-      .push("The analysis ran out of time before the codec grid scan finished".to_string());
+    measured.problems.push(Limitation::GridScanOutOfTime);
   }
   Ok(scan)
 }
@@ -540,7 +529,7 @@ fn stop(settings: &Settings, measured: &mut Measured) -> Result<bool, Error> {
   let halted = halted(settings)?;
   if halted {
     debug!(windows = measured.windows.len(), "analysis out of time");
-    measured.problems.push(OUT_OF_TIME.to_string());
+    measured.problems.push(Limitation::OutOfTime);
   }
   Ok(halted)
 }
@@ -579,10 +568,6 @@ enum Reached {
   Sampled,
 }
 
-/// What a file states of its length beyond what its bytes can hold.
-const PAST_BYTES: &str =
-  "The file states a longer length than its bytes can hold, so the length they hold is used";
-
 /// The length the file's bytes can hold, when audio up to `seconds` needs more bytes than the
 /// file has: the length taken in place of the one stated, never short of `read`, the furthest
 /// the analysis read, and noted in `measured`.
@@ -592,17 +577,8 @@ fn past_bytes(decoder: &Decoder, seconds: f64, read: f64, measured: &mut Measure
     seconds,
     most, "the stated length is past what the file's bytes hold"
   );
-  measured.problems.push(PAST_BYTES.to_string());
+  measured.problems.push(Limitation::LengthPastBytes);
   Some(most.max(read))
-}
-
-/// `seconds` in words, as minutes when they are whole minutes.
-fn minutes(seconds: u64) -> String {
-  match seconds {
-    60 => "a minute".to_string(),
-    s if s % 60 == 0 => format!("{} minutes", s / 60),
-    s => format!("{s} seconds"),
-  }
 }
 
 /// Whether a window filled as `filled` is worth measuring: a whole second, or a last part of at
@@ -663,14 +639,8 @@ fn whole(
         "reading in full stopped at the longest file read so"
       );
       measured.problems.push(match decoder.claimed.frames {
-        None => format!(
-          "The file does not state its length, so the analysis stopped after {}",
-          minutes(second)
-        ),
-        Some(_) => format!(
-          "The file runs longer than it states, so the analysis stopped after {}",
-          minutes(second)
-        ),
+        None => Limitation::LengthNotStated { seconds: second },
+        Some(_) => Limitation::LongerThanStated { seconds: second },
       });
       return Ok(Reached::End(second as f64));
     }
@@ -728,7 +698,7 @@ fn sampled(
       }
       if index > 0 {
         debug!(problem, second, "seeking failed part way, sampling stopped");
-        measured.problems.push(problem);
+        measured.problems.push(Limitation::Decoder(problem));
         return Ok(Reached::End(furthest));
       }
       debug!(problem, "the file cannot be sought in, reading it through");

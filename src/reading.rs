@@ -7,6 +7,7 @@ use crate::aggregate::{Measures, measures, middle, percentile, upsample_ratio};
 use crate::engine::Measured;
 use crate::flags::{Flag, findings};
 use crate::grid::{self, Codec, Found};
+use crate::limitation::{Limitation, khz};
 use crate::thresholds::{EncoderProfile, ReadingThresholds};
 use crate::window::{Step, Window};
 
@@ -88,7 +89,8 @@ pub struct Reading {
   /// Aggregate measures.
   pub measures: Measures,
   /// What made the reading less reliable.
-  pub limitations: Vec<String>,
+  #[serde(serialize_with = "sentences")]
+  pub limitations: Vec<Limitation>,
   /// Cutoff to mark on the spectrogram, when the content stops short of the top.
   pub cutoff_hz: Option<f64>,
 }
@@ -99,8 +101,16 @@ struct CutoffReading {
   confidence: f64,
   encoder_guess: Option<EncoderGuess>,
   summary: String,
-  limitations: Vec<String>,
+  limitations: Vec<Limitation>,
   cutoff_hz: Option<f64>,
+}
+
+/// Writes limitations as the sentences a person is shown.
+fn sentences<S: serde::Serializer>(
+  limitations: &[Limitation],
+  serializer: S,
+) -> Result<S::Ok, S::Error> {
+  serializer.collect_seq(limitations.iter().map(ToString::to_string))
 }
 
 /// A window that is not near-silent, as the reading counts it.
@@ -196,28 +206,6 @@ impl<'a> Heard<'a> {
   }
 }
 
-/// The limitation of a cut where the highest bitrates cut.
-fn filtered_at_20_khz() -> String {
-  "A recording filtered at 20 kHz when it was made looks the same as a high-bitrate encoder's \
-   cutoff"
-    .to_string()
-}
-
-/// The problems met while measuring, as limitations: the decoder's reasons are clauses it shares
-/// with other messages, so each is capitalized here as a list item of its own.
-fn problems(measured: &Measured) -> Vec<String> {
-  measured
-    .problems
-    .iter()
-    .map(|problem| {
-      let mut chars = problem.chars();
-      chars.next().map_or_else(String::new, |first| {
-        first.to_uppercase().chain(chars).collect()
-      })
-    })
-    .collect()
-}
-
 /// The profile at `hz` when it is one below the highest bitrates: a cut where those cut is
 /// also where recordings are filtered, so it is no sign of a lossy part in a mix either.
 fn lower_profile_at(thresholds: &ReadingThresholds, hz: f64) -> Option<&EncoderProfile> {
@@ -281,29 +269,26 @@ impl Measured {
       top,
       thresholds,
     };
-    let mut limitations = problems(self);
+    let mut limitations = self.problems.clone();
     if self.sampled {
-      limitations.push(format!(
-        "Only {} one-second windows spread over the file were analyzed",
-        self.windows.len()
-      ));
+      limitations.push(Limitation::Sampled {
+        windows: self.windows.len(),
+      });
     }
     if self.channels_left_out > 0 {
-      limitations.push(format!(
-        "Only the first two of {} channels were analyzed",
-        claimed.channels
-      ));
+      limitations.push(Limitation::ChannelsLeftOut {
+        channels: claimed.channels,
+      });
     }
     let mut found = verdict(&heard, median, claimed.lossless, self.bitrate_kbps);
     let heard_seconds = heard.seconds();
     if heard_seconds < thresholds.few_seconds() {
-      limitations.push(format!(
-        "Only {heard_seconds:.1} s of the audio is above silence, too little for a reliable reading"
-      ));
+      limitations.push(Limitation::LittleAudio {
+        seconds: heard_seconds,
+      });
     }
     if quiet(&heard) {
-      limitations
-        .push("The audio is quiet, which makes the upper band harder to measure".to_string());
+      limitations.push(Limitation::Quiet);
     }
     // a lossy file read as consistent with its own bitrate stops where its own encoder cuts,
     // which needs no other explanation
@@ -342,11 +327,10 @@ impl Measured {
         .iter()
         .find(|edge| (cut - edge.hz).abs() <= thresholds.cluster_hz)
     {
-      limitations.push(format!(
-        "Audio recorded at {} and converted to this rate has the same sharp cutoff at {}",
-        edge.rate,
-        khz(edge.hz)
-      ));
+      limitations.push(Limitation::OtherRate {
+        rate: edge.rate.clone(),
+        hz: edge.hz,
+      });
     }
     let cutoff_verdict = found.verdict;
     let grid = self
@@ -386,7 +370,7 @@ fn weighed(
     let name = grid.codec;
     let mut limitations = found.limitations;
     if grid.codec == Codec::Aac {
-      limitations.push("A Vorbis decode's frame grid reads as AAC's".to_string());
+      limitations.push(Limitation::VorbisReadsAsAac);
     }
     return CutoffReading {
       verdict: Verdict::LikelyTranscode,
@@ -407,11 +391,7 @@ fn weighed(
   match found.verdict {
     Verdict::LikelyTranscode | Verdict::MixedSources => {
       let mut limitations = found.limitations;
-      limitations.push(
-        "A recording filtered where an encoder cuts, and a decode resampled afterwards, stop at \
-         an encoder's cutoff without a frame grid"
-          .to_string(),
-      );
+      limitations.push(Limitation::CutoffWithoutGrid);
       CutoffReading {
         verdict: Verdict::PossiblyLossy,
         confidence: 0.4,
@@ -475,9 +455,7 @@ fn verdict(
       * ((clustered - t.transcode_share) / (1.0 - t.transcode_share)).clamp(0.0, 1.0)
       + 0.4 * sharp_share;
     let confidence = 0.6 + 0.38 * evidence;
-    reading
-      .limitations
-      .push("Of several lossy generations, only the lowest cutoff shows".to_string());
+    reading.limitations.push(Limitation::LowestCutoffOnly);
     reading.verdict = Verdict::LikelyTranscode;
     reading.confidence = confidence;
     reading.encoder_guess = Some(EncoderGuess {
@@ -504,7 +482,7 @@ fn verdict(
       profile: profile.name.to_string(),
       confidence: 0.4,
     });
-    reading.limitations.push(filtered_at_20_khz());
+    reading.limitations.push(Limitation::FilteredAt20Khz);
     reading.summary = format!(
       "{} of the time stops at {} with a sharp shelf, where an encoder at {} cuts off or where \
        a recording was filtered when it was made.",
@@ -586,7 +564,7 @@ fn verdict(
       confidence: 0.4,
     });
     reading.cutoff_hz = Some(at);
-    reading.limitations.push(filtered_at_20_khz());
+    reading.limitations.push(Limitation::FilteredAt20Khz);
     reading.summary = format!(
       "The content reaches the top of the band, but {} of the time has a sharp step at {}, \
        where an encoder at {profile} cuts off. A layer at that bitrate and a recording \
@@ -625,11 +603,7 @@ fn verdict(
       );
       return reading;
     }
-    reading.limitations.push(
-      "Old masters, speech, lo-fi material and vinyl or cassette transfers roll off early, and \
-       heavy equalization can look like a shelf"
-        .to_string(),
-    );
+    reading.limitations.push(Limitation::EarlyRollOff);
     if median >= t.natural_limit * heard.top {
       reading.verdict = Verdict::Consistent;
       reading.confidence = 0.7;
@@ -742,12 +716,6 @@ fn keeps_its_bitrate(thresholds: &ReadingThresholds, edge: f64, kbps: u32) -> bo
 fn quiet(heard: &Heard) -> bool {
   let levels: Vec<f64> = heard.windows.iter().map(|w| w.rms_dbfs).collect();
   percentile(&levels, 0.5).is_some_and(|level| level < heard.thresholds.quiet_dbfs)
-}
-
-/// A frequency as kHz to one decimal, without a trailing `.0`.
-fn khz(hz: f64) -> String {
-  let text = format!("{:.1}", hz / 1000.0);
-  format!("{} kHz", text.strip_suffix(".0").unwrap_or(&text))
 }
 
 /// A share as a whole percentage.

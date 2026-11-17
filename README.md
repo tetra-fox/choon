@@ -16,7 +16,7 @@ command-line tool and a Rust library.
   LAME at 96 to 320 kbps and V0 to V9 and on ffmpeg's AAC at 96 to 256 kbps
 - Reads the encoder's cutoff in the spectrum, which alone raises a doubt
 - Guesses the encoder setting behind a transcode (`mp3 ~128 kbps`, ...)
-- Flags upsampled audio and bit-padded samples
+- Flags upsampled audio, bit-padded samples and two channels holding the same audio
 - Finds lossy parts mixed into lossless audio (an intro, a stem)
 - Exit codes and JSON output for scripts
 - Every threshold is data, readable from a profile file
@@ -46,9 +46,9 @@ and AAC at 256 kbps show one too.
 | possibly lossy   | the cutoff reads as a transcode or mixed sources, but no frame grid shows                                                                                     |
 | inconclusive     | too little audio, no pattern, or a cut indistinguishable from an honest one                                                                                   |
 
-Beside the verdict: the `upsampled` and `bit_padded` flags, a summary in words, what made the
-reading less reliable, and measures such as effective bit depth, noise floor, stereo
-correlation, DC offset and clipping.
+Beside the verdict: the `upsampled`, `bit_padded` and `dual_mono` flags, a summary in words,
+what made the reading less reliable, and measures such as effective bit depth, noise floor,
+stereo correlation, DC offset and clipping.
 
 ## Supported formats
 

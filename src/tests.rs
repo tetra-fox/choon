@@ -13,6 +13,7 @@ use crate::engine::{self, Coverage, Error, Measured, Settings, measure, measure_
 use crate::fixtures::{self, Audio, lo_fi, music, music_for, pink, tone};
 use crate::flags::Flag;
 use crate::grid::{self, Codec};
+use crate::limitation::Limitation;
 use crate::reading::{Reading, Verdict};
 use crate::thresholds::{MeasureThresholds, ReadingThresholds};
 
@@ -251,13 +252,14 @@ fn the_peak_is_the_loudest_sample_of_either_channel() {
 }
 
 #[test]
-fn a_mono_source_copied_to_stereo_shows_in_the_measures() {
+fn a_mono_source_copied_to_stereo_is_flagged_and_shows_in_the_measures() {
   let dir = tempfile::tempdir().unwrap();
   let mono = music(1, 44_100, pink).mono_to_stereo();
   let reading = analyzed(&flac(dir.path(), "m.flac", &mono, 16));
   assert!(reading.measures.stereo_correlation.unwrap() > 0.9999);
   assert_eq!(reading.measures.side_energy_db, Some(-120.0));
   assert!(reading.summary.contains("mono"), "{}", reading.summary);
+  assert_eq!(reading.flags, [Flag::DualMono]);
 }
 
 #[test]
@@ -522,8 +524,7 @@ fn a_long_file_is_sampled_at_windows_spread_over_it() {
   assert!(
     reading
       .limitations
-      .iter()
-      .any(|l| l.contains("20 one-second windows")),
+      .contains(&Limitation::Sampled { windows: 20 }),
     "{reading:#?}"
   );
 }
@@ -754,8 +755,7 @@ fn a_file_without_a_stated_length_is_read_only_so_far() {
   assert!(
     reading
       .limitations
-      .iter()
-      .any(|l| l.contains("does not state its length") && l.contains("after 10 seconds")),
+      .contains(&Limitation::LengthNotStated { seconds: 10 }),
     "{reading:#?}"
   );
 }
@@ -786,10 +786,7 @@ fn a_file_stating_a_huge_length_reports_only_what_was_read() {
   assert!(!measured.windows.is_empty());
   let reading = read(&measured);
   assert!(
-    reading
-      .limitations
-      .iter()
-      .any(|l| l.contains("than its bytes can hold")),
+    reading.limitations.contains(&Limitation::LengthPastBytes),
     "{reading:#?}"
   );
 }
@@ -828,7 +825,7 @@ fn a_seek_past_what_a_file_holds_ends_the_length_where_reading_stopped() {
     reading
       .limitations
       .iter()
-      .any(|l| l.contains("Seeking failed")),
+      .any(|l| matches!(l, Limitation::Decoder(why) if why.starts_with("seeking failed"))),
     "{reading:#?}"
   );
 }
@@ -965,7 +962,10 @@ fn a_cliff_at_an_old_equipment_rate_reads_as_its_encoder_and_says_so() {
   assert_eq!(reading.cutoff_verdict, Verdict::LikelyTranscode, "{why}");
   assert_eq!(reading.verdict, Verdict::PossiblyLossy, "{why}");
   assert!(
-    reading.limitations.iter().any(|l| l.contains("37.8 kHz")),
+    reading
+      .limitations
+      .iter()
+      .any(|l| matches!(l, Limitation::OtherRate { hz, .. } if *hz == 18_900.0)),
     "{reading:#?}"
   );
 }
@@ -1009,10 +1009,7 @@ fn a_file_stating_more_than_its_bytes_hold_is_as_long_as_they_hold() {
   );
   let reading = read(&measured);
   assert!(
-    reading
-      .limitations
-      .iter()
-      .any(|l| l.contains("than its bytes can hold")),
+    reading.limitations.contains(&Limitation::LengthPastBytes),
     "{reading:#?}"
   );
 }

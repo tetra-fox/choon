@@ -1,7 +1,6 @@
-//! Findings reported beside the reading, independent of the cutoff.
-//!
-//! They are a file made from audio at a lower sample rate, samples that use fewer bits than
-//! they claim, and two channels that hold the same audio.
+//! Findings reported beside the reading, independent of the cutoff: a file made from audio at a
+//! lower sample rate, samples that use fewer bits than they claim, and two channels that hold
+//! the same audio.
 
 use serde::Serialize;
 
@@ -21,6 +20,8 @@ pub enum Flag {
   Upsampled,
   /// Samples that claim more than 16 bits but carry no more than 16.
   BitPadded,
+  /// Two channels that hold the same audio.
+  DualMono,
 }
 
 /// What was found beside the reading.
@@ -78,6 +79,7 @@ pub(crate) fn findings(
       .side_energy_db
       .is_some_and(|s| s <= thresholds.mono_side_db)
   {
+    found.flags.push(Flag::DualMono);
     found
       .notes
       .push("The two channels are identical, so the source was probably mono.".to_string());

@@ -375,6 +375,7 @@ fn words(reading: &Reading) -> String {
     match flag {
       Flag::Upsampled => "upsampled",
       Flag::BitPadded => "bit padded",
+      Flag::DualMono => "dual mono",
     }
     .to_string()
   }));

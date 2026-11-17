@@ -168,12 +168,13 @@ pub struct ReadingThresholds {
   pub aac_grid_z: f64,
   /// Fewest segments that put their lowest count at the file's offset, for an AAC grid.
   ///
-  /// It is compared with [`CodecScan::agree`](crate::grid::CodecScan::agree). A decode carries
-  /// one grid from start to end, so every segment finds it at the same offset. The segments of
-  /// a lossless file can agree on an offset too, so agreement alone is no grid: it only narrows
-  /// what the z threshold finds. A file that holds a lossy section only in part falls short,
-  /// and so does a Vorbis decode, whose grid the AAC scan finds at an offset that moves between
-  /// segments.
+  /// It is compared with [`CodecScan::segments_agreeing`]. A decode carries one grid from start
+  /// to end, so every segment finds it at the same offset. The segments of a lossless file can
+  /// agree on an offset too, so agreement alone is no grid: it only narrows what the z
+  /// threshold finds. A file that holds a lossy section only in part falls short, and so does
+  /// a Vorbis decode, whose grid the AAC scan finds at an offset that moves between segments.
+  ///
+  /// [`CodecScan::segments_agreeing`]: crate::grid::CodecScan::segments_agreeing
   pub aac_grid_segments_agreeing: usize,
   /// Robust z over which the MP3 scan finds a frame grid.
   ///
@@ -181,8 +182,9 @@ pub struct ReadingThresholds {
   pub mp3_grid_z: f64,
   /// Fewest segments that put their lowest count at the file's offset, for an MP3 grid.
   ///
-  /// It is compared with [`CodecScan::agree`](crate::grid::CodecScan::agree), as
-  /// `aac_grid_segments_agreeing` is.
+  /// It is compared with [`CodecScan::segments_agreeing`], as `aac_grid_segments_agreeing` is.
+  ///
+  /// [`CodecScan::segments_agreeing`]: crate::grid::CodecScan::segments_agreeing
   pub mp3_grid_segments_agreeing: usize,
 }
 
