@@ -24,8 +24,8 @@ command-line tool and a Rust library.
 Each one-second window of the file is measured: its loudness, where its content stops (the
 cutoff), how sharply it stops, gaps below the cutoff and steps inside a full band. A lossy encoder
 cuts the top of the band with a steep low-pass at a frequency set by its bitrate, and decoding to
-FLAC or WAV does not bring it back. The reading looks at the spread over all windows, not an
-average.
+FLAC or WAV does not bring it back. The verdict comes from how the cutoffs spread across all
+windows.
 
 | Verdict          | Means                                                                                                     |
 | ---------------- | --------------------------------------------------------------------------------------------------------- |
@@ -129,12 +129,10 @@ fn main() -> Result<(), Canceled> {
 
 ## Limitations
 
-A reading is evidence, not proof.
-
 - A lossless master filtered sharply where an encoder cuts (16 or 19 kHz) reads like a transcode
 - MP3 320 and AAC cut near 20 kHz, where many recordings are filtered anyway: read as
   inconclusive, so those transcodes are missed
-- Inconclusive is not clean: the rules prefer "can't tell" over accusing an honest file
+- Many transcodes read as inconclusive, because the rules call a file a transcode only on a clear pattern
 - Naturally band-limited audio (old, lo-fi, dark) can stop near an encoder cutoff by chance
 - Needs about 30 seconds of non-silent audio
 - Reads only the first two channels of a surround file
