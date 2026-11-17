@@ -112,9 +112,14 @@ impl Settings {
   /// says the analysis is `done` of the way through, from 0 to 1
   fn report(&self, done: f64) {
     if let Some(progress) = &self.progress {
-      progress.store((done.clamp(0.0, 1.0) * 1000.0) as u32, Ordering::Relaxed);
+      progress.store(thousandths(done), Ordering::Relaxed);
     }
   }
+}
+
+/// `done`, from 0 to 1, in the thousandths progress is reported in
+fn thousandths(done: f64) -> u32 {
+  (done.clamp(0.0, 1.0) * 1000.0) as u32
 }
 
 /// windows that take about as long to measure as one job of the grid scan takes, which weighs
@@ -139,9 +144,12 @@ impl Run<'_> {
 
   /// says every window is measured and `done` of the grid scan's jobs have ended, from 0 to 1
   fn scan(&self, done: f64) {
-    self
-      .settings
-      .report(self.windows_share + (1.0 - self.windows_share) * done);
+    let done = self.windows_share + (1.0 - self.windows_share) * done;
+    // the jobs end on several threads, and the report of an earlier one can come after a
+    // later one's: the furthest stays
+    if let Some(progress) = &self.settings.progress {
+      progress.fetch_max(thousandths(done), Ordering::Relaxed);
+    }
   }
 }
 
