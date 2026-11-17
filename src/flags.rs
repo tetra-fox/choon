@@ -1,6 +1,4 @@
-//! Findings reported beside the reading, independent of the cutoff: a file made from audio at a
-//! lower sample rate, samples that use fewer bits than they claim, and two channels that hold
-//! the same audio.
+//! findings reported beside the reading, independent of the cutoff
 
 use crate::aggregate::Measures;
 use crate::decode::Claimed;
@@ -23,7 +21,7 @@ pub enum Flag {
   DualMono,
 }
 
-/// What was found beside the reading.
+/// what was found beside the reading
 pub(crate) struct Findings {
   pub flags: Vec<Flag>,
   /// a sentence for the summary per finding
@@ -33,8 +31,8 @@ pub(crate) struct Findings {
   pub source_edge: Option<f64>,
 }
 
-/// The findings in a file claiming `claimed`, from its non-silent `windows`, which cut off at
-/// `median`, and its `measures`.
+/// the findings in a file claiming `claimed`, from its non-silent `windows`, which cut off at
+/// `median`, and its `measures`
 pub(crate) fn findings(
   claimed: &Claimed,
   windows: &[&Window],
@@ -86,9 +84,8 @@ pub(crate) fn findings(
   found
 }
 
-/// The band edge of a rate lower than the file's (whose band ends at `nyquist`) the content
-/// stops at with a cliff: the median cutoff is at the edge and most windows near it have a
-/// sharp shelf there. A natural roll-off, however little it leaves above, has no cliff.
+/// the band edge of a rate lower than the file's the content stops at with a cliff: the median
+/// cutoff is at the edge and most windows near it have a sharp shelf there
 fn source_edge(
   windows: &[&Window],
   median: f64,

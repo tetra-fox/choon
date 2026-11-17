@@ -1,6 +1,5 @@
-//! One analysis from file to measures: the file is decoded a window at a time, in full or at
-//! windows spread over it, each window is measured, and a file that claims a lossless format is
-//! scanned for a codec's frame grid.
+//! one analysis from file to measures: decodes a window at a time, in full or at windows spread
+//! over the file, measures each, and scans a file that claims a lossless format for a frame grid
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -51,7 +50,7 @@ pub enum Coverage {
 }
 
 impl Coverage {
-  /// The longest file analyzed in full, in seconds.
+  /// the longest file analyzed in full, in seconds
   fn max_full_seconds(self) -> f64 {
     match self {
       Self::Full => f64::INFINITY,
@@ -96,18 +95,18 @@ impl fmt::Debug for Settings {
   }
 }
 
-/// Whether `canceled` says the analysis is canceled; never without one.
+/// whether `canceled` says the analysis is canceled; never without one
 fn is_canceled(canceled: Option<&CancelCheck>) -> bool {
   canceled.is_some_and(|canceled| canceled())
 }
 
-/// Whether `deadline` has passed; never without one.
+/// whether `deadline` has passed; never without one
 fn is_past(deadline: Option<Instant>) -> bool {
   deadline.is_some_and(|deadline| Instant::now() >= deadline)
 }
 
 impl Settings {
-  /// Says the analysis is `done` of the way through, from 0 to 1.
+  /// says the analysis is `done` of the way through, from 0 to 1
   fn report(&self, done: f64) {
     if let Some(progress) = &self.progress {
       progress.store((done.clamp(0.0, 1.0) * 1000.0) as u32, Ordering::Relaxed);
@@ -190,8 +189,8 @@ impl std::error::Error for Error {
   }
 }
 
-/// A source of audio bytes that stops giving them once the analysis is canceled or its time is
-/// up, which ends whatever the decoder was doing with an error.
+/// a source of audio bytes that stops giving them once the analysis is canceled or its time is
+/// up, which ends whatever the decoder was doing with an error
 struct Watched {
   inner: Box<dyn MediaSource>,
   canceled: Option<CancelCheck>,
@@ -319,8 +318,8 @@ pub fn measure_bytes(bytes: Vec<u8>, settings: &Settings) -> Result<Measured, Er
   )
 }
 
-/// Measures the audio of `opened`, or says why it did not open: the analysis's own stop when
-/// that cut opening short.
+/// measures the audio of `opened`, or says why it did not open: the analysis's own stop when
+/// that cut opening short
 fn measure_opened(opened: Result<Decoder, Error>, settings: &Settings) -> Result<Measured, Error> {
   match opened {
     Ok(decoder) => measure_decoded(decoder, settings),
@@ -330,7 +329,6 @@ fn measure_opened(opened: Result<Decoder, Error>, settings: &Settings) -> Result
   }
 }
 
-/// Measures the audio `decoder` reads.
 fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured, Error> {
   let claimed = decoder.claimed.clone();
   let rate = claimed.sample_rate as usize;
@@ -380,8 +378,7 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
       )?
     }
     None => {
-      // reading in full stops at the longest file read so, whatever length the file states, if
-      // any
+      // a read in full stops at the longest length read in full, whatever length the file states
       let longest = settings.coverage.max_full_seconds().ceil() as u64;
       whole(
         &mut decoder,
@@ -440,10 +437,8 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
   Ok(measured)
 }
 
-/// Reads the segments of the grid scan that sampled windows did not, seeking once to each and
-/// placing its samples by the timestamps of their packets. A segment that cannot be read whole
-/// stays short: a seek that fails is noted in `measured`, and a read that fails leaves its
-/// reason in the decoder.
+/// reads the grid segments that sampled windows did not fill, seeking once to each and placing
+/// its samples by their packets' timestamps. a segment that cannot be read whole stays short
 fn read_segments(
   decoder: &mut Decoder,
   segments: &mut Segments,
@@ -506,8 +501,8 @@ fn read_segments(
   Ok(())
 }
 
-/// Scans full `segments` for a codec's frame grid; `None`, noted in `measured`, when they are
-/// not full or the analysis runs out of time first.
+/// scans full `segments` for a codec's frame grid; `None`, noted in `measured`, when they are
+/// not full or the analysis runs out of time first
 fn scan_grid(
   segments: &Segments,
   settings: &Settings,
@@ -531,7 +526,7 @@ fn scan_grid(
   Ok(scan)
 }
 
-/// The whole seconds `count` windows spread evenly over `seconds` of audio start at.
+/// the whole seconds `count` windows spread evenly over `seconds` of audio start at
 fn picks(seconds: f64, count: usize) -> BTreeSet<u64> {
   let last = (seconds - 1.0).max(0.0);
   (0..count)
@@ -542,8 +537,8 @@ fn picks(seconds: f64, count: usize) -> BTreeSet<u64> {
     .collect()
 }
 
-/// Whether the analysis is to stop: an error when it was canceled, true when its time is up,
-/// which is noted once in `measured`.
+/// whether the analysis is to stop: an error when it was canceled, true when its time is up,
+/// which is noted once in `measured`
 fn stop(settings: &Settings, measured: &mut Measured) -> Result<bool, Error> {
   let halted = halted(settings)?;
   if halted {
@@ -553,7 +548,7 @@ fn stop(settings: &Settings, measured: &mut Measured) -> Result<bool, Error> {
   Ok(halted)
 }
 
-/// Whether the analysis is out of time; an error when it was canceled.
+/// whether the analysis is out of time; an error when it was canceled
 fn halted(settings: &Settings) -> Result<bool, Error> {
   if is_canceled(settings.canceled.as_ref()) {
     return Err(Error::Canceled);
@@ -561,9 +556,8 @@ fn halted(settings: &Settings) -> Result<bool, Error> {
   Ok(is_past(settings.deadline))
 }
 
-/// Whether decoding that just ended, or a seek that just failed, was the analysis's own stop
-/// rather than the file's doing: [`stop`], dropping the reason the decoder gave, which is only
-/// that its source stopped giving bytes.
+/// whether decoding that just ended, or a seek that just failed, was the analysis's own stop:
+/// [`stop`], dropping the decoder's reason, which is only that its source stopped giving bytes
 fn stopped_by_us(
   decoder: &mut Decoder,
   settings: &Settings,
@@ -576,7 +570,7 @@ fn stopped_by_us(
   Ok(ours)
 }
 
-/// How far a read went.
+/// how far a read went
 enum Reached {
   /// to an end the file set: its last sample, or the longest a read in full goes, this many
   /// seconds in
@@ -587,9 +581,8 @@ enum Reached {
   Sampled,
 }
 
-/// The length the file's bytes can hold, when audio up to `seconds` needs more bytes than the
-/// file has: the length taken in place of the one stated, never short of `read`, the furthest
-/// the analysis read, and noted in `measured`.
+/// the length the file's bytes can hold, when audio up to `seconds` needs more bytes than the
+/// file has; never short of `read`, the furthest the analysis read, and noted in `measured`
 fn past_bytes(decoder: &Decoder, seconds: f64, read: f64, measured: &mut Measured) -> Option<f64> {
   let most = decoder.most_seconds().filter(|most| seconds > *most)?;
   debug!(
@@ -600,8 +593,8 @@ fn past_bytes(decoder: &Decoder, seconds: f64, read: f64, measured: &mut Measure
   Some(most.max(read))
 }
 
-/// Whether a window filled as `filled` is worth measuring: a whole second, or a last part of at
-/// least half a second and one spectrum frame.
+/// whether a window filled as `filled` is worth measuring: a whole second, or a last part of at
+/// least half a second and one spectrum frame
 fn usable(filled: &Filled, rate: usize) -> bool {
   match filled {
     Filled::Full => true,
@@ -609,7 +602,7 @@ fn usable(filled: &Filled, rate: usize) -> bool {
   }
 }
 
-/// Which windows [`whole`] measures.
+/// which windows [`whole`] measures
 enum Windows<'a> {
   /// every window, up to this many
   Upto(u64),
@@ -617,8 +610,7 @@ enum Windows<'a> {
   Only(&'a BTreeSet<u64>),
 }
 
-/// Reads windows one after another from where the decoder is and measures those `read` asks
-/// for.
+/// reads windows one after another from where the decoder is and measures those `read` asks for
 fn whole(
   decoder: &mut Decoder,
   analyzer: &mut Analyzer,
@@ -685,10 +677,8 @@ fn whole(
   }
 }
 
-/// Measures one window at each of `picks`, seeking to each; when the file cannot be sought
-/// in, reads it from the start and measures the picked seconds as they come. A file that gives
-/// out before the last pick, its end reached or a seek past what it holds failing, has ended
-/// where the furthest window read ends.
+/// measures one window at each of `picks`, seeking to each, or reading from the start when the
+/// file cannot be sought in. a file that gives out early ends where the furthest window read ends
 fn sampled(
   decoder: &mut Decoder,
   analyzer: &mut Analyzer,
@@ -760,8 +750,8 @@ fn sampled(
   Ok(Reached::Sampled)
 }
 
-/// What a reading saw, for a failing test to print: the reading, then each window's start,
-/// level, cutoff, shelf and steepest inner step.
+/// what a reading saw, for a failing test to print: the reading, then each window's start,
+/// level, cutoff, shelf and steepest inner step
 #[cfg(test)]
 pub(crate) fn explain(measured: &Measured, reading: &crate::reading::Reading) -> String {
   let mut text = format!(

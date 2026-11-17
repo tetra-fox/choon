@@ -30,22 +30,22 @@ use rustfft::num_complex::Complex;
 use rustfft::num_traits::Float;
 use rustfft::{Fft, FftPlanner};
 
-/// AAC's hop, the length of its long frames' new samples.
+/// AAC's hop, the length of its long frames' new samples
 const AAC_HOP: usize = 1024;
-/// MP3's hop, a granule.
+/// MP3's hop, a granule
 const MP3_HOP: usize = 576;
-/// The number of segments scanned.
+/// the number of segments scanned
 pub(crate) const SEGMENTS: usize = 4;
-/// The samples of one segment: 40 AAC hops.
+/// the samples of one segment: 40 AAC hops
 pub(crate) const SEGMENT: usize = 40 * AAC_HOP;
-/// Where the segments start, as fractions of the file's length.
+/// where the segments start, as fractions of the file's length
 const SEGMENT_AT: [f64; SEGMENTS] = [0.2, 0.4, 0.6, 0.8];
-/// The rounding noise of 16-bit samples in samples scaled to [-1, 1): 2^-15 / sqrt(12).
+/// the rounding noise of 16-bit samples in samples scaled to [-1, 1): 2^-15 / sqrt(12)
 const NOISE16: f64 = 8.809_710_218_959_115e-6;
-/// The rms of a hybrid filterbank value per unit rms of white input, which puts the MP3 noise
-/// level at the 16-bit rounding noise of the filterbank's output.
+/// the rms of a hybrid filterbank value per unit rms of white input, which puts the MP3 noise
+/// level at the 16-bit rounding noise of the filterbank's output
 const MP3_NOISE_GAIN: f64 = 0.527_861_394_696_74;
-/// MAD times this estimates the standard deviation of normally distributed values.
+/// MAD times this estimates the standard deviation of normally distributed values
 const MAD_TO_SD: f64 = 1.4826;
 
 /// Codec whose frame grid the scan looks for.
@@ -111,8 +111,8 @@ pub struct Found {
   pub scan: CodecScan,
 }
 
-/// The grid `scan` shows under `thresholds`: a codec over its z threshold with as many segments
-/// agreeing as its own threshold asks, the one furthest over its z threshold when both are.
+/// the grid `scan` shows under `thresholds`: a codec over its z threshold with as many segments
+/// agreeing as its own threshold asks, the one furthest over its z threshold when both are
 pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found> {
   [
     (
@@ -137,7 +137,7 @@ pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found
   })
 }
 
-/// One stretch of the file the grid is scanned in, filled as its samples are decoded.
+/// one stretch of the file the grid is scanned in, filled as its samples are decoded
 struct Segment {
   /// the sample frame it starts at
   start: u64,
@@ -146,7 +146,7 @@ struct Segment {
 }
 
 impl Segment {
-  /// The sample frame the segment needs next.
+  /// the sample frame the segment needs next
   fn next(&self) -> u64 {
     self.start + self.left.len() as u64
   }
@@ -155,7 +155,7 @@ impl Segment {
     self.left.len() == SEGMENT
   }
 
-  /// How many of `available` frames from `first` on the segment takes, and from which.
+  /// how many of `available` frames from `first` on the segment takes, and from which
   fn wanted(&self, first: u64, available: usize) -> Option<(usize, usize)> {
     let next = self.next();
     let from = usize::try_from(next.checked_sub(first)?).ok()?;
@@ -164,11 +164,11 @@ impl Segment {
   }
 }
 
-/// The segments of a file the grid is scanned in.
+/// the segments of a file the grid is scanned in
 pub(crate) struct Segments(Vec<Segment>);
 
 impl Segments {
-  /// The segments of a file of `frames` sample frames; `None` when it is shorter than one.
+  /// the segments of a file of `frames` sample frames; `None` when it is shorter than one
   pub(crate) fn of(frames: u64) -> Option<Self> {
     let length = SEGMENT as u64;
     if frames < length {
@@ -186,8 +186,8 @@ impl Segments {
     Some(Self(segments))
   }
 
-  /// Takes what the segments need of `window`, one vector per analyzed channel, whose first
-  /// sample is frame `first`. A mono window counts as both channels.
+  /// takes what the segments need of `window`, one vector per analyzed channel, whose first
+  /// sample is frame `first`. a mono window counts as both channels.
   pub(crate) fn take(&mut self, first: u64, window: &[Vec<f32>]) {
     let [left, right] = match window {
       [mono] => [mono, mono],
@@ -207,8 +207,8 @@ impl Segments {
     }
   }
 
-  /// Takes what the segments need of `samples`, interleaved over `channels` channels, each at
-  /// the top of its 32 bits, whose first sample is frame `first`.
+  /// takes what the segments need of `samples`, interleaved over `channels` channels, each at
+  /// the top of its 32 bits, whose first sample is frame `first`
   pub(crate) fn take_interleaved(&mut self, first: u64, samples: &[i32], channels: usize) {
     let frames = samples.len() / channels;
     let scale = 1.0 / 2_147_483_648.0;
@@ -223,34 +223,30 @@ impl Segments {
     }
   }
 
-  /// The indices of the segments not yet full.
+  /// the indices of the segments not yet full
   pub(crate) fn missing(&self) -> Vec<usize> {
     (0..self.0.len()).filter(|i| !self.0[*i].full()).collect()
   }
 
-  /// The sample frame segment `index` needs next; `None` once it is full.
+  /// the sample frame segment `index` needs next; `None` once it is full
   pub(crate) fn needs(&self, index: usize) -> Option<u64> {
     let segment = &self.0[index];
     (!segment.full()).then(|| segment.next())
   }
 
-  /// Whether segment `index` has no samples yet.
+  /// whether segment `index` has no samples yet
   pub(crate) fn untouched(&self, index: usize) -> bool {
     self.0[index].left.is_empty()
   }
 
-  /// Whether every segment is full.
+  /// whether every segment is full
   pub(crate) fn complete(&self) -> bool {
     self.0.iter().all(Segment::full)
   }
 }
 
-/// The scan of full `segments`, each codec of each segment a job of its own on rayon's thread
-/// pool, asking `go_on` before each job whether to carry on; `None` once it says not to.
-///
-/// # Panics
-///
-/// When a segment is not full.
+/// the scan of full `segments`, each codec of each segment a job on rayon's thread pool. `go_on`
+/// is asked before each job; `None` once it says not to. panics when a segment is not full.
 pub(crate) fn scan(segments: &Segments, go_on: impl Fn() -> bool + Sync) -> Option<Scan> {
   assert!(segments.complete(), "every segment is full before a scan");
   let jobs: Vec<(Codec, &Segment)> = segments
@@ -282,8 +278,8 @@ pub(crate) fn scan(segments: &Segments, go_on: impl Fn() -> bool + Sync) -> Opti
   })
 }
 
-/// A segment's curve, whose entry `o` is for frames starting `o` samples into the segment
-/// modulo the hop, turned into the file's offsets for a segment starting at frame `start`.
+/// a segment's curve, whose entry `o` is for frames starting `o` samples into the segment
+/// modulo the hop, turned into the file's offsets for a segment starting at frame `start`
 fn in_file(curve: &[f64], start: u64) -> Vec<f64> {
   let hop = curve.len();
   // below the hop, so it fits
@@ -291,7 +287,7 @@ fn in_file(curve: &[f64], start: u64) -> Vec<f64> {
   (0..hop).map(|o| curve[(o + hop - shift) % hop]).collect()
 }
 
-/// The scan of one codec from its segments' curves in the file's offsets.
+/// the scan of one codec from its segments' curves in the file's offsets
 fn codec_scan(curves: &[Vec<f64>]) -> CodecScan {
   let hop = curves[0].len();
   let summed: Vec<f64> = (0..hop)
@@ -306,8 +302,8 @@ fn codec_scan(curves: &[Vec<f64>]) -> CodecScan {
   }
 }
 
-/// How far the lowest entry of `curve` sits below the median in robust standard deviations,
-/// and its index: the first lowest.
+/// how far the lowest entry of `curve` sits below the median in robust standard deviations,
+/// and its index: the first lowest
 fn robust_z(curve: &[f64]) -> (f64, usize) {
   let middle = median(curve.to_vec());
   let mad = MAD_TO_SD * median(curve.iter().map(|c| (c - middle).abs()).collect());
@@ -325,7 +321,7 @@ fn robust_z(curve: &[f64]) -> (f64, usize) {
   (z, at)
 }
 
-/// The median of `values`, the mean of the middle two for an even count.
+/// the median of `values`, the mean of the middle two for an even count
 fn median(mut values: Vec<f64>) -> f64 {
   values.sort_by(f64::total_cmp);
   let half = values.len() / 2;
@@ -336,16 +332,16 @@ fn median(mut values: Vec<f64>) -> f64 {
   }
 }
 
-/// The bits of an f64 exponent and the exponent that puts a value in [1, 2).
+/// the bits of an f64 exponent and the exponent that puts a value in [1, 2)
 const EXPONENT_BITS: u64 = 0x7ff0_0000_0000_0000;
 const ONE: u64 = 0x3ff0_0000_0000_0000;
 
-/// The products [`active`] keeps side by side, so they can be multiplied in parallel.
+/// the products [`active`] keeps side by side, so they can be multiplied in parallel
 const LANES: usize = 8;
 
-/// The active count of `values`: the sum of log10(max(v^2 / t2, 1)).
+/// the active count of `values`: the sum of log10(max(v^2 / t2, 1)).
 ///
-/// The log of a product is the sum of the logs, so the values' exponents are summed and their
+/// the log of a product is the sum of the logs, so the values' exponents are summed and their
 /// mantissas, each in [1, 2), multiplied in [`LANES`] products of up to 32 each, which stay
 /// under 2^32, with one log per product.
 fn active(values: &[f64], t2: f64) -> f64 {
@@ -369,8 +365,8 @@ fn active(values: &[f64], t2: f64) -> f64 {
   (exponents as f64 + logs - values.len() as f64 * t2.log2()) * std::f64::consts::LOG10_2
 }
 
-/// The AAC analysis: the KBD long window and an orthonormal MDCT, transformed in single
-/// precision.
+/// the AAC analysis: the KBD long window and an orthonormal MDCT, transformed in single
+/// precision
 struct Aac {
   window: Vec<f32>,
   dct: DctIv,
@@ -397,8 +393,8 @@ impl Aac {
     }
   }
 
-  /// The active count summed over the long frames of `segment`, for each offset of the grid
-  /// from its first sample. Every offset counts the same frames.
+  /// the active count summed over the long frames of `segment`, for each offset of the grid
+  /// from its first sample. every offset counts the same frames.
   fn curve(&mut self, segment: &Segment) -> Vec<f64> {
     let left: Vec<f32> = segment.left.iter().map(|s| *s as f32).collect();
     let right: Vec<f32> = segment.right.iter().map(|s| *s as f32).collect();
@@ -428,7 +424,7 @@ impl Aac {
       .collect()
   }
 
-  /// The orthonormal MDCT of `input`, 2048 samples, windowed, into `values[into]`.
+  /// the orthonormal MDCT of `input`, 2048 samples, windowed, into `values[into]`
   fn mdct(&mut self, input: &[f32], into: usize) {
     for ((f, x), w) in self.frame.iter_mut().zip(input).zip(&self.window) {
       *f = x * w;
@@ -438,9 +434,9 @@ impl Aac {
   }
 }
 
-/// The input of the DCT-IV whose output is the MDCT of `frame`, 2N windowed samples:
+/// the input of the DCT-IV whose output is the MDCT of `frame`, 2N windowed samples:
 /// (-c_r - d, a - b_r) for its quarters a, b, c, d, so that the DCT-IV gives
-/// X_k = sqrt(2/N) sum_n x_n cos(pi/N (n + 1/2 + N/2)(k + 1/2)).
+/// X_k = sqrt(2/N) sum_n x_n cos(pi/N (n + 1/2 + N/2)(k + 1/2))
 fn fold<T: Float>(frame: &[T], folded: &mut [T]) {
   let n = folded.len();
   let q = n / 2;
@@ -450,9 +446,9 @@ fn fold<T: Float>(frame: &[T], folded: &mut [T]) {
   }
 }
 
-/// The Kaiser-Bessel-derived window of `length` samples with `alpha`: the square root of the
+/// the Kaiser-Bessel-derived window of `length` samples with `alpha`: the square root of the
 /// running sum of a Kaiser window of `length / 2 + 1` points with beta pi alpha over its total,
-/// mirrored.
+/// mirrored
 fn kbd_window(length: usize, alpha: f64) -> Vec<f64> {
   let points = length / 2 + 1;
   let beta = std::f64::consts::PI * alpha;
@@ -474,7 +470,7 @@ fn kbd_window(length: usize, alpha: f64) -> Vec<f64> {
   half
 }
 
-/// The modified Bessel function of the first kind of order 0, from its power series.
+/// the modified Bessel function of the first kind of order 0, from its power series
 fn bessel_i0(x: f64) -> f64 {
   let quarter = x * x / 4.0;
   let mut term = 1.0;
@@ -489,8 +485,8 @@ fn bessel_i0(x: f64) -> f64 {
   sum
 }
 
-/// The orthonormal DCT-IV of length N through a complex FFT of length N/2:
-/// X_k = sqrt(2/N) sum_n u_n cos(pi/N (n + 1/2)(k + 1/2)).
+/// the orthonormal DCT-IV of length N through a complex FFT of length N/2:
+/// X_k = sqrt(2/N) sum_n u_n cos(pi/N (n + 1/2)(k + 1/2))
 struct DctIv {
   fft: Arc<dyn Fft<f32>>,
   /// exp(-i pi n / N), for the input
@@ -521,9 +517,9 @@ impl DctIv {
     }
   }
 
-  /// Writes the transform of `input` to `output`, both of length N.
+  /// writes the transform of `input` to `output`, both of length N.
   ///
-  /// With z_n = u_2n + i u_(N-1-2n) and Y_k = sum_n z_n exp(-i pi (2n + 1/2)(2k + 1/2) / N),
+  /// with z_n = u_2n + i u_(N-1-2n) and Y_k = sum_n z_n exp(-i pi (2n + 1/2)(2k + 1/2) / N),
   /// X_2k is the real part of Y_k and X_(N-1-2k) minus its imaginary part.
   fn process(&mut self, input: &[f32], output: &mut [f32]) {
     let n = input.len();
@@ -541,8 +537,8 @@ impl DctIv {
   }
 }
 
-/// Half of the MPEG audio synthesis window D in units of 2^-16, as ffmpeg's encoder carries it;
-/// the analysis window C is D / 32.
+/// half of the MPEG audio synthesis window D in units of 2^-16, as ffmpeg's encoder carries it;
+/// the analysis window C is D / 32
 const ENWINDOW: [i32; 257] = [
   0, -1, -1, -1, -1, -1, -1, -2, -2, -2, -2, -3, -3, -4, -4, -5, -5, -6, -7, -7, -8, -9, -10, -11,
   -13, -14, -16, -17, -19, -21, -24, -26, -29, -31, -35, -38, -41, -45, -49, -53, -58, -63, -68,
@@ -563,17 +559,17 @@ const ENWINDOW: [i32; 257] = [
   -72835, -73415, -73908, -74313, -74630, -74856, -74992, 75038,
 ];
 
-/// The alias-reduction coefficients of layer III.
+/// the alias-reduction coefficients of layer III
 const ALIAS: [f64; 8] = [
   -0.6, -0.535, -0.33, -0.185, -0.095, -0.041, -0.0142, -0.0037,
 ];
 
-/// Subband samples per granule and the lines each subband's MDCT gives.
+/// subband samples per granule and the lines each subband's MDCT gives
 const SUBBAND_SAMPLES: usize = 36;
 const LINES: usize = 18;
 const SUBBANDS: usize = 32;
 
-/// The MP3 analysis: the layer III hybrid filterbank, in double precision.
+/// the MP3 analysis: the layer III hybrid filterbank, in double precision
 struct Mp3 {
   /// the analysis window C over 512 taps
   window: [f64; 512],
@@ -623,8 +619,8 @@ impl Mp3 {
     }
   }
 
-  /// The subband samples of `x`, 32 for every 32 input samples: sample t reads the 512 inputs
-  /// from 32 t on, the newest first.
+  /// the subband samples of `x`, 32 for every 32 input samples: sample t reads the 512 inputs
+  /// from 32 t on, the newest first
   fn polyphase(&self, x: &[f64]) -> Vec<[f64; SUBBANDS]> {
     let count = (x.len() - 512) / 32 + 1;
     (0..count)
@@ -640,7 +636,7 @@ impl Mp3 {
       .collect()
   }
 
-  /// The 576 values of the granule whose 36 subband samples are `samples`, subband by subband.
+  /// the 576 values of the granule whose 36 subband samples are `samples`, subband by subband
   fn hybrid(&self, samples: &[[f64; SUBBANDS]], out: &mut [f64; MP3_HOP]) {
     let mut windowed = [0.0; SUBBAND_SAMPLES];
     let mut folded = [0.0; LINES];
@@ -664,8 +660,8 @@ impl Mp3 {
     }
   }
 
-  /// The active count summed over the granules of `segment`, for each offset of the granule
-  /// grid from its first sample. Every offset counts the same number of granules.
+  /// the active count summed over the granules of `segment`, for each offset of the granule
+  /// grid from its first sample. every offset counts the same number of granules.
   fn curve(&mut self, segment: &Segment) -> Vec<f64> {
     let granules = (SEGMENT - MP3_HOP - 512 - SUBBAND_SAMPLES * 32) / MP3_HOP;
     let t2 = (NOISE16 * MP3_NOISE_GAIN).powi(2);

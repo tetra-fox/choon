@@ -42,7 +42,7 @@ pub struct Audio {
   pub channels: Vec<Vec<f32>>,
 }
 
-/// A small fixed-seed generator, so every run makes the same audio.
+/// a small fixed-seed generator, so every run makes the same audio
 struct Rng(u64);
 
 impl Rng {
@@ -55,7 +55,7 @@ impl Rng {
     (value >> 11) as f64 / (1u64 << 53) as f64
   }
 
-  /// A normally distributed value.
+  /// a normally distributed value
   fn gaussian(&mut self) -> f64 {
     let u = self.next().max(f64::MIN_POSITIVE);
     let v = self.next();
@@ -163,7 +163,7 @@ pub fn lo_fi(hz: f64) -> f64 {
   pink(hz) / (1.0 + (hz / 3_500.0).powi(8)).sqrt()
 }
 
-/// `seconds` of noise at `rate` whose spectrum has the shape `envelope`, one channel.
+/// `seconds` of noise at `rate` whose spectrum has the shape `envelope`, one channel
 fn noise(seed: u64, seconds: usize, rate: u32, envelope: impl Fn(f64) -> f64) -> Vec<f32> {
   let length = seconds * rate as usize;
   let mut rng = Rng(seed | 1);
@@ -331,8 +331,8 @@ impl Audio {
     10.0 * (squares / count as f64).log10()
   }
 
-  /// The audio as integers of `bits`, with triangular dither, the same dither in every
-  /// channel so identical channels stay identical.
+  /// the audio as integers of `bits`, with triangular dither, the same dither in every
+  /// channel so identical channels stay identical
   fn quantized(&self, bits: u32, seed: u64) -> Vec<Vec<i32>> {
     let full = f64::from(1u32 << (bits - 1));
     self
@@ -402,8 +402,8 @@ pub fn ogg_flac(audio: &Audio, bits: u32) -> Vec<u8> {
   out
 }
 
-/// One Ogg page of whole `packets`: `kind` flags the stream's first and last page, and
-/// `granule` is how many sample frames the stream holds up to the page's end.
+/// one Ogg page of whole `packets`: `kind` flags the stream's first and last page, and
+/// `granule` is how many sample frames the stream holds up to the page's end
 fn ogg_page(kind: u8, granule: u64, sequence: u32, packets: &[Vec<u8>]) -> Vec<u8> {
   let mut page = b"OggS\0".to_vec();
   page.push(kind);
@@ -431,7 +431,7 @@ fn ogg_page(kind: u8, granule: u64, sequence: u32, packets: &[Vec<u8>]) -> Vec<u
   page
 }
 
-/// `audio` as a FLAC stream of whole blocks of [`FLAC_BLOCK`] sample frames.
+/// `audio` as a FLAC stream of whole blocks of [`FLAC_BLOCK`] sample frames
 fn flac_stream(audio: &Audio, bits: u32, padded: bool) -> flacenc::component::Stream {
   let mut planes = audio.quantized(if padded { 16 } else { bits }, 7);
   if padded {
@@ -547,7 +547,7 @@ pub fn through_mp3(audio: &Audio, bitrate: Bitrate, dir: &Path) -> Audio {
   decoded(&mp3)
 }
 
-/// One ISO media box: its size, its type, then `body`.
+/// one ISO media box: its size, its type, then `body`
 fn mp4_box(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
   let mut out = ((8 + body.len()) as u32).to_be_bytes().to_vec();
   out.extend_from_slice(kind);
@@ -555,7 +555,7 @@ fn mp4_box(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
   out
 }
 
-/// A box with a version and flags of zero before `body`.
+/// a box with a version and flags of zero before `body`
 fn mp4_full_box(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
   mp4_box(kind, &[&[0u8; 4][..], body].concat())
 }

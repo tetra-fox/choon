@@ -1,11 +1,11 @@
-//! The measures of a whole file, gathered from its windows and running totals.
+//! the measures of a whole file, gathered from its windows and running totals
 
 use std::collections::BTreeMap;
 
 use crate::engine::Measured;
 use crate::window::Window;
 
-/// The width of a cutoff histogram bucket, in Hz.
+/// the width of a cutoff histogram bucket, in Hz
 const HISTOGRAM_HZ: f64 = 500.0;
 
 /// Count of the non-silent windows that cut off near one frequency.
@@ -69,7 +69,7 @@ pub struct Measures {
   pub peak_dbfs: Option<f64>,
 }
 
-/// The aggregate measures over the non-silent `windows`.
+/// the aggregate measures over the non-silent `windows`
 pub(crate) fn measures(
   measured: &Measured,
   windows: &[&Window],
@@ -107,7 +107,7 @@ pub(crate) fn measures(
   }
 }
 
-/// The share of the energy of `windows` above half the band.
+/// the share of the energy of `windows` above half the band
 pub(crate) fn upsample_ratio(windows: &[&Window]) -> f64 {
   let (high, total) = windows
     .iter()
@@ -115,12 +115,12 @@ pub(crate) fn upsample_ratio(windows: &[&Window]) -> f64 {
   if total > 0.0 { high / total } else { 0.0 }
 }
 
-/// The median of `values`, 0 for none.
+/// the median of `values`, 0 for none
 pub(crate) fn middle(values: &[f64]) -> f64 {
   percentile(values, 0.5).unwrap_or(0.0)
 }
 
-/// The value `fraction` of the way through `values` in order, by nearest rank.
+/// the value `fraction` of the way through `values` in order, by nearest rank
 pub(crate) fn percentile(values: &[f64], fraction: f64) -> Option<f64> {
   if values.is_empty() {
     return None;

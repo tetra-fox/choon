@@ -1,6 +1,6 @@
-//! The analyzer's readings on generated audio: honest lossless audio, MP3 transcodes, an
+//! the analyzer's readings on generated audio: honest lossless audio, MP3 transcodes, an
 //! upsample, padded bits, mixed sources and honest band-limited audio, which must never read
-//! as a transcode or as mixed.
+//! as a transcode or as mixed
 
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
@@ -15,7 +15,7 @@ use crate::limitation::Limitation;
 use crate::reading::{Reading, Verdict};
 use crate::thresholds::{MeasureThresholds, ReadingThresholds};
 
-/// A long file at `windows` windows, and one of up to `over_seconds` in full.
+/// a long file at `windows` windows, and one of up to `over_seconds` in full
 fn sampled(over_seconds: f64, windows: usize) -> Coverage {
   Coverage::Sampled {
     over_seconds,
@@ -39,7 +39,7 @@ fn analyzed(path: &Path) -> Reading {
   explained(path).0
 }
 
-/// The reading of the file at `path`, with what it saw for an assertion to print.
+/// the reading of the file at `path`, with what it saw for an assertion to print
 fn explained(path: &Path) -> (Reading, String) {
   let measured = measure(path, &settings()).unwrap();
   let reading = read(&measured);
@@ -53,7 +53,7 @@ fn flac(dir: &Path, name: &str, audio: &Audio, bits: u32) -> PathBuf {
   path
 }
 
-/// The reading must not call honest audio fake, nor its cutoff read as lossy.
+/// the reading must not call honest audio fake, nor its cutoff read as lossy
 fn not_fake(reading: &Reading) {
   assert!(
     !matches!(
@@ -84,7 +84,7 @@ fn lossless_music_reads_consistent_with_no_frame_rhythm_or_top_band_gaps() {
   );
 }
 
-/// An MP3 at `bitrate` written out as a FLAC reads as a transcode of that bitrate.
+/// an MP3 at `bitrate` written out as a FLAC reads as a transcode of that bitrate
 fn reads_as_a_transcode_of(bitrate: Bitrate, profile: &str) {
   let dir = tempfile::tempdir().unwrap();
   let through = fixtures::through_mp3(&music(1, 44_100, pink), bitrate, dir.path());
@@ -106,7 +106,7 @@ fn a_192_kbps_transcode_reads_as_a_transcode_of_its_bitrate() {
   reads_as_a_transcode_of(Bitrate::Kbps192, "mp3 ~192 kbps");
 }
 
-/// LAME 3.100 cuts 224 kbps where it cuts 256, at 19.53 kHz, so the two take one name.
+/// LAME 3.100 cuts 224 kbps where it cuts 256, at 19.53 kHz, so the two take one name
 #[test]
 fn a_224_kbps_transcode_reads_as_the_cut_it_shares_with_256_kbps() {
   reads_as_a_transcode_of(Bitrate::Kbps224, "mp3 ~224-256 kbps");
@@ -162,8 +162,8 @@ fn an_honest_mp3_is_judged_against_its_own_bitrate() {
   assert_eq!(reading.verdict, Verdict::Consistent, "{reading:#?}");
 }
 
-/// Content that stops at 16 kHz, where older encoders and 32 kHz sources stop too, as an MP3 at
-/// `bitrate`, reads as `verdict`.
+/// content that stops at 16 kHz, where older encoders and 32 kHz sources stop too, as an MP3 at
+/// `bitrate`, reads as `verdict`
 fn a_16_khz_cut_as_an_mp3_reads(bitrate: Bitrate, verdict: Verdict) {
   let dir = tempfile::tempdir().unwrap();
   let path = dir.path().join("cut16.mp3");
@@ -299,8 +299,8 @@ fn a_lossy_part_before_lossless_audio_reads_as_mixed_sources_and_possibly_lossy(
   assert_eq!(reading.grid, None);
 }
 
-/// A 320 kbps stem under a bed at `gain`: a step where the highest bitrates cut, which a
-/// recording filtered at 20 kHz with something above it also shows. The stem's grid shows
+/// a 320 kbps stem under a bed at `gain`: a step where the highest bitrates cut, which a
+/// recording filtered at 20 kHz with something above it also shows. the stem's grid shows
 /// through a bed quiet enough, as `grid`.
 fn a_320_kbps_stem_under_a_bed_reads_as_that_cut(gain: f32, grid: Option<Codec>) {
   let dir = tempfile::tempdir().unwrap();
@@ -360,8 +360,8 @@ fn a_pure_tone_is_inconclusive_not_fake() {
   assert_eq!(reading.verdict, Verdict::Inconclusive, "{reading:#?}");
 }
 
-/// A synth line at `hz` low-passed at 20 kHz: a line spectrum, with gaps between its harmonics,
-/// which stops where the highest bitrates cut.
+/// a synth line at `hz` low-passed at 20 kHz: a line spectrum, with gaps between its harmonics,
+/// which stops where the highest bitrates cut
 fn a_synth_line_filtered_at_20_khz_reads_as_that_cut(hz: f64) {
   let dir = tempfile::tempdir().unwrap();
   let saw = fixtures::harmonics(hz, 20_000.0, 1.0);
@@ -394,22 +394,22 @@ fn a_clipped_pulse_filtered_at_20_khz_reads_as_that_cut() {
   assert_eq!(reading.verdict, Verdict::Inconclusive, "{reading:#?}");
 }
 
-/// White noise at `dbfs`, a stand-in for tape hiss.
+/// white noise at `dbfs`, a stand-in for tape hiss
 fn hiss(dbfs: f64) -> Audio {
   let mut floor = music(9, 44_100, |_| 1.0);
   floor.set_level(dbfs);
   floor
 }
 
-/// The reading of `audio` written as a 16-bit FLAC, which must be `verdict`.
+/// the reading of `audio` written as a 16-bit FLAC, which must be `verdict`
 fn reads(dir: &Path, name: &str, audio: &Audio, verdict: Verdict) -> Reading {
   let (reading, why) = explained(&flac(dir, "floor.flac", audio, 16));
   assert_eq!(reading.verdict, verdict, "{name}: {why}");
   reading
 }
 
-/// A recording filtered at 20 kHz with hiss `db` under full scale over it stops where the highest
-/// bitrates cut, which is all the analyzer can say.
+/// a recording filtered at 20 kHz with hiss `db` under full scale over it stops where the highest
+/// bitrates cut, which is all the analyzer can say
 fn hiss_over_a_20_khz_cut_neither_hides_nor_fakes_it(db: f64) {
   let dir = tempfile::tempdir().unwrap();
   let hissy = music(1, 44_100, fixtures::cut_at(20_000.0)).mixed(&hiss(db), 1.0);
@@ -432,8 +432,8 @@ fn hiss_60_db_down_over_a_20_khz_cut_neither_hides_nor_fakes_it() {
   hiss_over_a_20_khz_cut_neither_hides_nor_fakes_it(-60.0);
 }
 
-/// A recording filtered at 20 kHz at `level` dBFS, so quiet that 16-bit dither is its floor,
-/// still reads as that cut.
+/// a recording filtered at 20 kHz at `level` dBFS, so quiet that 16-bit dither is its floor,
+/// still reads as that cut
 fn a_quiet_20_khz_cut_reads_as_that_cut(level: f64) {
   let dir = tempfile::tempdir().unwrap();
   let mut quiet = music(1, 44_100, fixtures::cut_at(20_000.0));
@@ -598,8 +598,8 @@ fn a_canceled_analysis_and_one_out_of_time_before_it_opens_report_nothing() {
   assert!(matches!(measure(&path, &late), Err(Error::OutOfTime)));
 }
 
-/// Content cut where an encoder cuts, which the cutoff alone reads as a transcode with the
-/// thresholds the analyzer ships with.
+/// content cut where an encoder cuts, which the cutoff alone reads as a transcode with the
+/// thresholds the analyzer ships with
 fn a_17_khz_cut(dir: &Path) -> PathBuf {
   flac(
     dir,
@@ -695,8 +695,8 @@ fn a_step_search_from_far_below_the_spectrum_ends() {
 proptest::proptest! {
   #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
 
-  /// Arbitrary bytes, and a real file's header followed by arbitrary bytes, are read without a
-  /// panic, as a reading of some kind.
+  /// arbitrary bytes, and a real file's header followed by arbitrary bytes, are read without a
+  /// panic, as a reading of some kind
   #[test]
   fn any_bytes_are_read_without_panicking(
     bytes in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..4096),
@@ -716,7 +716,7 @@ proptest::proptest! {
   }
 }
 
-/// A cut at `hz`, where the highest bitrates cut, reads as that cut at the sample `rate`.
+/// a cut at `hz`, where the highest bitrates cut, reads as that cut at the sample `rate`
 fn a_cut_where_the_highest_bitrates_cut_reads_as_that_cut(rate: u32, hz: f64) {
   let dir = tempfile::tempdir().unwrap();
   let audio = music(1, rate, fixtures::cut_at(hz));
@@ -749,8 +749,8 @@ fn a_20_5_khz_cut_at_48_khz_reads_as_that_cut() {
   a_cut_where_the_highest_bitrates_cut_reads_as_that_cut(48_000, 20_500.0);
 }
 
-/// A cut where a lower bitrate cuts reads as that encoder's cutoff at the sample `rate`, and
-/// without a codec grid as possibly lossy.
+/// a cut where a lower bitrate cuts reads as that encoder's cutoff at the sample `rate`, and
+/// without a codec grid as possibly lossy
 fn a_17_khz_cut_reads_as_an_encoders_cutoff(rate: u32) {
   let dir = tempfile::tempdir().unwrap();
   let audio = music(1, rate, fixtures::cut_at(17_000.0));
@@ -777,7 +777,7 @@ fn a_17_khz_cut_at_48_khz_reads_as_an_encoders_cutoff() {
   a_17_khz_cut_reads_as_an_encoders_cutoff(48_000);
 }
 
-/// Writes a FLAC of `seconds` of music at `path` that states it holds `frames` sample frames.
+/// writes a FLAC of `seconds` of music at `path` that states it holds `frames` sample frames
 fn stating(path: &Path, seconds: usize, frames: u64) {
   fixtures::write_flac(&music_for(seconds, 1, 44_100, pink), 16, false, path);
   // the stream information's total sample count is the low 36 bits of bytes 21 to 25
@@ -941,8 +941,8 @@ fn hi_res_with_a_natural_roll_off_is_not_flagged_as_upsampled() {
   not_fake(&reading);
 }
 
-/// A cutoff at a lower sample rate's band edge, where an MP3 at `profile` cuts too, reads as
-/// either explanation and claims neither.
+/// a cutoff at a lower sample rate's band edge, where an MP3 at `profile` cuts too, reads as
+/// either explanation and claims neither
 fn a_cutoff_at_a_lower_rates_band_edge_is_not_read_as_a_transcode(
   name: &str,
   audio: &Audio,

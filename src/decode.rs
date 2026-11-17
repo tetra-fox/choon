@@ -1,8 +1,5 @@
-//! Audio files read as samples, a little at a time.
-//!
-//! The container and codec are found by probing, packets are decoded one by one, and the
-//! analyzer takes the first two channels as floats in one-second windows. Integer samples are
-//! also looked at as they come, for the bits they actually use.
+//! opens a file through symphonia and hands out its first two channels as floats in one-second
+//! windows, noting the bits its integer samples use
 
 use std::ops::Range;
 use std::path::Path;
@@ -27,14 +24,14 @@ use tracing::{debug, trace};
 
 use crate::engine;
 
-/// The most channels the analyzer reads; the rest of a surround file is left out.
+/// the most channels the analyzer reads; the rest of a surround file is left out
 const ANALYZED_CHANNELS: usize = 2;
 
-/// The highest sample rate the analyzer reads; a window holds a second of samples, so a header
-/// claiming more is not trusted with the memory.
+/// the highest sample rate the analyzer reads; a window holds a second of samples, so a header
+/// claiming more is not trusted with the memory
 const MAX_RATE: u32 = 768_000;
 
-/// How many undecodable packets are skipped before reading stops.
+/// how many undecodable packets are skipped before reading stops
 const MAX_SKIPPED: u32 = 1000;
 
 /// Format a file's container and codec claim.
@@ -56,14 +53,13 @@ pub struct Claimed {
   pub frames: Option<u64>,
 }
 
-/// An audio file open for decoding.
+/// an audio file open for decoding
 pub(crate) struct Decoder {
   format: Box<dyn FormatReader>,
   decoder: Box<dyn AudioDecoder>,
   track: u32,
   /// what the track's timestamps count, when the container says
   time_base: Option<TimeBase>,
-  /// the format the file claims
   pub(crate) claimed: Claimed,
   /// the channels analyzed: one for mono, else the first two
   pub(crate) channels: usize,
@@ -88,7 +84,7 @@ pub(crate) struct Decoder {
   pub(crate) stopped: Option<String>,
 }
 
-/// A hint of what the file at `path` holds: its extension.
+/// a hint of what the file at `path` holds: its extension
 pub(crate) fn hint_of(path: &Path) -> Hint {
   let mut hint = Hint::new();
   if let Some(extension) = path.extension().and_then(|e| e.to_str()) {
@@ -97,7 +93,7 @@ pub(crate) fn hint_of(path: &Path) -> Hint {
   hint
 }
 
-/// What filling a window gave.
+/// what filling a window gave
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Filled {
   /// the window is full
@@ -107,11 +103,7 @@ pub(crate) enum Filled {
 }
 
 impl Decoder {
-  /// Opens audio from any source of bytes, with `hint` naming what it might be. The error says
-  /// why, in words. Bytes are not audio when the container is not recognized or holds no audio
-  /// track. Audio is unsupported when its track has no codec parameters, the codec is not one
-  /// the analyzer decodes, the decoder cannot start, the sample rate or the channels are not
-  /// stated, or the rate is above what the analyzer reads.
+  /// opens audio from any source of bytes, with `hint` naming what it might be
   pub(crate) fn from_source(
     source: Box<dyn MediaSource>,
     hint: &Hint,
@@ -189,15 +181,14 @@ impl Decoder {
     })
   }
 
-  /// The bits per sample the integer samples decoded so far use: the sample type's width less
-  /// the low bits that were zero in every one. `None` for float samples and while every sample
-  /// was zero.
+  /// the sample type's width less the low bits that were zero in every integer sample decoded so
+  /// far; `None` for float samples and while every sample was zero
   pub(crate) fn bits_used(&self) -> Option<u32> {
     let (set, width) = self.bits?;
     (set != 0).then(|| width - set.trailing_zeros().min(width))
   }
 
-  /// The audio's bitrate in kbit/s from the packets decoded so far: their bytes over their
+  /// the audio's bitrate in kbit/s from the packets decoded so far: their bytes over their
   /// length, so tags and cover art around the stream do not count. `None` before any.
   pub(crate) fn bitrate_kbps(&self) -> Option<u32> {
     let (bytes, frames) = self.decoded;
@@ -207,18 +198,15 @@ impl Decoder {
     })
   }
 
-  /// The most seconds of audio the file's bytes can hold at the density of the packets decoded
-  /// so far: the most sample frames per byte any of them carried. A file states its length in
-  /// tables that can point many packets at the same bytes, and cannot hold more audio than its
-  /// bytes at its densest packet, so the bound is as good as the packets read. `None` before a
-  /// packet is decoded, or when the source does not say how long it is.
+  /// the most seconds of audio the file's bytes can hold at the densest packet decoded so far.
+  /// tables can point many packets at the same bytes, so a stated length can be longer
   pub(crate) fn most_seconds(&self) -> Option<f64> {
     let (bytes, frames) = self.densest?;
     let held = self.file_bytes? as f64 * frames as f64 / bytes as f64;
     Some(held / f64::from(self.claimed.sample_rate))
   }
 
-  /// Fills `window`, one vector per analyzed channel, with the next `frames` sample frames.
+  /// fills `window`, one vector per analyzed channel, with the next `frames` sample frames
   pub(crate) fn fill(&mut self, window: &mut [Vec<f32>], frames: usize) -> Filled {
     for channel in window.iter_mut() {
       channel.clear();
@@ -240,9 +228,8 @@ impl Decoder {
     }
   }
 
-  /// Moves to `seconds` from the start, dropping what was decoded and not taken. The container
-  /// moves to the start of a packet, so the sample frames between it and the position are
-  /// decoded and dropped.
+  /// moves to `seconds` from the start, dropping what was decoded and not taken. the container
+  /// moves to the start of a packet, so the frames before the position are decoded and dropped
   pub(crate) fn seek(&mut self, seconds: f64) -> Result<(), String> {
     let time = Time::try_from_secs_f64(seconds).ok_or("the position is out of range")?;
     let sought = self
@@ -280,10 +267,8 @@ impl Decoder {
     Ok(())
   }
 
-  /// Moves to the packet holding sample frame `frame`; false when the container cannot place
-  /// the frame among the packets it indexes, which is also so when another track of the file
-  /// ends before it, since every track is moved. The container may then not read on. The error
-  /// says why, in words, when the position is out of range or the seek fails otherwise.
+  /// moves to the packet holding sample frame `frame`; false when the container cannot place it
+  /// among the packets it indexes, as when another track ends before it, and may then not read on
   pub(crate) fn seek_frame(&mut self, frame: u64) -> Result<bool, String> {
     let (numer, denom) = self.ticks();
     let rate = u128::from(self.claimed.sample_rate);
@@ -306,11 +291,8 @@ impl Decoder {
     }
   }
 
-  /// Decodes the next packet into `samples` and returns the frames it covers. The samples are
-  /// interleaved over every channel, each at the top of its 32 bits. The range is the sample
-  /// frames the container says the packet covers, from its timestamp for its duration, which
-  /// the samples can fall short of or run past. `None` at the end of the file or when decoding
-  /// cannot go on, with the reason in `stopped`.
+  /// decodes the next packet into `samples`, interleaved, each sample at the top of its 32 bits.
+  /// returns the frames the container says it covers, which the samples can fall short of or pass
   pub(crate) fn next_interleaved(&mut self, samples: &mut Vec<i32>) -> Option<Range<u64>> {
     let (pts, dur) = self.step()?;
     self.decoder.last_decoded().copy_to_vec_interleaved(samples);
@@ -322,22 +304,22 @@ impl Decoder {
     frames
   }
 
-  /// Whether a sample frame lasts a whole number of the container's timestamp ticks, so that a
-  /// packet's timestamp and duration place its first and last frame exactly.
+  /// whether a sample frame lasts a whole number of the container's timestamp ticks, so that a
+  /// packet's timestamp and duration place its first and last frame exactly
   pub(crate) fn ticks_fit_frames(&self) -> bool {
     let (numer, denom) = self.ticks();
     denom % (numer * u128::from(self.claimed.sample_rate)) == 0
   }
 
-  /// The sample frames a packet at timestamp `pts` lasting `dur` covers; `None` when they are out
-  /// of range.
+  /// the sample frames a packet at timestamp `pts` lasting `dur` covers; `None` when they are out
+  /// of range
   fn frames_of(&self, pts: i64, dur: u64) -> Option<Range<u64>> {
     let pts = u128::try_from(pts).ok()?;
     Some(self.frame_at(pts)?..self.frame_at(pts + u128::from(dur))?)
   }
 
-  /// The sample frame `ticks` timestamp ticks from the start, below 2^65; `None` when it is out
-  /// of range.
+  /// the sample frame `ticks` timestamp ticks from the start, below 2^65; `None` when it is out
+  /// of range
   fn frame_at(&self, ticks: u128) -> Option<u64> {
     let (numer, denom) = self.ticks();
     // a tick's numerator is below 2^32 and the rate at most `MAX_RATE`, below 2^20, so the
@@ -346,7 +328,7 @@ impl Decoder {
     u64::try_from(ticks * numer * rate / denom).ok()
   }
 
-  /// A timestamp tick as a fraction of a second; one sample frame when the container gives none.
+  /// a timestamp tick as a fraction of a second; one sample frame when the container gives none
   fn ticks(&self) -> (u128, u128) {
     self.time_base.map_or_else(
       || (1, u128::from(self.claimed.sample_rate)),
@@ -354,8 +336,7 @@ impl Decoder {
     )
   }
 
-  /// Decodes the next packet of the track into `pending`; false at the end of the file or when
-  /// decoding cannot go on, with the reason in `stopped`.
+  /// decodes the next packet of the track into `pending`; false when there is none
   fn decode_next(&mut self) -> bool {
     let shift = self.taken;
     for pending in &mut self.pending {
@@ -384,9 +365,8 @@ impl Decoder {
     true
   }
 
-  /// Decodes the next packet of the track that holds samples, which the decoder then holds, and
-  /// returns its timestamp and duration; `None` at the end of the file or when decoding cannot
-  /// go on, with the reason in `stopped`.
+  /// decodes the next packet of the track that holds samples and returns its timestamp and
+  /// duration; `None` at the end of the file or when decoding cannot go on, the reason in `stopped`
   fn step(&mut self) -> Option<(i64, u64)> {
     loop {
       let packet = match self.format.next_packet() {
@@ -443,8 +423,8 @@ impl Decoder {
     }
   }
 
-  /// Counts a packet skipped; true, with the reason in `stopped`, once so
-  /// many were skipped that reading on is not worth it.
+  /// counts a packet skipped; true, with the reason in `stopped`, once so many were skipped that
+  /// reading on is not worth it
   fn skip(&mut self) -> bool {
     self.skipped += 1;
     if self.skipped < MAX_SKIPPED {
@@ -458,9 +438,8 @@ impl Decoder {
   }
 }
 
-/// The bits per sample `params` state. A container says nothing of them for ALAC, whose magic
-/// cookie does; the decoder made from `params` read the same cookie, so a cookie that does not
-/// read here never gets this far.
+/// the bits per sample `params` state; ALAC states them in its magic cookie only. the decoder
+/// made from `params` read the same cookie, so one that does not read here never gets this far
 fn stated_bits(params: &AudioCodecParameters) -> Option<u32> {
   params.bits_per_sample.or_else(|| {
     let cookie = params.extra_data.as_deref()?;
@@ -469,8 +448,8 @@ fn stated_bits(params: &AudioCodecParameters) -> Option<u32> {
   })
 }
 
-/// Whether a codec keeps every bit: the lossless codecs and plain PCM, but not the companded
-/// telephone formats.
+/// whether a codec keeps every bit: the lossless codecs and plain PCM, but not the companded
+/// telephone formats
 fn lossless(codec: AudioCodecId) -> bool {
   if codec == CODEC_ID_FLAC || codec == CODEC_ID_ALAC {
     return true;
@@ -482,9 +461,8 @@ fn lossless(codec: AudioCodecId) -> bool {
       .is_some_and(|registered| registered.codec.info.short_name.starts_with("pcm_"))
 }
 
-/// Adds the bits set in the integer samples of `decoded` to `bits`, kept with the sample
-/// type's width. Decoders put a sample's bits at the top of its type, so bits never used show
-/// as zeros at the bottom.
+/// adds the bits set in the integer samples of `decoded` to `bits`. decoders put a sample's bits
+/// at the top of its type, so bits never used show as zeros at the bottom
 fn note_bits(bits: &mut Option<(u32, u32)>, decoded: &GenericAudioBufferRef<'_>) {
   fn set<S: symphonia::core::audio::sample::Sample>(
     buffer: &AudioBuffer<S>,

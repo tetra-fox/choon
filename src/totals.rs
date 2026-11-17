@@ -1,13 +1,12 @@
-//! The figures kept over every analyzed sample rather than per window: the mean, the loudest, how
-//! many samples are at full scale, the sums the correlation of two channels and their side energy
-//! need, and a histogram of short blocks' loudness for the quietest level.
+//! figures kept over every analyzed sample: the mean, the peak, the count at full scale, the sums
+//! for two channels' correlation and side energy, and a histogram of short blocks' levels
 
-/// The length of the blocks the quietest level is measured in, in samples.
+/// the length of the blocks the quietest level is measured in, in samples
 const LEVEL_BLOCK: usize = 1024;
-/// The quietest block level the histogram counts, in dBFS; one bucket per whole dB up to 0.
+/// the quietest block level the histogram counts, in dBFS; one bucket per whole dB up to 0
 const LEVELS_FROM_DB: f64 = -160.0;
 
-/// The running figures over every analyzed sample.
+/// the running figures over every analyzed sample
 #[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
@@ -29,23 +28,23 @@ pub(crate) struct Totals {
 }
 
 impl Totals {
-  /// The mean sample value, relative to full scale.
+  /// the mean sample value, relative to full scale
   pub fn dc_offset(&self) -> Option<f64> {
     (self.samples > 0).then(|| self.sum / self.samples as f64)
   }
 
-  /// The percentage of samples at full scale.
+  /// the percentage of samples at full scale
   pub fn clipped_pct(&self) -> Option<f64> {
     (self.samples > 0).then(|| 100.0 * self.clipped as f64 / self.samples as f64)
   }
 
-  /// The loudest sample in dBFS; `None` when every sample is silent.
+  /// the loudest sample in dBFS; `None` when every sample is silent
   pub fn peak_dbfs(&self) -> Option<f64> {
     (self.peak > 0.0).then(|| 20.0 * self.peak.log10())
   }
 
-  /// The correlation between the two channels, from -1 to 1; `None` for mono or when either
-  /// channel is constant.
+  /// the correlation between the two channels, from -1 to 1; `None` for mono or when either
+  /// channel is constant
   pub fn stereo_correlation(&self) -> Option<f64> {
     if self.pairs == 0 {
       return None;
@@ -58,7 +57,7 @@ impl Totals {
     (spread > 0.0).then(|| (covariance / spread).clamp(-1.0, 1.0))
   }
 
-  /// The side channel's energy relative to the mid channel's, in dB, at least -120 dB.
+  /// the side channel's energy relative to the mid channel's, in dB, at least -120 dB
   pub fn side_energy_db(&self) -> Option<f64> {
     if self.pairs == 0 {
       return None;
@@ -68,8 +67,8 @@ impl Totals {
     (mid > 0.0).then(|| (10.0 * (side.max(0.0) / mid).log10()).max(-120.0))
   }
 
-  /// The level of the quietest passages, in dBFS: the second percentile of the loudness of
-  /// short blocks, leaving out blocks of digital silence.
+  /// the level of the quietest passages, in dBFS: the second percentile of the loudness of
+  /// short blocks, leaving out blocks of digital silence
   pub fn noise_floor_dbfs(&self) -> Option<f64> {
     // counts read back from kept measures are any numbers, so they are summed without overflow
     let total = self
@@ -90,7 +89,7 @@ impl Totals {
     None
   }
 
-  /// Adds a window's samples, one vector per channel.
+  /// adds a window's samples, one vector per channel
   pub fn add(&mut self, channels: &[Vec<f32>]) {
     if self.levels.is_empty() {
       self.levels = vec![0; -LEVELS_FROM_DB as usize + 1];

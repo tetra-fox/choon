@@ -1,5 +1,5 @@
-//! The analyzer's reading of its measures: the cutoff read from its spread over the windows,
-//! weighed with the grid scan, with the findings beside it.
+//! the analyzer's reading of its measures: the cutoff read from its spread over the windows,
+//! weighed with the grid scan, with the findings beside it
 
 use crate::aggregate::{Measures, measures, middle, percentile, upsample_ratio};
 use crate::engine::Measured;
@@ -9,7 +9,7 @@ use crate::limitation::{Limitation, khz};
 use crate::thresholds::{EncoderProfile, ReadingThresholds};
 use crate::window::{Step, Window};
 
-/// The top of the band of a 48 kHz recording; a file whose band goes past it is hi-res.
+/// the top of the band of a 48 kHz recording; a file whose band goes past it is hi-res
 const HI_RES_TOP_HZ: f64 = 24_000.0;
 
 /// What the analyzer makes of a file.
@@ -96,7 +96,7 @@ pub struct Reading {
   pub cutoff_hz: Option<f64>,
 }
 
-/// The reading of the cutoff alone, before the findings independent of it are added.
+/// the reading of the cutoff alone, before the findings independent of it are added
 struct CutoffReading {
   verdict: Verdict,
   confidence: f64,
@@ -106,7 +106,7 @@ struct CutoffReading {
   cutoff_hz: Option<f64>,
 }
 
-/// Writes limitations as the sentences a person is shown.
+/// writes limitations as the sentences a person is shown
 #[cfg(feature = "serde")]
 fn sentences<S: serde::Serializer>(
   limitations: &[Limitation],
@@ -115,11 +115,11 @@ fn sentences<S: serde::Serializer>(
   serializer.collect_seq(limitations.iter().map(ToString::to_string))
 }
 
-/// A window that is not near-silent, as the reading counts it.
+/// a window that is not near-silent, as the reading counts it
 #[derive(Clone, Copy, Debug)]
 struct Seen {
   cutoff_hz: Option<f64>,
-  /// it stops with an encoder's low-pass rather than a natural roll-off
+  /// it stops with an encoder's low-pass
   sharp: bool,
   seconds: f64,
   inner_shelf: Option<Step>,
@@ -127,10 +127,8 @@ struct Seen {
 }
 
 impl Seen {
-  /// `window` as the reading counts it against a band ending at `top`. A window whose band
-  /// reaches the top only through a floor that just clears the cutoff line, above a step at an
-  /// encoder's cutoff, stops at that step: hiss or dither over a filtered recording is not
-  /// full-band content.
+  /// `window` as the reading counts it against a band ending at `top`: hiss or dither that just
+  /// clears the cutoff line above a step at an encoder's cutoff makes the window stop at that step
   fn of(window: &Window, top: f64, thresholds: &ReadingThresholds) -> Self {
     let floor = window.inner_shelf.filter(|step| {
       window
@@ -143,8 +141,8 @@ impl Seen {
     match floor {
       Some(step) => Self {
         cutoff_hz: Some(step.hz),
-        // a drop of this size to the floor within a few hundred hertz is a wall, not a
-        // roll-off, whatever the floor's level makes the number
+        // a drop of this size to the floor within a few hundred hertz is a wall, whatever the
+        // floor's level makes the number
         sharp: true,
         inner_shelf: None,
         rms_dbfs: window.rms_dbfs,
@@ -161,7 +159,7 @@ impl Seen {
   }
 }
 
-/// The windows that are not near-silent, as the reading counts them.
+/// the windows that are not near-silent, as the reading counts them
 struct Heard<'a> {
   windows: Vec<Seen>,
   /// the top of the band the content is judged against, in Hz
@@ -170,7 +168,7 @@ struct Heard<'a> {
 }
 
 impl<'a> Heard<'a> {
-  /// How many seconds of audio the windows hold, a short last one by its length.
+  /// how many seconds of audio the windows hold, a short last one by its length
   fn seconds(&self) -> f64 {
     self.windows.iter().map(|w| w.seconds).sum()
   }
@@ -186,7 +184,7 @@ impl<'a> Heard<'a> {
       .is_some_and(|c| c >= self.thresholds.full_band * self.top)
   }
 
-  /// A window that stops short of the top at an encoder's cutoff, with a sharp shelf.
+  /// a window that stops short of the top at an encoder's cutoff, with a sharp shelf
   fn limited(&self, window: &Seen) -> Option<&'a EncoderProfile> {
     let cutoff = window.cutoff_hz?;
     (!self.full(window) && window.sharp)
@@ -194,13 +192,13 @@ impl<'a> Heard<'a> {
       .flatten()
   }
 
-  /// Where a full-band window has a step of `depth` dB or more under its top.
+  /// where a full-band window has a step of `depth` dB or more under its top
   fn stepped(&self, window: &Seen, depth: f64) -> Option<f64> {
     let step = window.inner_shelf?;
     (self.full(window) && step.drop >= depth).then_some(step.hz)
   }
 
-  /// A full-band window with a band-limited layer under it at an encoder's cutoff.
+  /// a full-band window with a band-limited layer under it at an encoder's cutoff
   fn layered(&self, window: &Seen) -> Option<f64> {
     self
       .stepped(window, self.thresholds.inner_shelf_db)
@@ -208,8 +206,8 @@ impl<'a> Heard<'a> {
   }
 }
 
-/// The profile at `hz` when it is one below the highest bitrates: a cut where those cut is
-/// also where recordings are filtered, so it is no sign of a lossy part in a mix either.
+/// the profile at `hz` when it is one below the highest bitrates: a cut where those cut is
+/// also where recordings are filtered, so it is no sign of a lossy part in a mix either
 fn lower_profile_at(thresholds: &ReadingThresholds, hz: f64) -> Option<&EncoderProfile> {
   thresholds
     .profile_at(hz)
@@ -361,8 +359,8 @@ impl Measured {
   }
 }
 
-/// The cutoff reading `found` weighed with the grid scan, which found `grid`: a grid makes a
-/// likely transcode, and a cutoff that reads as lossy without one makes a doubt.
+/// the cutoff reading `found` weighed with the grid scan, which found `grid`: a grid makes a
+/// likely transcode, and a cutoff that reads as lossy without one makes a doubt
 fn weighed(
   found: CutoffReading,
   grid: Option<&Found>,
@@ -410,7 +408,7 @@ fn weighed(
   }
 }
 
-/// Reads the cutoff of the non-silent windows, whose median cutoff is `median`.
+/// reads the cutoff of the non-silent windows, whose median cutoff is `median`
 fn verdict(
   heard: &Heard,
   median: Option<f64>,
@@ -630,10 +628,9 @@ fn verdict(
     );
     return reading;
   }
-  // nothing above says otherwise: a lossy file that reaches past every cutoff too low for its
-  // bitrate is judged against what its own bitrate keeps. Its encoder's cutoff is a ceiling that
-  // moves from frame to frame, and windows under it only lack high content, so it is judged at
-  // the top of its cutoffs
+  // a lossy file that reaches past every cutoff too low for its bitrate is judged against what
+  // its own bitrate keeps, at the top of its cutoffs: its encoder's cutoff is a ceiling that
+  // moves from frame to frame, and windows under it only lack high content
   if !lossless && let Some(kbps) = bitrate {
     let cutoffs: Vec<f64> = heard.windows.iter().filter_map(|w| w.cutoff_hz).collect();
     let edge = percentile(&cutoffs, t.ceiling).unwrap_or(median);
@@ -691,14 +688,14 @@ fn verdict(
   reading
 }
 
-/// Whether a profile at `profile_kbps` cuts well below what a file of `kbps` keeps: the file's
-/// bitrate is at least one and a half times the profile's.
+/// whether a profile at `profile_kbps` cuts well below what a file of `kbps` keeps: the file's
+/// bitrate is at least one and a half times the profile's
 fn below_bitrate(profile_kbps: u32, kbps: u32) -> bool {
   u64::from(profile_kbps) * 3 / 2 <= u64::from(kbps)
 }
 
-/// Whether a cut at `edge` keeps what a file of `kbps` does: it sits at the cutoff of a bitrate
-/// no lower than the highest one up to `kbps`, or past every cutoff of that bitrate. A file below
+/// whether a cut at `edge` keeps what a file of `kbps` does: it sits at the cutoff of a bitrate
+/// no lower than the highest one up to `kbps`, or past every cutoff of that bitrate. a file below
 /// every bitrate known keeps whatever it does.
 fn keeps_its_bitrate(thresholds: &ReadingThresholds, edge: f64, kbps: u32) -> bool {
   let profiles = &thresholds.profiles;
@@ -714,13 +711,13 @@ fn keeps_its_bitrate(thresholds: &ReadingThresholds, edge: f64, kbps: u32) -> bo
   }
 }
 
-/// Whether the middle window is quiet.
+/// whether the middle window is quiet
 fn quiet(heard: &Heard) -> bool {
   let levels: Vec<f64> = heard.windows.iter().map(|w| w.rms_dbfs).collect();
   percentile(&levels, 0.5).is_some_and(|level| level < heard.thresholds.quiet_dbfs)
 }
 
-/// A share as a whole percentage.
+/// a share as a whole percentage
 fn percent(share: f64) -> String {
   format!("{:.0}%", share * 100.0)
 }

@@ -52,7 +52,7 @@ pub fn bin_hz(bin: usize, max_hz: f64) -> f64 {
   (bin as f64 + 0.5) * max_hz / BINS as f64
 }
 
-/// A power as a byte, no quieter than [`FLOOR_DB`].
+/// a power as a byte, no quieter than [`FLOOR_DB`]
 fn power_byte(power: f64) -> u8 {
   if power > 0.0 {
     level_byte(10.0 * power.log10())
@@ -61,9 +61,8 @@ fn power_byte(power: f64) -> u8 {
   }
 }
 
-/// A power spectrum of a transform's bins, lowest first, as [`BINS`] bytes: each byte is the
-/// mean power of the transform bins that fall in it. The bin at half the sample rate is left
-/// out, so every byte averages the same number of bins.
+/// a power spectrum, lowest bin first, as [`BINS`] bytes of the mean power of the bins in each.
+/// the bin at half the sample rate is left out, so every byte averages the same number of bins
 pub(crate) fn spectrum_bytes(power: &[f64]) -> Vec<u8> {
   let group = (power.len() - 1) / BINS;
   power[..group * BINS]
@@ -72,10 +71,8 @@ pub(crate) fn spectrum_bytes(power: &[f64]) -> Vec<u8> {
     .collect()
 }
 
-/// The columns of a window `length` samples long at `rate`, from the power spectra of its
-/// frames, each `frame` samples long and `hop` apart. A column is the power mean of the frames
-/// whose middle falls in it; one that no frame's middle falls in takes the frame nearest its
-/// middle. A window with no frames has silent columns.
+/// the columns of a window from its frames' power spectra. a column is the power mean of the
+/// frames whose middle falls in it, or takes the frame nearest its middle when none does
 pub(crate) fn columns(
   frames: &[Vec<f64>],
   length: usize,
@@ -120,12 +117,12 @@ pub(crate) fn columns(
   out
 }
 
-/// A sample from -1 to 1 as a signed byte from -127 to 127.
+/// a sample from -1 to 1 as a signed byte from -127 to 127
 fn sample_byte(sample: f32) -> i8 {
   (sample * 127.0).round().clamp(-127.0, 127.0) as i8
 }
 
-/// The lowest and the highest sample over every channel in each bucket of a window at `rate`.
+/// the lowest and the highest sample over every channel in each bucket of a window at `rate`
 pub(crate) fn peaks(channels: &[Vec<f32>], rate: usize) -> Vec<[i8; 2]> {
   let length = channels[0].len();
   let count = (length * PEAKS_PER_SECOND).div_ceil(rate);

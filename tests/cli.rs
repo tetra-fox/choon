@@ -1,4 +1,4 @@
-//! What scripts act on: the program's exit status, its lines and its JSON.
+//! what scripts act on: the program's exit status, its lines and its JSON
 
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -6,7 +6,7 @@ use std::process::{Command, Output, Stdio};
 
 use choon::fixtures::{self, Bitrate, music, pink};
 
-/// The paths of an honest FLAC and of one made from a 128 kbps MP3, written in `dir`.
+/// the paths of an honest FLAC and of one made from a 128 kbps MP3, written in `dir`
 fn honest_and_fake(dir: &Path) -> (String, String) {
   let honest = dir.join("honest.flac");
   fixtures::write_flac(&music(1, 44_100, pink), 16, false, &honest);
@@ -16,8 +16,8 @@ fn honest_and_fake(dir: &Path) -> (String, String) {
   (path(&honest), path(&fake))
 }
 
-/// The path of an honest FLAC filtered at 20 kHz, where the highest bitrates cut, written in
-/// `dir`.
+/// the path of an honest FLAC filtered at 20 kHz, where the highest bitrates cut, written in
+/// `dir`
 fn cut_20(dir: &Path) -> String {
   let cut = dir.join("cut-20.flac");
   fixtures::write_flac(
@@ -29,7 +29,7 @@ fn cut_20(dir: &Path) -> String {
   path(&cut)
 }
 
-/// `path` as an argument; a temporary directory's path is UTF-8.
+/// `path` as an argument; a temporary directory's path is UTF-8
 fn path(path: &Path) -> String {
   path.to_str().unwrap().to_string()
 }

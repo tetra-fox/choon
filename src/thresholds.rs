@@ -1,12 +1,7 @@
-//! Thresholds the analyzer measures and reads with.
-//!
-//! Every threshold is data the caller passes, so a sweep needs no rebuild. `Default` holds the
-//! values the analyzer ships with. They come from what common encoders do and are checked
-//! against generated audio in the tests. They are rules of thumb that real files can break,
-//! which is why a reading is evidence and not proof.
+//! thresholds the analyzer measures and reads with, all data the caller passes
 
-/// A cutoff at or above this fraction of the band's top counts as reaching it, when a window is
-/// measured and when it is read.
+/// a cutoff at or above this fraction of the band's top counts as reaching it, when a window is
+/// measured and when it is read
 const FULL_BAND: f64 = 0.9;
 
 /// Thresholds each window is measured with.
@@ -289,12 +284,12 @@ impl Default for ReadingThresholds {
 }
 
 impl ReadingThresholds {
-  /// Fewer seconds of non-silent audio than this give a reading little to go on, which it says.
+  /// fewer seconds of non-silent audio than this give a reading little to go on, which it says
   pub(crate) fn few_seconds(&self) -> f64 {
     self.min_seconds + self.few_seconds_over
   }
 
-  /// The profile whose cutoff is nearest `hz`, when one is within `cluster_hz`.
+  /// the profile whose cutoff is nearest `hz`, when one is within `cluster_hz`
   pub(crate) fn profile_at(&self, hz: f64) -> Option<&EncoderProfile> {
     self
       .profiles

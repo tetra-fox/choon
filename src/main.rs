@@ -1,5 +1,5 @@
-//! The `choon` program: reads audio files and says, a line or a JSON object for each,
-//! whether each is what its format claims, with an exit status a script can act on.
+//! the `choon` program: prints a line or a JSON object per file saying whether it is what its
+//! format claims, and exits with a status a script can act on
 
 use std::borrow::Cow;
 use std::io::{self, Write};
@@ -16,11 +16,11 @@ use choon::{
 use clap::{Args, Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 
-/// Every file read is consistent with its format, possibly lossy, or the analyzer cannot tell.
+/// every file read is consistent with its format, possibly lossy, or the analyzer cannot tell
 const CLEAN: u8 = 0;
-/// At least one file reads as lossy audio in a lossless file.
+/// at least one file reads as lossy audio in a lossless file
 const LOSSY: u8 = 1;
-/// A file could not be read or an argument was wrong.
+/// a file could not be read or an argument was wrong
 const FAILED: u8 = 2;
 
 #[derive(Parser)]
@@ -82,7 +82,7 @@ struct Check {
   sampled_windows: Option<NonZeroUsize>,
 }
 
-/// What a file is measured and read with: a profile.
+/// what a file is measured and read with: a profile
 #[derive(Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct Thresholds {
@@ -90,7 +90,7 @@ struct Thresholds {
   reading: ReadingThresholds,
 }
 
-/// What is printed for a file with `--json`.
+/// what is printed for a file with `--json`
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Analyzed<'a> {
@@ -104,7 +104,7 @@ struct Analyzed<'a> {
   readings: Vec<Read>,
 }
 
-/// One profile's reading of a file, with how long it took.
+/// one profile's reading of a file, with how long it took
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Read {
@@ -116,7 +116,7 @@ struct Read {
   reading: Reading,
 }
 
-/// What is printed with `--json` for a file not read as audio.
+/// what is printed with `--json` for a file not read as audio
 #[derive(Serialize)]
 struct NotAudio<'a> {
   file: Cow<'a, str>,
@@ -134,7 +134,7 @@ fn main() -> ExitCode {
   }
 }
 
-/// What ends a check before every file is read.
+/// what ends a check before every file is read
 enum Failed {
   Profile(PathBuf, String),
   Output(io::Error),
@@ -149,7 +149,7 @@ impl std::fmt::Display for Failed {
   }
 }
 
-/// Reads every file named and returns the exit status.
+/// reads every file named and returns the exit status
 fn run(check: &Check) -> Result<u8, Failed> {
   let mut out = io::stdout().lock();
   if check.defaults {
@@ -229,8 +229,8 @@ fn run(check: &Check) -> Result<u8, Failed> {
   Ok(code)
 }
 
-/// Writes `line` to `out`; false when the reader has closed the pipe, as `head` does once it has
-/// what it wanted.
+/// writes `line` to `out`; false when the reader has closed the pipe, as `head` does once it has
+/// what it wanted
 fn print(out: &mut impl Write, line: &str) -> Result<bool, Failed> {
   match writeln!(out, "{line}") {
     Ok(()) => Ok(true),
@@ -239,7 +239,7 @@ fn print(out: &mut impl Write, line: &str) -> Result<bool, Failed> {
   }
 }
 
-/// Whether `verdict` says a lossless file holds lossy audio.
+/// whether `verdict` says a lossless file holds lossy audio
 fn lossy(verdict: Verdict) -> bool {
   match verdict {
     Verdict::LikelyTranscode | Verdict::MixedSources => true,
@@ -247,8 +247,8 @@ fn lossy(verdict: Verdict) -> bool {
   }
 }
 
-/// The minutes `text` names, refusing an endless length and one of no time, under which a file
-/// that states no length would not be read at all.
+/// the minutes `text` names, refusing an endless length and one of no time, under which a file
+/// that states no length would not be read at all
 fn minutes(text: &str) -> Result<f64, String> {
   let minutes: f64 = text.parse().map_err(|e| format!("{e}"))?;
   if !minutes.is_finite() || minutes <= 0.0 {
@@ -257,7 +257,7 @@ fn minutes(text: &str) -> Result<f64, String> {
   Ok(minutes)
 }
 
-/// The profile in the file at `path`, named after the file.
+/// the profile in the file at `path`, named after the file
 fn profile(path: &Path) -> Result<(String, Thresholds), Failed> {
   let failed = |e: String| Failed::Profile(path.to_path_buf(), e);
   let text = std::fs::read_to_string(path).map_err(|e| failed(e.to_string()))?;
@@ -269,7 +269,7 @@ fn profile(path: &Path) -> Result<(String, Thresholds), Failed> {
   Ok((name, thresholds))
 }
 
-/// What the file at `path` measured, and its readings under each of `profiles`. Profiles whose
+/// what the file at `path` measured, and its readings under each of `profiles`. profiles whose
 /// measure thresholds are the same share one measuring, so the file is decoded once for them.
 fn analyzed(
   path: &Path,
@@ -311,7 +311,7 @@ fn analyzed(
   Ok((first, readings))
 }
 
-/// The readings in a few words each, named after their profile when there are several.
+/// the readings in a few words each, named after their profile when there are several
 fn said(readings: &[Read]) -> String {
   match readings {
     [read] => words(&read.reading),
@@ -323,10 +323,7 @@ fn said(readings: &[Read]) -> String {
   }
 }
 
-/// A reading in a few words. A grid names its codec, offset and z, then where the content
-/// stops and which encoder that matches; a doubt says what the cutoff alone read; any other
-/// reading gives the verdict, the cutoff, the encoder of a lossy verdict, the findings beside it
-/// and how sure it is.
+/// a reading in a few words
 fn words(reading: &Reading) -> String {
   let cut = reading.cutoff_hz.map_or_else(
     || "no cutoff found".to_string(),

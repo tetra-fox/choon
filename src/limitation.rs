@@ -1,5 +1,5 @@
-//! What made a reading less reliable, as data a caller can match on and a sentence a person
-//! is shown.
+//! what made a reading less reliable, as data a caller can match on and a sentence a person
+//! is shown
 
 use std::fmt;
 
@@ -157,7 +157,7 @@ impl fmt::Display for Limitation {
   }
 }
 
-/// `seconds` in words, as minutes when they are whole minutes.
+/// `seconds` in words, as minutes when they are whole minutes
 fn minutes(seconds: u64) -> String {
   match seconds {
     60 => "a minute".to_string(),
@@ -166,7 +166,7 @@ fn minutes(seconds: u64) -> String {
   }
 }
 
-/// A frequency as kHz to one decimal, without a trailing `.0`.
+/// a frequency as kHz to one decimal, without a trailing `.0`
 pub(crate) fn khz(hz: f64) -> String {
   let text = format!("{:.1}", hz / 1000.0);
   format!("{} kHz", text.strip_suffix(".0").unwrap_or(&text))
