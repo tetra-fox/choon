@@ -290,6 +290,8 @@ impl Default for ReadingThresholds {
       aac_grid_segments_agreeing: 0,
       mp3_grid_z: 12.0,
       mp3_grid_segments_agreeing: 3,
+      // the tuning's files that were never Opus reach one frame in the stretches and one in
+      // the windows
       opus_grid_frames: 3,
       opus_uncut_frames: 3,
     }

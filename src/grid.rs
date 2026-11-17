@@ -45,8 +45,8 @@
 //!   after a conversion from 48 to 44.1 kHz.
 //! - Clipping hides a grid frame by frame.
 //! - Vorbis's grid shows through the AAC scan, so a Vorbis decode reads as AAC.
-//! - Opus frames of other lengths than 20 ms, and its SILK and hybrid modes below 8 kHz, leave
-//!   nothing the scan looks for.
+//! - Opus frames of 2.5, 5 and 10 ms, and its SILK and hybrid modes, are not found.
+//! - A gain change after an Opus decode moves the energies off the lattice.
 
 use std::fmt;
 use std::sync::Arc;
