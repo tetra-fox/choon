@@ -502,6 +502,40 @@ fn too_little_audio_is_inconclusive() {
 }
 
 #[test]
+fn progress_goes_on_through_the_grid_scan() {
+  let dir = tempfile::tempdir().unwrap();
+  let path = flac(dir.path(), "a.flac", &music(1, 44_100, pink), 16);
+  let progress = Arc::new(std::sync::atomic::AtomicU32::new(0));
+  let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+  // the cancel check is asked between windows and before each job of the scan
+  let (at, record) = (progress.clone(), seen.clone());
+  let settings = Settings {
+    progress: Some(progress.clone()),
+    canceled: Some(Arc::new(move || {
+      let now = at.load(std::sync::atomic::Ordering::Relaxed);
+      record.lock().unwrap().push(now);
+      false
+    })),
+    ..Settings::default()
+  };
+  // on one thread a job of the scan starts once the one before it has ended
+  let pool = rayon::ThreadPoolBuilder::new()
+    .num_threads(1)
+    .build()
+    .unwrap();
+  let measured = pool.install(|| measure(&path, &settings)).unwrap();
+  assert!(measured.grid.is_some());
+  let seen = seen.lock().unwrap();
+  assert!(seen.is_sorted(), "{seen:?}");
+  let jobs_ended = seen
+    .windows(2)
+    .filter(|pair| pair[1] - pair[0] >= 50)
+    .count();
+  assert_eq!(jobs_ended, grid::JOBS - 1, "{seen:?}");
+  assert_eq!(progress.load(std::sync::atomic::Ordering::Relaxed), 1000);
+}
+
+#[test]
 fn a_long_file_is_sampled_at_windows_spread_over_it() {
   let dir = tempfile::tempdir().unwrap();
   let path = flac(dir.path(), "a.flac", &music(1, 44_100, pink), 16);

@@ -8,7 +8,7 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::time::Instant;
 
 use symphonia::core::formats::probe::Hint;
@@ -71,7 +71,10 @@ pub struct Settings {
   ///
   /// `None` for an analysis that runs until the file ends.
   pub deadline: Option<Instant>,
-  /// Where the analysis reports how far it is, in thousandths of the file.
+  /// Where the analysis reports how far it is, in thousandths of its work.
+  ///
+  /// The windows come first, then the grid scan of a file that claims a lossless format, each
+  /// weighed by about how long it takes.
   pub progress: Option<Arc<AtomicU32>>,
   /// Check that cancels the analysis.
   ///
@@ -111,6 +114,34 @@ impl Settings {
     if let Some(progress) = &self.progress {
       progress.store((done.clamp(0.0, 1.0) * 1000.0) as u32, Ordering::Relaxed);
     }
+  }
+}
+
+/// windows that take about as long to measure as one job of the grid scan takes, which weighs
+/// the two in the progress an analysis reports
+const SCAN_JOB_WINDOWS: f64 = 200.0;
+
+/// an analysis under way: its settings, and how its progress splits between the windows and the
+/// grid scan
+struct Run<'a> {
+  settings: &'a Settings,
+  /// the part of the progress the windows take, from 0 to 1; the grid scan takes what is left
+  windows_share: f64,
+}
+
+impl Run<'_> {
+  /// says `done` of the windows are measured, from 0 to 1
+  fn windows(&self, done: f64) {
+    self
+      .settings
+      .report(done.clamp(0.0, 1.0) * self.windows_share);
+  }
+
+  /// says every window is measured and `done` of the grid scan's jobs have ended, from 0 to 1
+  fn scan(&self, done: f64) {
+    self
+      .settings
+      .report(self.windows_share + (1.0 - self.windows_share) * done);
   }
 }
 
@@ -363,6 +394,21 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
       .map(|seconds| picks(seconds, windows.get())),
     Coverage::Full => None,
   };
+  // a read in full stops at the longest length read in full, whatever length the file states
+  let longest = settings.coverage.max_full_seconds().ceil();
+  let windows = picks.as_ref().map_or_else(
+    || stated.map_or(longest, |seconds| seconds.min(longest)),
+    |picks| picks.len() as f64,
+  );
+  let run = Run {
+    settings,
+    // a file with segments states its length, so its count of windows is finite
+    windows_share: if segments.is_some() {
+      windows / (windows + grid::JOBS as f64 * SCAN_JOB_WINDOWS)
+    } else {
+      1.0
+    },
+  };
   let reached = match picks {
     Some(picks) => {
       measured.sampled = true;
@@ -372,23 +418,19 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
         &mut buffer,
         &picks,
         &mut segments,
-        settings,
+        &run,
         &mut measured,
       )?
     }
-    None => {
-      // a read in full stops at the longest length read in full, whatever length the file states
-      let longest = settings.coverage.max_full_seconds().ceil() as u64;
-      whole(
-        &mut decoder,
-        &mut analyzer,
-        &mut buffer,
-        Windows::Upto(longest),
-        &mut segments,
-        settings,
-        &mut measured,
-      )?
-    }
+    None => whole(
+      &mut decoder,
+      &mut analyzer,
+      &mut buffer,
+      Windows::Upto(longest as u64),
+      &mut segments,
+      &run,
+      &mut measured,
+    )?,
   };
   // the length is what was read when the read came to an end the file set, or when the file
   // states none; a read whose time ran out says nothing against the stated length
@@ -424,7 +466,7 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
     measured.problems.push(Limitation::GridNotScanned);
   }
   if let Some(segments) = &segments {
-    measured.grid = scan_grid(segments, settings, &mut measured)?;
+    measured.grid = scan_grid(segments, &run, &mut measured)?;
   }
   settings.report(1.0);
   debug!(
@@ -504,17 +546,24 @@ fn read_segments(
 /// not full or the analysis runs out of time first
 fn scan_grid(
   segments: &Segments,
-  settings: &Settings,
+  run: &Run<'_>,
   measured: &mut Measured,
 ) -> Result<Option<Scan>, Error> {
+  let settings = run.settings;
   if !segments.complete() {
     debug!("the grid segments were not all read");
     measured.problems.push(Limitation::GridScanIncomplete);
     return Ok(None);
   }
-  let scan = grid::scan(segments, || {
-    !is_canceled(settings.canceled.as_ref()) && !is_past(settings.deadline)
-  });
+  let ended = AtomicUsize::new(0);
+  let scan = grid::scan(
+    segments,
+    || !is_canceled(settings.canceled.as_ref()) && !is_past(settings.deadline),
+    || {
+      let ended = ended.fetch_add(1, Ordering::Relaxed) + 1;
+      run.scan(ended as f64 / grid::JOBS as f64);
+    },
+  );
   if scan.is_none() && is_canceled(settings.canceled.as_ref()) {
     return Err(Error::Canceled);
   }
@@ -616,9 +665,10 @@ fn whole(
   buffer: &mut [Vec<f32>],
   read: Windows<'_>,
   segments: &mut Option<Segments>,
-  settings: &Settings,
+  run: &Run<'_>,
   measured: &mut Measured,
 ) -> Result<Reached, Error> {
+  let settings = run.settings;
   let rate = decoder.claimed.sample_rate as usize;
   let stated = decoder
     .claimed
@@ -630,7 +680,7 @@ fn whole(
   };
   let mut second = 0u64;
   loop {
-    settings.report(second as f64 / expected.max(1.0));
+    run.windows(second as f64 / expected.max(1.0));
     if stop(settings, measured)? {
       return Ok(Reached::Short(second as f64));
     }
@@ -684,14 +734,15 @@ fn sampled(
   buffer: &mut [Vec<f32>],
   picks: &BTreeSet<u64>,
   segments: &mut Option<Segments>,
-  settings: &Settings,
+  run: &Run<'_>,
   measured: &mut Measured,
 ) -> Result<Reached, Error> {
+  let settings = run.settings;
   let rate = decoder.claimed.sample_rate as usize;
   // where the furthest window read ends
   let mut furthest = 0.0;
   for (index, &second) in picks.iter().enumerate() {
-    settings.report(index as f64 / picks.len() as f64);
+    run.windows(index as f64 / picks.len() as f64);
     if stop(settings, measured)? {
       return Ok(Reached::Sampled);
     }
@@ -716,7 +767,7 @@ fn sampled(
         buffer,
         Windows::Only(picks),
         segments,
-        settings,
+        run,
         measured,
       )? {
         Reached::Short(_) => Ok(Reached::Sampled),

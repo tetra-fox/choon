@@ -245,9 +245,17 @@ impl Segments {
   }
 }
 
+/// the jobs of one scan: each codec in each segment
+pub(crate) const JOBS: usize = 2 * SEGMENTS;
+
 /// the scan of full `segments`, each codec of each segment a job on rayon's thread pool. `go_on`
-/// is asked before each job; `None` once it says not to. panics when a segment is not full.
-pub(crate) fn scan(segments: &Segments, go_on: impl Fn() -> bool + Sync) -> Option<Scan> {
+/// is asked before each job, `None` once it says not to, and `ended` is called as each job ends.
+/// panics when a segment is not full.
+pub(crate) fn scan(
+  segments: &Segments,
+  go_on: impl Fn() -> bool + Sync,
+  ended: impl Fn() + Sync,
+) -> Option<Scan> {
   assert!(segments.complete(), "every segment is full before a scan");
   let jobs: Vec<(Codec, &Segment)> = segments
     .0
@@ -262,6 +270,7 @@ pub(crate) fn scan(segments: &Segments, go_on: impl Fn() -> bool + Sync) -> Opti
           Codec::Aac => Aac::new().curve(segment),
           Codec::Mp3 => Mp3::new().curve(segment),
         };
+        ended();
         (codec, in_file(&curve, segment.start))
       })
     })
