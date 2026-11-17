@@ -247,9 +247,12 @@ impl Segments {
 
 /// the jobs of one scan: each codec in each segment
 pub(crate) const JOBS: usize = 2 * SEGMENTS;
+/// the tasks a job's offsets are split into at most, so that one file's scan can fill the pool
+const TASKS: usize = 32;
 
-/// the scan of full `segments`, each codec of each segment a job on rayon's thread pool. `go_on`
-/// is asked before each job, `None` once it says not to, and `ended` is called as each job ends.
+/// the scan of full `segments`, each codec of each segment a job on rayon's thread pool that
+/// splits its offsets into tasks on the same pool. `go_on` is asked before each job, `None` once
+/// it says not to, and `ended` is called as each job ends.
 /// panics when a segment is not full.
 pub(crate) fn scan(
   segments: &Segments,
@@ -267,7 +270,7 @@ pub(crate) fn scan(
     .map(|(codec, segment)| {
       go_on().then(|| {
         let curve = match codec {
-          Codec::Aac => Aac::new().curve(segment),
+          Codec::Aac => Aac::curve(segment),
           Codec::Mp3 => Mp3::new().curve(segment),
         };
         ended();
@@ -403,39 +406,45 @@ impl Aac {
   }
 
   /// the active count summed over the long frames of `segment`, for each offset of the grid
-  /// from its first sample. every offset counts the same frames.
-  fn curve(&mut self, segment: &Segment) -> Vec<f64> {
+  /// from its first sample. every offset counts the same frames. runs of offsets are tasks on
+  /// rayon's thread pool, each with an analysis of its own.
+  fn curve(segment: &Segment) -> Vec<f64> {
     let left: Vec<f32> = segment.left.iter().map(|s| *s as f32).collect();
     let right: Vec<f32> = segment.right.iter().map(|s| *s as f32).collect();
+    (0..AAC_HOP)
+      .into_par_iter()
+      .with_min_len(AAC_HOP / TASKS)
+      .map_init(Self::new, |aac, offset| aac.count(&left, &right, offset))
+      .collect()
+  }
+
+  /// the active count summed over the long frames of `left` and `right` on the grid at `offset`
+  fn count(&mut self, left: &[f32], right: &[f32], offset: usize) -> f64 {
     let frames = (SEGMENT - 2 * AAC_HOP) / AAC_HOP;
     let t2 = f64::from((NOISE16 as f32).powi(2));
     let half = std::f64::consts::FRAC_1_SQRT_2;
-    (0..AAC_HOP)
-      .map(|offset| {
-        (0..frames)
-          .map(|j| {
-            let start = offset + j * AAC_HOP;
-            self.mdct(&left[start..start + 2 * AAC_HOP], 0);
-            self.mdct(&right[start..start + 2 * AAC_HOP], 1);
-            let [l, r, m, s] = &mut self.wide;
-            let [left, right] = &self.values;
-            let wide = l
-              .iter_mut()
-              .zip(r.iter_mut())
-              .zip(m.iter_mut().zip(s.iter_mut()));
-            for (((l, r), (m, s)), (left, right)) in wide.zip(left.iter().zip(right)) {
-              *l = f64::from(*left);
-              *r = f64::from(*right);
-              *m = (*l + *r) * half;
-              *s = (*l - *r) * half;
-            }
-            let lr = active(l, t2) + active(r, t2);
-            let ms = active(m, t2) + active(s, t2);
-            lr.min(ms)
-          })
-          .sum()
+    (0..frames)
+      .map(|j| {
+        let start = offset + j * AAC_HOP;
+        self.mdct(&left[start..start + 2 * AAC_HOP], 0);
+        self.mdct(&right[start..start + 2 * AAC_HOP], 1);
+        let [l, r, m, s] = &mut self.wide;
+        let [left, right] = &self.values;
+        let wide = l
+          .iter_mut()
+          .zip(r.iter_mut())
+          .zip(m.iter_mut().zip(s.iter_mut()));
+        for (((l, r), (m, s)), (left, right)) in wide.zip(left.iter().zip(right)) {
+          *l = f64::from(*left);
+          *r = f64::from(*right);
+          *m = (*l + *r) * half;
+          *s = (*l - *r) * half;
+        }
+        let lr = active(l, t2) + active(r, t2);
+        let ms = active(m, t2) + active(s, t2);
+        lr.min(ms)
       })
-      .collect()
+      .sum()
   }
 
   /// the orthonormal MDCT of `input`, 2048 samples, windowed, into `values[into]`
@@ -717,35 +726,44 @@ impl Mp3 {
   }
 
   /// the active count summed over the granules of `segment`, for each offset of the granule
-  /// grid from its first sample. every offset counts the same number of granules.
-  fn curve(&mut self, segment: &Segment) -> Vec<f64> {
+  /// grid from its first sample. every offset counts the same number of granules. the 32
+  /// phases of the polyphase filterbank are tasks on rayon's thread pool.
+  fn curve(&self, segment: &Segment) -> Vec<f64> {
+    let phases: Vec<[f64; LINES]> = (0..32)
+      .into_par_iter()
+      .map(|phase| self.phase(segment, phase))
+      .collect();
+    (0..MP3_HOP)
+      .map(|offset| phases[offset % 32][offset / 32])
+      .collect()
+  }
+
+  /// the counts of the offsets `phase` + 32 g, for g in 0..18: the granules that start at
+  /// subband sample g of the filterbank run from input sample `phase`
+  fn phase(&self, segment: &Segment, phase: usize) -> [f64; LINES] {
     let granules = (SEGMENT - MP3_HOP - 512 - SUBBAND_SAMPLES * 32) / MP3_HOP;
     let t2 = (NOISE16 * MP3_NOISE_GAIN).powi(2);
     let half = std::f64::consts::FRAC_1_SQRT_2;
-    let mut curve = vec![0.0; MP3_HOP];
     let (mut l, mut r) = ([0.0; MP3_HOP], [0.0; MP3_HOP]);
     let (mut m, mut s) = ([0.0; MP3_HOP], [0.0; MP3_HOP]);
-    for phase in 0..32 {
-      let left = self.polyphase(&segment.left[phase..]);
-      let right = self.polyphase(&segment.right[phase..]);
-      for g in 0..LINES {
-        curve[phase + 32 * g] = (0..granules)
-          .map(|granule| {
-            let at = g + LINES * granule;
-            self.hybrid(&left[at..at + SUBBAND_SAMPLES], &mut l);
-            self.hybrid(&right[at..at + SUBBAND_SAMPLES], &mut r);
-            for k in 0..MP3_HOP {
-              m[k] = (l[k] + r[k]) * half;
-              s[k] = (l[k] - r[k]) * half;
-            }
-            let lr = active(&l, t2) + active(&r, t2);
-            let ms = active(&m, t2) + active(&s, t2);
-            lr.min(ms)
-          })
-          .sum();
-      }
-    }
-    curve
+    let left = self.polyphase(&segment.left[phase..]);
+    let right = self.polyphase(&segment.right[phase..]);
+    std::array::from_fn(|g| {
+      (0..granules)
+        .map(|granule| {
+          let at = g + LINES * granule;
+          self.hybrid(&left[at..at + SUBBAND_SAMPLES], &mut l);
+          self.hybrid(&right[at..at + SUBBAND_SAMPLES], &mut r);
+          for k in 0..MP3_HOP {
+            m[k] = (l[k] + r[k]) * half;
+            s[k] = (l[k] - r[k]) * half;
+          }
+          let lr = active(&l, t2) + active(&r, t2);
+          let ms = active(&m, t2) + active(&s, t2);
+          lr.min(ms)
+        })
+        .sum()
+    })
   }
 }
 
