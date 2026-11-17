@@ -1,14 +1,9 @@
-//! Judges whether an audio file is what its format claims, such as a FLAC that is really a
-//! converted MP3, from its spectrum.
+//! Audio analysis that tells whether a file is what its format claims.
 //!
-//! [`engine::run`] decodes a file a second at a time, in full or at windows spread over a long
-//! one, and measures each window: its loudness, where its spectrum stops (the cutoff) and how
-//! sharply, gaps below the cutoff, steps inside a full band, and what a spectrogram and a
-//! waveform show of it ([`picture`]). [`reading::read`] turns the measures into a [`Reading`]:
-//! a [`Verdict`] with how sure it is, the encoder setting the cutoff matches, findings beside it
-//! ([`Flag`]), a summary in words and what made it less reliable. Every threshold either step
-//! uses is data ([`MeasureThresholds`], [`ReadingThresholds`]), so a caller can sweep them;
-//! `Default` holds the values the analyzer ships with.
+//! A FLAC that is really a converted MP3 is one such file. The analyzer judges from the file's
+//! spectrum.
+//!
+//! # Examples
 //!
 //! ```no_run
 //! use std::path::Path;
@@ -30,8 +25,26 @@
 //! println!("{:?}: {}", reading.verdict, reading.summary);
 //! ```
 //!
-//! The `earwitness` program, built with the default `cli` feature, prints a reading of each file
-//! it is given, as a line of text or of JSON, under one or more sets of thresholds.
+//! # Measuring and reading
+//!
+//! [`engine::run`] decodes a file a second at a time, in full or at windows spread over a long
+//! one, and measures each window: its loudness, where its spectrum stops (the cutoff) and how
+//! sharply, gaps below the cutoff, steps inside a full band, and what a spectrogram and a
+//! waveform show of it ([`picture`]). [`reading::read`] turns the measures into a [`Reading`]:
+//! a [`Verdict`] with how sure it is, the encoder setting the cutoff matches, findings beside it
+//! ([`Flag`]), a summary in words and what made it less reliable.
+//!
+//! # Thresholds
+//!
+//! Every threshold either step uses is data ([`MeasureThresholds`], [`ReadingThresholds`]), so
+//! the caller can sweep them. `Default` holds the values the analyzer ships with.
+//!
+//! # Features
+//!
+//! `cli`, on by default, builds the `earwitness` program, which prints a reading of each file it
+//! is given, as a line of text or of JSON, under one or more sets of thresholds. A library user
+//! turns default features off. `testing` adds `fixtures`, the generated audio and the sample file
+//! the analyzer is tested on.
 
 pub mod aggregate;
 pub mod decode;

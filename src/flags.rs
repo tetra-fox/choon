@@ -1,6 +1,7 @@
-//! The findings reported beside the reading, independent of the cutoff: a file made from
-//! audio at a lower sample rate, samples that use fewer bits than they claim, and two channels
-//! that hold the same audio.
+//! Findings reported beside the reading, independent of the cutoff.
+//!
+//! They are a file made from audio at a lower sample rate, samples that use fewer bits than
+//! they claim, and two channels that hold the same audio.
 
 use serde::Serialize;
 
@@ -9,14 +10,16 @@ use crate::decode::Claimed;
 use crate::measure::Window;
 use crate::thresholds::ReadingThresholds;
 
-/// A finding reported beside the reading, independent of the cutoff.
+/// Finding reported beside the reading, independent of the cutoff.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Flag {
-  /// the content stops with a cliff at the top of a lower sample rate's band where no encoder
-  /// cuts, so the audio was made at that rate and converted up
+  /// Audio made at a lower sample rate and converted up.
+  ///
+  /// The content stops with a cliff at the top of a lower sample rate's band where no encoder
+  /// cuts.
   Upsampled,
-  /// a file claiming more than 16 bits carries no more than 16
+  /// Samples that claim more than 16 bits but carry no more than 16.
   BitPadded,
 }
 

@@ -1,8 +1,10 @@
-//! The analyzer's own reading of its measures: whether the audio is consistent with the format
-//! it claims, a likely transcode, a mix of sources, or something it cannot tell, with how sure
-//! it is, the findings independent of that, one summary, and what made it less reliable. The
-//! reading works from the spread over windows, not an average, so a band-limited minority of
-//! the time or of the band reads as mixed sources rather than as a transcode.
+//! The analyzer's reading of its measures.
+//!
+//! A reading says whether the audio is consistent with the format it claims, a likely
+//! transcode, a mix of sources, or something the analyzer cannot tell, with how sure it is, the
+//! findings independent of that, one summary, and what made it less reliable. The reading works
+//! from the spread over windows, not an average, so a band-limited minority of the time or of
+//! the band reads as mixed sources rather than as a transcode.
 
 use serde::Serialize;
 
@@ -19,23 +21,26 @@ const HI_RES_TOP_HZ: f64 = 24_000.0;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Verdict {
-  /// nearly every window reaches the top of the claimed band without an encoder's shelf
+  /// Nearly every window reaches the top of the claimed band.
+  ///
+  /// It does so without an encoder's shelf.
   Consistent,
-  /// nearly every window stops at the same known encoder cutoff with a sharp shelf
+  /// Nearly every window stops at the same known encoder cutoff with a sharp shelf.
   LikelyTranscode,
-  /// part of the time or part of the band is band-limited while the rest is full band, as when
-  /// one low-bitrate stem is mixed into a lossless track
+  /// Part of the time or of the band is band-limited while the rest is full band.
+  ///
+  /// It is what one low-bitrate stem mixed into a lossless track looks like.
   MixedSources,
-  /// too little audio, or measures that fit no pattern
+  /// Too little audio, or measures that fit no pattern.
   Inconclusive,
 }
 
-/// The encoder setting a cutoff matches.
+/// Encoder setting a cutoff matches.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct EncoderGuess {
-  /// the setting's name, as its profile gives it
+  /// Setting's name, as its profile gives it.
   pub profile: String,
-  /// how sure the analyzer is of the match, from 0 to 1
+  /// How sure the analyzer is of the match, from 0 to 1.
   pub confidence: f64,
 }
 
@@ -43,21 +48,21 @@ pub struct EncoderGuess {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Reading {
-  /// the reading of the cutoff
+  /// Reading of the cutoff.
   pub verdict: Verdict,
-  /// how sure it is, from 0 to the confidence cap
+  /// How sure the reading is, from 0 to the confidence cap.
   pub confidence: f64,
-  /// findings independent of the cutoff
+  /// Findings independent of the cutoff.
   pub flags: Vec<Flag>,
-  /// the encoder setting the cutoff matches
+  /// Encoder setting the cutoff matches.
   pub encoder_guess: Option<EncoderGuess>,
-  /// what it found, in words
+  /// What the reading found, in words.
   pub summary: String,
-  /// the aggregate measures
+  /// Aggregate measures.
   pub measures: Measures,
-  /// what made the reading less reliable
+  /// What made the reading less reliable.
   pub limitations: Vec<String>,
-  /// the cutoff to mark on the spectrogram, when the content stops short of the top
+  /// Cutoff to mark on the spectrogram, when the content stops short of the top.
   pub cutoff_hz: Option<f64>,
 }
 

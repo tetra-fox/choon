@@ -1,7 +1,9 @@
-//! Every threshold the analyzer measures and reads with, in one place, as data a caller can pass
-//! so a sweep needs no rebuild; `Default` holds the values the analyzer ships with. They come
-//! from what common encoders do and are checked against generated audio in the tests; they are
-//! rules of thumb that real files can break, which is why the reading is evidence and not proof.
+//! Thresholds the analyzer measures and reads with.
+//!
+//! Every threshold is data the caller passes, so a sweep needs no rebuild. `Default` holds the
+//! values the analyzer ships with. They come from what common encoders do and are checked
+//! against generated audio in the tests. They are rules of thumb that real files can break,
+//! which is why a reading is evidence and not proof.
 
 use serde::{Deserialize, Serialize};
 
@@ -9,31 +11,43 @@ use serde::{Deserialize, Serialize};
 /// measured and when it is read.
 const FULL_BAND: f64 = 0.9;
 
-/// What each window is measured with. Changing one means measuring the audio again.
+/// Thresholds each window is measured with.
+///
+/// Changing one means measuring the audio again.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
 pub struct MeasureThresholds {
-  /// a window quieter than this, in dBFS, is near-silent and has no cutoff
+  /// Level in dBFS under which a window is near-silent.
+  ///
+  /// A near-silent window has no cutoff.
   pub silence_dbfs: f64,
-  /// the cutoff is the highest band within this many dB of a window's loudest band
+  /// Range in dB under the loudest band that the cutoff lies in.
+  ///
+  /// The cutoff is the highest band within this range.
   pub cutoff_range_db: f64,
-  /// the cutoff line never sits less than this many dB over the noise of the samples' bit
-  /// depth, so a quiet passage's quantization noise does not read as content
+  /// Margin in dB of the cutoff line over quantization noise.
+  ///
+  /// The line never sits closer to the noise of the samples' bit depth, so a quiet passage's
+  /// quantization noise does not read as content.
   pub floor_margin_db: f64,
-  /// how far from a frequency the bands compared across it start, in Hz
+  /// Gap in Hz to the bands compared across a frequency.
   pub shelf_gap_hz: f64,
-  /// how wide the bands compared across a frequency are, in Hz
+  /// Width in Hz of the bands compared across a frequency.
   pub shelf_span_hz: f64,
-  /// a window is searched for a step inside its band when its cutoff is at or above this
-  /// fraction of the band's top
+  /// Fraction of the top a cutoff needs for an inner step search.
+  ///
+  /// A window is searched for a step inside its band when its cutoff is at or above this
+  /// fraction of the band's top.
   pub full_band: f64,
-  /// the lowest frequency a step inside a full band is looked for at, in Hz
+  /// Lowest frequency in Hz an inner step is looked for at.
   pub inner_shelf_from_hz: f64,
-  /// the band gaps are counted in starts here, in Hz: where MP3's top scale-factor band sits
+  /// Start in Hz of the band gaps are counted in.
+  ///
+  /// It is where MP3's top scale-factor band sits.
   pub holes_from_hz: f64,
-  /// the top of that band, in Hz
+  /// Top in Hz of the band gaps are counted in.
   pub holes_to_hz: f64,
-  /// a bin this many dB below the bins around it is a gap
+  /// Depth in dB under its neighbors at which a bin is a gap.
   pub hole_depth_db: f64,
 }
 
@@ -54,95 +68,123 @@ impl Default for MeasureThresholds {
   }
 }
 
-/// What the measures are read with. A reading is quick, so these can be swept over audio
-/// measured once.
+/// Thresholds the measures are read with.
+///
+/// A reading is quick, so these can be swept over audio measured once.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
 pub struct ReadingThresholds {
-  /// a drop across the cutoff of at least this many dB is an encoder's low-pass, not a natural
-  /// roll-off
+  /// Least drop in dB across the cutoff for an encoder's low-pass.
+  ///
+  /// A smaller drop is a natural roll-off.
   pub sharp_shelf_db: f64,
-  /// a cutoff at or above this fraction of the band's top counts as reaching it. Set below the
-  /// measure `full_band`, it counts as full some windows measuring never searched for inner steps
+  /// Fraction of the top from which a cutoff counts as full band.
+  ///
+  /// A cutoff at or above this fraction of the band's top counts as reaching it. Set below
+  /// [`MeasureThresholds::full_band`], it counts as full some windows that measuring never
+  /// searched for inner steps.
   pub full_band: f64,
-  /// content that rolls off gently below this fraction of the band's top is band-limited by
-  /// nature, and the reading says it cannot tell
+  /// Fraction of the top under which a gentle roll-off is not judged.
+  ///
+  /// Content that rolls off gently below it is band-limited by nature, and the reading says it
+  /// cannot tell.
   pub natural_limit: f64,
-  /// a step of at least this many dB inside a full band is a band-limited layer under it
+  /// Least inner step in dB that reads as a band-limited layer.
+  ///
+  /// A step of at least this size inside a full band is a band-limited layer under it.
   pub inner_shelf_db: f64,
-  /// a step of at least this many dB where the highest bitrates cut, under a band that reaches
-  /// the top, is reason enough to doubt the band: it reads as something the analyzer cannot
-  /// tell, which costs an honest file nothing. Honest spectra step by a decibel or two there
+  /// Least step in dB at a top-bitrate cutoff that casts doubt.
+  ///
+  /// Such a step under a band that reaches the top reads as something the analyzer cannot tell,
+  /// which costs an honest file nothing. Honest spectra step by a decibel or two there.
   pub high_step_db: f64,
-  /// the band above such a step is content only when it is at least this many dB over the
-  /// cutoff line; nearer the line it is the recording's noise floor, hiss or dither
+  /// Height in dB over the cutoff line that makes a band content.
+  ///
+  /// The band above a step is content only at this height or more. Nearer the line it is the
+  /// recording's noise floor, hiss or dither.
   pub clear_db: f64,
-  /// a reading needs at least this many non-silent windows
+  /// Fewest non-silent windows a reading needs.
   pub min_windows: usize,
-  /// a reading needs at least this many seconds of non-silent audio
+  /// Fewest seconds of non-silent audio a reading needs.
   pub min_seconds: f64,
-  /// within this many seconds over `min_seconds` a reading says it has little to go on: there
-  /// each second moves the shares its rules compare by about 2.5 percent, so a few odd seconds
-  /// can tip it
+  /// Seconds past `min_seconds` with little to go on.
+  ///
+  /// Within this many seconds over `min_seconds` a reading says it has little to go on. There
+  /// each second moves the shares its rules compare by about 2.5 percent, so a few odd
+  /// seconds can tip it.
   pub few_seconds_over: f64,
-  /// the share of windows that must reach the top of the band for the content to be consistent
-  /// with its claim
+  /// Share of windows at the top of the band for consistent content.
+  ///
+  /// At least this share of windows must reach the top for the content to be consistent with
+  /// its claim.
   pub consistent_share: f64,
-  /// the share of windows that must stop at one encoder cutoff for a transcode
+  /// Share of windows that stop at one encoder cutoff for a transcode.
   pub transcode_share: f64,
-  /// how far from the common cutoff a window's cutoff may be and still share it, in Hz
+  /// Distance in Hz at which a cutoff still shares the common one.
   pub cluster_hz: f64,
-  /// the share of a lossy file's cutoffs under which its encoder's ceiling is read
+  /// Percentile of a lossy file's cutoffs read as its encoder's ceiling.
   pub ceiling: f64,
-  /// the share of windows each of two sources must have for mixed sources
+  /// Share of windows each of two sources has for mixed sources.
   pub mixed_share: f64,
-  /// the tops of the bands of the sample rates audio is commonly made at, in Hz. Content that
-  /// stops with a cliff at one, in a file whose band reaches past it, was made at that rate
+  /// Band tops in Hz of the sample rates audio is commonly made at.
+  ///
+  /// Content that stops with a cliff at one, in a file whose band reaches past it, was made at
+  /// that rate.
   pub lower_rate_edges: Vec<f64>,
-  /// band edges of rates some old equipment recorded at. They are left out of
-  /// `lower_rate_edges` because they sit on encoder cutoffs (18.9 kHz beside 192 kbps MP3's): a
-  /// cliff at one reads as that encoder, with a limitation naming the rate
+  /// Band edges of rates some old equipment recorded at.
+  ///
+  /// They are left out of `lower_rate_edges` because they sit on encoder cutoffs (18.9 kHz
+  /// beside 192 kbps MP3's). A cliff at one reads as that encoder, with a limitation naming the
+  /// rate.
   pub other_rate_edges: Vec<RateEdge>,
-  /// channels correlated above this, with the side channel at or below `mono_side_db`, hold the
-  /// same audio
+  /// Correlation above which two channels hold the same audio.
+  ///
+  /// It applies together with a side channel at or below `mono_side_db`.
   pub mono_correlation: f64,
-  /// the side channel's level relative to the mid channel, in dB, at or below which the two
-  /// channels hold the same audio
+  /// Side-to-mid level in dB at or below which channels match.
+  ///
+  /// At or below this level of the side channel relative to the mid channel, the two channels
+  /// hold the same audio.
   pub mono_side_db: f64,
-  /// no reading is surer than this
+  /// Highest confidence a reading has.
   pub confidence_cap: f64,
-  /// a file whose median window is quieter than this, in dBFS, is quiet, which makes a reading
-  /// less sure
+  /// Median window level in dBFS under which a file is quiet.
+  ///
+  /// A quiet file makes a reading less sure.
   pub quiet_dbfs: f64,
-  /// profiles at this bitrate and above cut where some recordings are filtered when they are
+  /// Bitrate in kbit/s from which a cutoff may be a filter.
+  ///
+  /// Profiles at this bitrate and above cut where some recordings are filtered when they are
   /// made, so a sharp shelf there reads as something the analyzer cannot tell, never as a
-  /// transcode
+  /// transcode.
   pub high_bitrate_kbps: u32,
-  /// the cutoffs of common lossy encoder settings, lowest first
+  /// Cutoffs of common lossy encoder settings, lowest first.
   pub profiles: Vec<Profile>,
 }
 
-/// The top of the band of a sample rate some old equipment recorded at.
+/// Band top of a rate some old equipment recorded at.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RateEdge {
-  /// half the rate, in Hz
+  /// Half the rate, in Hz.
   pub hz: f64,
-  /// the rate and who used it, as a limitation names it
+  /// Rate and who used it, as a limitation names it.
   pub rate: String,
 }
 
-/// A lossy encoder setting known by where it cuts off.
+/// Lossy encoder setting known by where it cuts off.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Profile {
-  /// where it cuts off at 44.1 and 48 kHz, in Hz
+  /// Cutoff at 44.1 and 48 kHz, in Hz.
   pub hz: f64,
-  /// how a report names it
+  /// Name a reading gives it.
   pub name: String,
-  /// the highest nominal bitrate cut here, in kbit/s
+  /// Highest nominal bitrate cut here, in kbit/s.
   pub kbps: u32,
-  /// the label of the guide line drawn across a spectrogram here, none for no line
+  /// Label of the guide line drawn across a spectrogram here.
+  ///
+  /// `None` draws no line.
   #[serde(default)]
   pub guide: Option<String>,
 }
@@ -232,8 +274,9 @@ impl ReadingThresholds {
       .min_by(|a, b| (a.hz - hz).abs().total_cmp(&(b.hz - hz).abs()))
   }
 
-  /// The guide lines drawn across a spectrogram: where common encoder settings cut off, as each
-  /// profile with a guide labels it.
+  /// Returns the guide lines drawn across a spectrogram.
+  ///
+  /// They are where common encoder settings cut off, as each profile with a guide labels it.
   pub fn guides(&self) -> impl Iterator<Item = (f64, &str)> {
     self
       .profiles

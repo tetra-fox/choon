@@ -1,6 +1,6 @@
 [package]
 name = "earwitness"
-description = "Reads an audio file's spectrum a second at a time and judges whether it is what its format claims, such as a FLAC made from an MP3"
+description = "Judges from its spectrum whether an audio file is what its format claims, such as a FLAC made from an MP3"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"

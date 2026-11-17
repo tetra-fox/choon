@@ -1,44 +1,52 @@
-//! What one window adds to the spectrogram and the waveform a viewer draws: its spectrum over
-//! the whole second, the same spectrum in short columns across the second, and the lowest and
-//! highest sample in short buckets. Levels are bytes over linear frequency bins from 0 Hz to
-//! half the sample rate, so a viewer can lay them out on any frequency axis.
+//! Spectrogram and waveform data of each window.
+//!
+//! A window adds its spectrum over the whole second, the same spectrum in short columns across
+//! the second, and the lowest and highest sample in short buckets to what a viewer draws.
+//! Levels are bytes over linear frequency bins from 0 Hz to half the sample rate, so a viewer
+//! can lay them out on any frequency axis.
 
-/// How many frequency bins a spectrum is kept at, from 0 Hz to half the sample rate.
+/// Number of frequency bins a spectrum is kept at.
+///
+/// They run from 0 Hz to half the sample rate.
 pub const BINS: usize = 512;
-/// How many spectrogram columns a second of audio is kept at.
+/// Number of spectrogram columns a second of audio is kept at.
 pub const COLUMNS_PER_SECOND: usize = 16;
-/// How many waveform buckets a second of audio is kept at.
+/// Number of waveform buckets a second of audio is kept at.
 pub const PEAKS_PER_SECOND: usize = 200;
-/// The quietest level a byte holds, in dB relative to a full-scale sine.
+/// Quietest level a byte holds, in dB relative to a full-scale sine.
 pub const FLOOR_DB: f64 = -160.0;
-/// The loudest level a byte holds, in dB relative to a full-scale sine.
+/// Loudest level a byte holds, in dB relative to a full-scale sine.
 pub const CEILING_DB: f64 = 0.0;
 
-/// One window as the spectrogram and the waveform show it.
+/// Window as the spectrogram and the waveform show it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Shown {
-  /// the spectrum over the whole window, [`BINS`] levels lowest first
+  /// Spectrum over the whole window, [`BINS`] levels lowest first.
   pub spectrum: Vec<u8>,
-  /// the window's columns one after another, each [`BINS`] levels lowest first; a whole second
-  /// has [`COLUMNS_PER_SECOND`]
+  /// Window's columns one after another, each [`BINS`] levels lowest first.
+  ///
+  /// A whole second has [`COLUMNS_PER_SECOND`].
   pub columns: Vec<u8>,
-  /// the lowest and the highest sample of each bucket as two signed bytes; a whole second has
-  /// [`PEAKS_PER_SECOND`] buckets
+  /// Lowest and highest sample of each bucket, as two signed bytes.
+  ///
+  /// A whole second has [`PEAKS_PER_SECOND`] buckets.
   pub peaks: Vec<u8>,
 }
 
-/// A level in dB as a byte: [`FLOOR_DB`] and below is 0, [`CEILING_DB`] and above is 255.
+/// Returns a level in dB as a byte.
+///
+/// [`FLOOR_DB`] and below is 0, [`CEILING_DB`] and above is 255.
 pub fn level_byte(level: f64) -> u8 {
   let scaled = (level - FLOOR_DB) / (CEILING_DB - FLOOR_DB) * 255.0;
   scaled.round().clamp(0.0, 255.0) as u8
 }
 
-/// The level in dB of a byte.
+/// Returns the level in dB of a byte.
 pub fn byte_level(byte: u8) -> f64 {
   FLOOR_DB + f64::from(byte) / 255.0 * (CEILING_DB - FLOOR_DB)
 }
 
-/// The middle of bin `bin` in Hz, for audio whose band ends at `max_hz`.
+/// Returns the middle of bin `bin` in Hz, for audio whose band ends at `max_hz`.
 pub fn bin_hz(bin: usize, max_hz: f64) -> f64 {
   (bin as f64 + 0.5) * max_hz / BINS as f64
 }

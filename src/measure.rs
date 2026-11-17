@@ -1,8 +1,10 @@
-//! What the analyzer measures in each one-second window: its loudness, its spectrum averaged
-//! over short overlapping frames, where that spectrum stops (the cutoff) and how steeply, gaps
-//! in the band just below the cutoff, a step inside a full band, and how strongly the noise
-//! repeats at a lossy codec's frame length. Each window's samples are also added to the
-//! file-wide totals, and what the spectrogram and the waveform show of it is kept.
+//! Measures of each one-second window.
+//!
+//! A window's measures are its loudness, its spectrum averaged over short overlapping frames,
+//! where that spectrum stops (the cutoff) and how steeply, gaps in the band just below the
+//! cutoff, a step inside a full band, and how strongly the noise repeats at a lossy codec's
+//! frame length. Each window's samples are also added to the file-wide totals, and what the
+//! spectrogram and the waveform show of it is kept.
 
 use std::sync::Arc;
 
@@ -31,43 +33,50 @@ const CODEC_PERIODS: [usize; 3] = [
   2048 / ENVELOPE_BLOCK,
 ];
 
-/// A step down in level inside a band that reaches the top.
+/// Step down in level inside a band that reaches the top.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Step {
-  /// where it is, in Hz
+  /// Frequency of the step, in Hz.
   pub hz: f64,
-  /// how much quieter the band above it is than the band below, in dB
+  /// Drop from the band below to the band above, in dB.
   pub drop: f64,
-  /// how far the band above it is over the cutoff line (the loudest band less `cutoff_range_db`,
-  /// or the quantization noise plus `floor_margin_db` when that is higher), in dB: a few dB is a
-  /// noise floor that only just reaches the line
+  /// Height of the band above the step over the cutoff line, in dB.
+  ///
+  /// The cutoff line is the loudest band less `cutoff_range_db`, or the quantization noise plus
+  /// `floor_margin_db` when that is higher. A few dB is a noise floor that only just reaches the
+  /// line.
   pub clearance: f64,
 }
 
-/// What one window measured.
+/// Measures of one window.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Window {
-  /// where the window starts, in seconds
+  /// Start of the window, in seconds.
   pub t: f64,
-  /// how long it is, in seconds: 1 but for a shorter last window
+  /// Length of the window, in seconds.
+  ///
+  /// It is 1 but for a shorter last window.
   pub seconds: f64,
-  /// its loudness over every analyzed channel, in dBFS
+  /// Loudness over every analyzed channel, in dBFS.
   pub rms_dbfs: f64,
-  /// the highest frequency within the measured range of the loudest band, in Hz; `None` for a
-  /// near-silent window or one too short for a spectrum
+  /// Highest frequency within the measured range of the loudest band, in Hz.
+  ///
+  /// `None` for a near-silent window or one too short for a spectrum.
   pub cutoff_hz: Option<f64>,
-  /// how much quieter the band just above the cutoff is than the band just below, in dB;
-  /// `None` without a cutoff or when the cutoff is too near the top of the band to tell
+  /// Drop across the cutoff, in dB.
+  ///
+  /// It is how much quieter the band just above the cutoff is than the band just below. `None`
+  /// without a cutoff or when the cutoff is too near the top of the band to tell.
   pub shelf_db: Option<f64>,
-  /// how many bins in the upper band below the cutoff are empty per populated bin
+  /// Empty bins per populated bin in the upper band below the cutoff.
   pub holes: Option<f64>,
-  /// the steepest step inside a band that reaches the top
+  /// Steepest step inside a band that reaches the top.
   pub inner_shelf: Option<Step>,
-  /// how strongly the noise repeats at a lossy codec's frame length, from 0 to 1
+  /// How strongly the noise repeats at a lossy codec's frame length, from 0 to 1.
   pub frame_score: Option<f64>,
-  /// the power above half the band, and in the whole band
+  /// Power above half the band, and in the whole band.
   pub energy: (f64, f64),
-  /// what the spectrogram and the waveform show of the window
+  /// What the spectrogram and the waveform show of the window.
   pub shown: Shown,
 }
 

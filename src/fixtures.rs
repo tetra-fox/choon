@@ -1,7 +1,10 @@
-//! Audio the analyzer is tested on, made in the test from a fixed seed: noise shaped like
-//! music's spectrum, written as FLAC, and the same noise through the LAME MP3 encoder and back
-//! for the transcodes. The one file kept as bytes is a short ALAC tone, which nothing here can
-//! encode.
+//! Audio the analyzer is tested on.
+//!
+//! It is made in the test from a fixed seed: noise shaped like music's spectrum, written as
+//! FLAC, and the same noise through the LAME MP3 encoder and back for the transcodes. The one
+//! file kept as bytes is a short ALAC tone, which nothing here can encode.
+//!
+//! As test support, every function here panics when encoding, writing or decoding fails.
 
 use std::path::Path;
 
@@ -13,19 +16,23 @@ use realfft::num_complex::Complex;
 
 use crate::decode::{Decoder, Filled};
 
-/// A 16-bit stereo ALAC tone at 8000 Hz in an MP4 container: four packets of 4096, 4096, 4096
-/// and 3712 frames, one after the other in its media data.
+/// ALAC tone, 16-bit stereo at 8000 Hz, in an MP4 container.
+///
+/// It holds four packets of 4096, 4096, 4096 and 3712 frames, one after the other in its media
+/// data.
 pub const TONE: &[u8] = include_bytes!("fixtures/tone.m4a");
 
-/// How long most generated files are, in seconds: more than the 30 s a reading needs.
+/// Length of most generated files, in seconds.
+///
+/// It is more than the 30 s a reading needs.
 pub const SECONDS: usize = 34;
 
 /// Audio in memory: a sample rate and one sample vector per channel.
 #[derive(Clone)]
 pub struct Audio {
-  /// samples per second
+  /// Samples per second.
   pub rate: u32,
-  /// the samples of each channel, from -1 to 1, all the same length
+  /// Samples of each channel, from -1 to 1, all the same length.
   pub channels: Vec<Vec<f32>>,
 }
 
@@ -50,7 +57,9 @@ impl Rng {
   }
 }
 
-/// `seconds` of a sine at `hz`, one channel at 44.1 kHz, at -15 dBFS: a test tone.
+/// Returns `seconds` of a sine at `hz`: a test tone.
+///
+/// It is one channel at 44.1 kHz, at -15 dBFS.
 pub fn tone(hz: f64, seconds: usize) -> Audio {
   let rate = 44_100u32;
   let step = 2.0 * std::f64::consts::PI * hz / f64::from(rate);
@@ -66,9 +75,10 @@ pub fn tone(hz: f64, seconds: usize) -> Audio {
   audio
 }
 
-/// [`SECONDS`] of a tone at `hz` with its harmonics up to `top`, the k-th at 1/k^`fall`: a
-/// sawtooth with `fall` 1, as a synth or a bowed string has, or a pulse with 0. One channel at
-/// 44.1 kHz at -15 dBFS.
+/// Returns [`SECONDS`] of a tone at `hz` with its harmonics up to `top`.
+///
+/// The k-th harmonic is at 1/k^`fall`: a sawtooth with `fall` 1, as a synth or a bowed string
+/// has, or a pulse with 0. One channel at 44.1 kHz at -15 dBFS.
 pub fn harmonics(hz: f64, top: f64, fall: f64) -> Audio {
   let rate = 44_100u32;
   let length = SECONDS * rate as usize;
@@ -92,18 +102,23 @@ pub fn harmonics(hz: f64, top: f64, fall: f64) -> Audio {
   audio
 }
 
-/// Music's spectrum, roughly: power falling 3 dB an octave, from 20 Hz up.
+/// Returns music's spectrum at `hz`, roughly.
+///
+/// Its power falls 3 dB an octave, from 20 Hz up.
 pub fn pink(hz: f64) -> f64 {
   if hz < 20.0 { 0.0 } else { (100.0 / hz).sqrt() }
 }
 
-/// [`pink`] with nothing above `hz`: an encoder's low-pass, or a filter applied when mastering.
+/// Returns [`pink`] with nothing above `hz`.
+///
+/// It is an encoder's low-pass, or a filter applied when mastering.
 pub fn cut_at(hz: f64) -> impl Fn(f64) -> f64 + Copy {
   move |f| if f < hz { pink(f) } else { 0.0 }
 }
 
-/// [`pink`] with a comb of gaps 40 Hz wide every 80 Hz between 16 and 20 kHz: what the gap
-/// measure counts.
+/// Returns [`pink`] with a comb of gaps between 16 and 20 kHz.
+///
+/// The gaps are 40 Hz wide every 80 Hz: what the gap measure counts.
 pub fn combed(hz: f64) -> f64 {
   if (16_000.0..20_000.0).contains(&hz) && (hz % 80.0) < 40.0 {
     0.0
@@ -112,9 +127,11 @@ pub fn combed(hz: f64) -> f64 {
   }
 }
 
-/// `seconds` of orchestral-like stereo at 44.1 kHz: falling 6 dB an octave from 2 kHz and
-/// 24 dB an octave from 15 kHz, notes every 3 s decaying over 2.5 s, phrases swelling from -45
-/// to -15 dBFS over 40 s, so its tails sit near the quantization noise.
+/// Returns `seconds` of orchestral-like stereo at 44.1 kHz.
+///
+/// It falls 6 dB an octave from 2 kHz and 24 dB an octave from 15 kHz, with notes every 3 s
+/// decaying over 2.5 s and phrases swelling by 30 dB over 40 s, at -24 dBFS overall, so its
+/// tails sit near the quantization noise.
 pub fn classical(seconds: usize) -> Audio {
   let rate = 44_100u32;
   let spectrum =
@@ -133,7 +150,9 @@ pub fn classical(seconds: usize) -> Audio {
   audio
 }
 
-/// [`pink`] rolling off gently from 3.5 kHz, 24 dB an octave, as a lo-fi recording does.
+/// Returns [`pink`] rolling off gently from 3.5 kHz, as a lo-fi recording does.
+///
+/// The roll-off is 24 dB an octave.
 pub fn lo_fi(hz: f64) -> f64 {
   pink(hz) / (1.0 + (hz / 3_500.0).powi(8)).sqrt()
 }
@@ -160,13 +179,14 @@ fn noise(seed: u64, seconds: usize, rate: u32, envelope: impl Fn(f64) -> f64) ->
   samples
 }
 
-/// [`SECONDS`] of two partly correlated channels of shaped noise, with a slow swell in
-/// loudness, at -20 dBFS.
+/// Returns [`SECONDS`] of two partly correlated channels of shaped noise.
+///
+/// It has a slow swell in loudness, at -20 dBFS.
 pub fn music(seed: u64, rate: u32, envelope: impl Fn(f64) -> f64 + Copy) -> Audio {
   music_for(SECONDS, seed, rate, envelope)
 }
 
-/// [`music`] lasting `seconds`.
+/// Returns [`music`] lasting `seconds`.
 pub fn music_for(
   seconds: usize,
   seed: u64,
@@ -208,7 +228,7 @@ impl Audio {
     }
   }
 
-  /// The audio with `other` added in at `gain`, sample for sample.
+  /// Returns the audio with `other` added in at `gain`, sample for sample.
   pub fn mixed(mut self, other: &Audio, gain: f32) -> Audio {
     for (mine, theirs) in self.channels.iter_mut().zip(&other.channels) {
       for (a, b) in mine.iter_mut().zip(theirs) {
@@ -218,7 +238,7 @@ impl Audio {
     self
   }
 
-  /// The first `seconds` of `self`, then the rest of `other`.
+  /// Returns the first `seconds` of `self`, then the rest of `other`.
   pub fn spliced(&self, other: &Audio, seconds: usize) -> Audio {
     let split = seconds * self.rate as usize;
     Audio {
@@ -238,8 +258,9 @@ impl Audio {
     }
   }
 
-  /// The audio with a short burst of noise at the start of every `period` samples, as a
-  /// lossy codec can leave at its frame edges.
+  /// Returns the audio with a short burst of noise every `period` samples.
+  ///
+  /// The bursts are at the start of each period, as a lossy codec can leave at its frame edges.
   pub fn with_frame_rhythm(mut self, period: usize) -> Audio {
     let mut rng = Rng(5);
     for channel in &mut self.channels {
@@ -252,7 +273,7 @@ impl Audio {
     self
   }
 
-  /// The first channel twice, as a mono recording copied to stereo is.
+  /// Returns the first channel twice, as a mono recording copied to stereo is.
   pub fn mono_to_stereo(&self) -> Audio {
     Audio {
       rate: self.rate,
@@ -260,8 +281,9 @@ impl Audio {
     }
   }
 
-  /// The audio resampled to `rate` by padding its spectrum with silence: what a converter
-  /// makes of it, with nothing above the old rate's band.
+  /// Returns the audio resampled to `rate` by padding its spectrum with silence.
+  ///
+  /// It is what a converter makes of it, with nothing above the old rate's band.
   pub fn resampled(&self, rate: u32) -> Audio {
     let mut planner = RealFftPlanner::<f32>::new();
     let channels = self
@@ -326,13 +348,14 @@ impl Audio {
   }
 }
 
-/// Writes `audio` as FLAC at `path`: as `bits`-bit samples, or as 16-bit samples stored in 24
-/// bits when `padded`.
+/// Writes `audio` as FLAC at `path`.
+///
+/// The samples are `bits`-bit, or 16-bit stored in 24 bits when `padded`.
 pub fn write_flac(audio: &Audio, bits: u32, padded: bool, path: &Path) {
   std::fs::write(path, flac(audio, bits, padded)).unwrap();
 }
 
-/// `audio` encoded as FLAC, as [`write_flac`] writes it.
+/// Returns `audio` encoded as FLAC, as [`write_flac`] writes it.
 pub fn flac(audio: &Audio, bits: u32, padded: bool) -> Vec<u8> {
   let mut planes = audio.quantized(if padded { 16 } else { bits }, 7);
   if padded {
@@ -400,8 +423,9 @@ pub fn write_mp3(audio: &Audio, bitrate: Bitrate, path: &Path) {
   std::fs::write(path, bytes).unwrap();
 }
 
-/// Puts an ID3v2.3 tag holding a cover picture of `bytes` bytes in front of the MP3 at `path`,
-/// as a tagger embeds album art.
+/// Puts a cover picture of `bytes` bytes in front of the MP3 at `path`.
+///
+/// The picture is in an ID3v2.3 tag, as a tagger embeds album art.
 pub fn add_cover(path: &Path, bytes: usize) {
   let mut picture = vec![0u8; bytes];
   picture[..4].copy_from_slice(&[0xff, 0xd8, 0xff, 0xe0]);
@@ -422,7 +446,7 @@ pub fn add_cover(path: &Path, bytes: usize) {
   std::fs::write(path, file).unwrap();
 }
 
-/// The audio of the file at `path`, decoded whole.
+/// Returns the audio of the file at `path`, decoded whole.
 pub fn decoded(path: &Path) -> Audio {
   let mut decoder = Decoder::open_through(path, |file| Box::new(file)).unwrap();
   let rate = decoder.claimed.sample_rate;
@@ -440,7 +464,9 @@ pub fn decoded(path: &Path) -> Audio {
   Audio { rate, channels }
 }
 
-/// `audio` through an MP3 encoder at `bitrate` and decoded again, as a transcode starts.
+/// Returns `audio` through an MP3 encoder at `bitrate` and decoded again.
+///
+/// It is how a transcode starts.
 pub fn through_mp3(audio: &Audio, bitrate: Bitrate, dir: &Path) -> Audio {
   let mp3 = dir.join(format!("through-{}.mp3", bitrate as u32));
   write_mp3(audio, bitrate, &mp3);
@@ -460,10 +486,11 @@ fn mp4_full_box(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
   mp4_box(kind, &[&[0u8; 4][..], body].concat())
 }
 
-/// Writes an MP4 of 16-bit mono PCM at `path` holding the first second of `audio` once, whose
-/// sample tables list `chunks` seconds that all point at it and give every sample `delta` ticks
-/// of the sample rate, so the file states `chunks` times `delta` seconds and every seek into
-/// that length succeeds.
+/// Writes an MP4 at `path` that states more audio than it holds.
+///
+/// The file is 16-bit mono PCM holding the first second of `audio` once. Its sample tables list
+/// `chunks` seconds that all point at it and give every sample `delta` ticks of the sample rate,
+/// so the file states `chunks` times `delta` seconds and every seek into that length succeeds.
 pub fn write_repeating_mp4(audio: &Audio, chunks: u32, delta: u32, path: &Path) {
   let rate = audio.rate;
   let pcm: Vec<u8> = audio.channels[0][..rate as usize]

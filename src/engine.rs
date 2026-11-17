@@ -1,8 +1,10 @@
-//! One analysis from file to measures: the file is decoded a window at a time, in full or, for
-//! a long file, at windows spread evenly over it, and each window is measured. It blocks the
-//! thread it runs on, stops promptly when canceled, and stops with what it has when its time
-//! is up. The file's bytes are read through a source that stops giving them at either, so a
-//! container that is slow to open or to seek in holds the thread no longer than a window does.
+//! One analysis from file to measures.
+//!
+//! The file is decoded a window at a time, in full or, for a long file, at windows spread evenly
+//! over it, and each window is measured. An analysis blocks the thread it runs on, stops
+//! promptly when canceled, and stops with what it has when its time is up. The file's bytes are
+//! read through a source that stops giving them at either, so a container that is slow to open
+//! or to seek in holds the thread no longer than a window does.
 
 use std::collections::BTreeSet;
 use std::io::{Read, Seek, SeekFrom};
@@ -20,25 +22,29 @@ use crate::measure::{Analyzer, FFT_SIZE, Window};
 use crate::thresholds::MeasureThresholds;
 use crate::totals::Totals;
 
-/// Says whether an analysis is canceled. It is asked between windows and before each read of the
-/// file's bytes, so it must answer quickly.
+/// Check that says whether an analysis is canceled.
+///
+/// It is asked between windows and before each read of the file's bytes, so it must answer
+/// quickly.
 pub type CancelCheck = Arc<dyn Fn() -> bool + Send + Sync>;
 
-/// How one analysis runs.
+/// Settings of one analysis.
 #[derive(Clone)]
 pub struct Settings {
-  /// files up to this many seconds long are analyzed in full
+  /// Longest file analyzed in full, in seconds.
   pub max_full_seconds: f64,
-  /// how many windows a longer file is analyzed at
+  /// Number of windows a longer file is analyzed at.
   pub sampled_windows: usize,
-  /// when the analysis stops with what it has
+  /// Time at which the analysis stops with what it has.
   pub deadline: Instant,
-  /// where the analysis reports how far it is, in thousandths of the file
+  /// Where the analysis reports how far it is, in thousandths of the file.
   pub progress: Option<Arc<AtomicU32>>,
-  /// once this says so, the analysis stops and reports nothing; none for an analysis nothing
-  /// cancels
+  /// Check that cancels the analysis.
+  ///
+  /// Once it says so, the analysis stops and reports nothing. `None` for an analysis nothing
+  /// cancels.
   pub canceled: Option<CancelCheck>,
-  /// what each window is measured with
+  /// Thresholds each window is measured with.
   pub thresholds: MeasureThresholds,
 }
 
@@ -56,22 +62,22 @@ impl Settings {
   }
 }
 
-/// What an analysis measured.
+/// Measures an analysis took of a file.
 #[derive(Debug)]
 pub struct Measured {
-  /// the format the file claims, `None` when it could not be opened as audio
+  /// Format the file claims, `None` when it could not be opened as audio.
   pub claimed: Option<Claimed>,
-  /// how long the audio is, in seconds
+  /// Length of the audio, in seconds.
   pub duration: f64,
-  /// a lossy file's bitrate in kbit/s, from its decoded packets
+  /// Lossy file's bitrate in kbit/s, from its decoded packets.
   pub bitrate_kbps: Option<u32>,
-  /// every analyzed window, in time order
+  /// Every analyzed window, in time order.
   pub windows: Vec<Window>,
   /// the figures over every analyzed sample
   pub(crate) totals: Totals,
   /// the bits per sample the integer samples use
   pub(crate) bits_used: Option<u32>,
-  /// whether only windows spread over the file were analyzed
+  /// Whether only windows spread over the file were analyzed.
   pub sampled: bool,
   /// the channels left out of a file with more than two
   pub(crate) channels_left_out: u32,
@@ -79,7 +85,9 @@ pub struct Measured {
   pub(crate) problems: Vec<String>,
 }
 
-/// The analysis was canceled; nothing is reported.
+/// Error of an analysis that was canceled.
+///
+/// Nothing is reported of it.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Canceled;
 
@@ -131,6 +139,10 @@ impl MediaSource for Watched {
 }
 
 /// Analyzes the file at `path`.
+///
+/// # Errors
+///
+/// Returns [`Canceled`] if [`Settings::canceled`] says so before the analysis ends.
 pub fn run(path: &Path, settings: &Settings) -> Result<Measured, Canceled> {
   let opened = Decoder::open_through(path, |file| {
     Box::new(Watched::new(Box::new(file), settings))
@@ -142,6 +154,10 @@ pub fn run(path: &Path, settings: &Settings) -> Result<Measured, Canceled> {
 }
 
 /// Analyzes audio held in memory, as a file's would be.
+///
+/// # Errors
+///
+/// Returns [`Canceled`] if [`Settings::canceled`] says so before the analysis ends.
 pub fn read_bytes(bytes: Vec<u8>, settings: &Settings) -> Result<Measured, Canceled> {
   let source = Watched::new(Box::new(std::io::Cursor::new(bytes)), settings);
   measure_opened(

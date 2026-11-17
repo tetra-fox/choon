@@ -1,5 +1,7 @@
-//! The measures of a whole file, gathered from its windows and running totals: the cutoff
-//! histogram and median, percentiles of the per-window measures, and the file-wide figures.
+//! Measures of a whole file.
+//!
+//! They are gathered from its windows and running totals: the cutoff histogram and median,
+//! percentiles of the per-window measures, and the file-wide figures.
 
 use std::collections::BTreeMap;
 
@@ -11,38 +13,52 @@ use crate::measure::Window;
 /// The width of a cutoff histogram bucket, in Hz.
 const HISTOGRAM_HZ: f64 = 500.0;
 
-/// The aggregate measures of a file. Each is `None` when the file had too little non-silent
-/// audio to measure it or the measure does not apply to the file.
+/// Aggregate measures of a file.
+///
+/// Each optional measure is `None` when the file had too little non-silent audio to measure it
+/// or the measure does not apply to the file.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Measures {
-  /// pairs of a cutoff in Hz and how many non-silent windows have it, ascending by cutoff
+  /// Pairs of a cutoff in Hz and the non-silent windows that have it.
+  ///
+  /// Cutoffs are rounded to the nearest 500 Hz, and the pairs ascend by cutoff.
   pub cutoff_hz_histogram: Vec<[u32; 2]>,
-  /// the median cutoff over the non-silent windows, in Hz
+  /// Median cutoff over the non-silent windows, in Hz.
   pub cutoff_median_hz: Option<u32>,
-  /// the 95th percentile of the drop across the cutoff, in dB
+  /// Drop across the cutoff at the 95th percentile, in dB.
   pub shelf_sharpness_db_p95: Option<f64>,
-  /// the median over the windows of how many bins of the band gaps are counted in are empty per
-  /// populated bin
+  /// Median over the windows of the empty bins per populated bin.
+  ///
+  /// The bins are those of the band gaps are counted in.
   pub sfb21_holes: Option<f64>,
-  /// the median over the windows of how strongly the noise repeats at a lossy codec's frame
-  /// length, from 0 to 1
+  /// Median over the windows of the noise's repetition at a codec frame length.
+  ///
+  /// It says how strongly the noise repeats at a lossy codec's frame length, from 0 to 1.
   pub frame_artifact_score: Option<f64>,
-  /// the share of the energy above half the band, `None` unless the file's rate is above 48 kHz
+  /// Share of the energy above half the band.
+  ///
+  /// `None` unless the file's rate is above 48 kHz.
   pub upsample_ratio: Option<f64>,
-  /// the bits per sample the integer samples use, `None` for codecs without integer samples
+  /// Bits per sample the integer samples use.
+  ///
+  /// `None` for codecs without integer samples.
   pub bit_depth_effective: Option<u32>,
-  /// the level of the quietest passages, in dBFS
+  /// Level of the quietest passages, in dBFS.
   pub noise_floor_dbfs: Option<f64>,
-  /// the correlation between the two channels, `None` for mono
+  /// Correlation between the two channels, `None` for mono.
   pub stereo_correlation: Option<f64>,
-  /// the side channel's energy relative to the mid channel's, in dB, `None` for mono
+  /// Side channel energy relative to the mid channel's, in dB.
+  ///
+  /// `None` for mono.
   pub side_energy_db: Option<f64>,
-  /// the mean sample value relative to full scale
+  /// Mean sample value relative to full scale.
   pub dc_offset: Option<f64>,
-  /// the percentage of samples at full scale
+  /// Percentage of samples at full scale.
   pub clipped_samples_pct: Option<f64>,
-  /// the loudest sample read in dBFS, on either channel; `None` for silence
+  /// Loudest sample read on either channel, in dBFS.
+  ///
+  /// `None` for silence.
   pub peak_dbfs: Option<f64>,
 }
 
