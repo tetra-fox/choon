@@ -12,8 +12,8 @@ command-line tool and a Rust library.
 
 ## Features
 
-- Spots lossless files decoded from MP3 or AAC by the frame grid the encoder leaves, at any
-  bitrate
+- Spots lossless files decoded from MP3 or AAC by the frame grid the encoder leaves, tuned on
+  LAME at 96 to 320 kbps and V0 to V9 and on ffmpeg's AAC at 96 to 256 kbps
 - Reads the encoder's cutoff in the spectrum, which alone raises a doubt
 - Guesses the encoder setting behind a transcode (`mp3 ~128 kbps`, ...)
 - Flags upsampled audio and bit-padded samples
@@ -34,9 +34,9 @@ frame grid of an MP3 or AAC encoder. The encoder transforms its input in frames 
 and zeroes many transform values; running its transform again on the decoded samples, with
 frames where the encoder put them, finds those values back at the level of the samples' rounding
 noise. The scan counts the values above that noise at every offset of each codec's grid. A grid
-is one offset that counts far fewer than the rest, with at least three stretches agreeing on it.
-It does not depend on where the encoder cut, so MP3 at 320 kbps or V0 and AAC at 256 kbps show
-one too.
+is one offset that counts far fewer than the rest; an MP3 grid also needs at least three
+stretches agreeing on it. It does not depend on where the encoder cut, so MP3 at 320 kbps or V0
+and AAC at 256 kbps show one too.
 
 | Verdict          | Description                                                                                                                                                   |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -148,8 +148,7 @@ fn main() -> Result<(), Canceled> {
 - A lossless master filtered sharply where an encoder cuts (16 or 19 kHz) reads as possibly lossy
 - Resampling after the decode removes the frame grid, so such a transcode reads as possibly lossy
   at most
-- Opus leaves no grid the scan knows; a Vorbis decode's grid reads as AAC's when its stretches
-  agree, which they mostly do not
+- Opus leaves no grid the scan knows; a Vorbis decode's grid mostly reads as AAC's
 - Clipping hides the grid frame by frame, so a decode made louder until it clips can lose it
 - The grid thresholds were tuned on LAME's MP3 and ffmpeg's AAC only; other AAC encoders use
   their own windows
