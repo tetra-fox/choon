@@ -79,7 +79,10 @@ fn lossless_music_reads_consistent_with_no_frame_rhythm_or_top_band_gaps() {
     reading.measures.frame_artifact_score.unwrap() < 0.05,
     "{reading:#?}"
   );
-  assert!(reading.measures.sfb21_holes.unwrap() < 0.01, "{reading:#?}");
+  assert!(
+    reading.measures.top_band_holes.unwrap() < 0.01,
+    "{reading:#?}"
+  );
 }
 
 /// An MP3 at `bitrate` written out as a FLAC reads as a transcode of that bitrate.
@@ -144,7 +147,7 @@ fn an_mp3_decode_carries_the_mp3_grid_and_its_source_none() {
     let found = grid::found(scan, &ReadingThresholds::default());
     assert_eq!(found.as_ref().map(|f| f.codec), grid, "{name}: {scan:?}");
     if grid.is_some() {
-      assert_eq!(scan.mp3.agree, 4, "{scan:?}");
+      assert_eq!(scan.mp3.segments_agreeing, 4, "{scan:?}");
     } else {
       assert!(scan.aac.z < 5.0 && scan.mp3.z < 5.0, "{scan:?}");
     }
@@ -512,7 +515,7 @@ fn a_long_file_is_sampled_at_windows_spread_over_it() {
   assert!(measured.sampled);
   assert_eq!(measured.windows.len(), 20);
   assert_eq!(progress.load(std::sync::atomic::Ordering::Relaxed), 1000);
-  let starts: Vec<f64> = measured.windows.iter().map(|w| w.t).collect();
+  let starts: Vec<f64> = measured.windows.iter().map(|w| w.start).collect();
   assert_eq!(starts.first(), Some(&0.0));
   assert_eq!(starts.last(), Some(&32.0), "the last whole second");
   let reading = read(&measured);
@@ -848,7 +851,10 @@ fn gaps_in_the_top_band_are_measured() {
   // gaps 40 Hz wide every 80 Hz in 16-20 kHz
   let combed = music(1, 44_100, fixtures::combed);
   let reading = analyzed(&flac(dir.path(), "combed.flac", &combed, 16));
-  assert!(reading.measures.sfb21_holes.unwrap() >= 0.1, "{reading:#?}");
+  assert!(
+    reading.measures.top_band_holes.unwrap() >= 0.1,
+    "{reading:#?}"
+  );
 }
 
 #[test]
@@ -998,7 +1004,7 @@ fn a_file_stating_more_than_its_bytes_hold_is_as_long_as_they_hold() {
   );
   assert!(!measured.windows.is_empty());
   assert!(
-    measured.windows.iter().all(|w| w.t < measured.duration),
+    measured.windows.iter().all(|w| w.start < measured.duration),
     "every window is inside the length"
   );
   let reading = read(&measured);

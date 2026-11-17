@@ -63,10 +63,10 @@ mod tests;
 #[doc = include_str!("../README.md")]
 struct ReadmeDoctest;
 
-pub use aggregate::Measures;
+pub use aggregate::{CutoffBucket, Measures};
 pub use decode::Claimed;
 pub use engine::{CancelCheck, Coverage, Error, Measured, Settings, measure, measure_bytes};
 pub use flags::Flag;
 pub use reading::{EncoderGuess, Reading, Verdict};
-pub use thresholds::{MeasureThresholds, Profile, RateEdge, ReadingThresholds};
+pub use thresholds::{EncoderProfile, MeasureThresholds, RateEdge, ReadingThresholds};
 pub use window::{Step, Window};

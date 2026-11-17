@@ -159,7 +159,7 @@ pub struct ReadingThresholds {
   /// transcode.
   pub high_bitrate_kbps: u32,
   /// Cutoffs of common lossy encoder settings, lowest first.
-  pub profiles: Vec<Profile>,
+  pub profiles: Vec<EncoderProfile>,
   /// Robust z over which the AAC scan finds a frame grid.
   ///
   /// It is compared with [`CodecScan::z`](crate::grid::CodecScan::z). A lower value finds more
@@ -199,27 +199,21 @@ pub struct RateEdge {
 /// Lossy encoder setting known by where it cuts off.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Profile {
+pub struct EncoderProfile {
   /// Cutoff at 44.1 and 48 kHz, in Hz.
   pub hz: f64,
   /// Name a reading gives it.
   pub name: String,
   /// Highest nominal bitrate cut here, in kbit/s.
   pub kbps: u32,
-  /// Label of the guide line drawn across a spectrogram here.
-  ///
-  /// `None` draws no line.
-  #[serde(default)]
-  pub guide: Option<String>,
 }
 
-impl Profile {
-  fn new(hz: f64, name: &str, kbps: u32, guide: Option<&str>) -> Self {
+impl EncoderProfile {
+  fn new(hz: f64, name: &str, kbps: u32) -> Self {
     Self {
       hz,
       name: name.to_string(),
       kbps,
-      guide: guide.map(str::to_string),
     }
   }
 }
@@ -261,23 +255,18 @@ impl Default for ReadingThresholds {
       // LAME's defaults are the commonest; other MP3 encoders and AAC cut a little lower at the
       // same bitrate
       profiles: vec![
-        Profile::new(11_000.0, "mp3 ~64 kbps", 64, None),
-        Profile::new(13_500.0, "mp3 ~80 kbps", 80, None),
-        Profile::new(15_100.0, "mp3 ~96 kbps", 96, None),
-        Profile::new(16_000.0, "mp3 ~128 kbps", 128, Some("MP3 128k")),
-        Profile::new(17_000.0, "mp3 ~128 kbps", 128, None),
-        Profile::new(17_500.0, "mp3 ~160 kbps", 160, None),
-        Profile::new(18_600.0, "mp3 ~192 kbps", 192, Some("MP3 192k")),
-        Profile::new(19_400.0, "mp3 ~224 kbps", 224, None),
+        EncoderProfile::new(11_000.0, "mp3 ~64 kbps", 64),
+        EncoderProfile::new(13_500.0, "mp3 ~80 kbps", 80),
+        EncoderProfile::new(15_100.0, "mp3 ~96 kbps", 96),
+        EncoderProfile::new(16_000.0, "mp3 ~128 kbps", 128),
+        EncoderProfile::new(17_000.0, "mp3 ~128 kbps", 128),
+        EncoderProfile::new(17_500.0, "mp3 ~160 kbps", 160),
+        EncoderProfile::new(18_600.0, "mp3 ~192 kbps", 192),
+        EncoderProfile::new(19_400.0, "mp3 ~224 kbps", 224),
         // LAME 3.100 cuts 224 kbps here too, so the name says both
-        Profile::new(19_530.0, "mp3 ~224-256 kbps", 256, Some("MP3 224-256k")),
-        Profile::new(
-          20_000.0,
-          "mp3 ~320 kbps or aac",
-          320,
-          Some("MP3 320k / AAC"),
-        ),
-        Profile::new(20_500.0, "mp3 ~320 kbps", 320, None),
+        EncoderProfile::new(19_530.0, "mp3 ~224-256 kbps", 256),
+        EncoderProfile::new(20_000.0, "mp3 ~320 kbps or aac", 320),
+        EncoderProfile::new(20_500.0, "mp3 ~320 kbps", 320),
       ],
       // the tuning's lossless files reach z 8.24 for AAC, and 11.57 for MP3 apart from one with
       // an MP3 section in one segment, which the agreement keeps out
@@ -296,22 +285,12 @@ impl ReadingThresholds {
   }
 
   /// The profile whose cutoff is nearest `hz`, when one is within `cluster_hz`.
-  pub(crate) fn profile_at(&self, hz: f64) -> Option<&Profile> {
+  pub(crate) fn profile_at(&self, hz: f64) -> Option<&EncoderProfile> {
     self
       .profiles
       .iter()
       .filter(|p| (p.hz - hz).abs() <= self.cluster_hz)
       .min_by(|a, b| (a.hz - hz).abs().total_cmp(&(b.hz - hz).abs()))
-  }
-
-  /// Returns the guide lines drawn across a spectrogram.
-  ///
-  /// They are where common encoder settings cut off, as each profile with a guide labels it.
-  pub fn guides(&self) -> impl Iterator<Item = (f64, &str)> {
-    self
-      .profiles
-      .iter()
-      .filter_map(|profile| Some((profile.hz, profile.guide.as_deref()?)))
   }
 }
 
@@ -337,9 +316,6 @@ mod tests {
         ..ReadingThresholds::default()
       }
     );
-    let profile: Profile =
-      serde_json::from_str(r#"{"hz": 16000.0, "name": "mp3 ~128 kbps", "kbps": 128}"#).unwrap();
-    assert_eq!(profile.guide, None);
   }
 
   fn refused<T: serde::de::DeserializeOwned>(json: &str) {

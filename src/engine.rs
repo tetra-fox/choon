@@ -390,7 +390,7 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
     Reached::End(seconds) => measured.duration = seconds,
     Reached::Short(seconds) if stated.is_none() => measured.duration = seconds,
     Reached::Short(_) | Reached::Sampled => {
-      let read = measured.windows.last().map_or(0.0, |w| w.t + 1.0);
+      let read = measured.windows.last().map_or(0.0, |w| w.start + 1.0);
       if let Some(held) = past_bytes(&decoder, measured.duration, read, &mut measured) {
         measured.duration = held;
       }
@@ -793,7 +793,7 @@ pub(crate) fn explain(measured: &Measured, reading: &crate::reading::Reading) ->
       .map(|s| format!("{:.0} Hz -{:.0} dB clear {:.0}", s.hz, s.drop, s.clearance));
     text += &format!(
       "  t {:>4} {:>6.1} dBFS cutoff {:?} shelf {:?} step {}\n",
-      window.t,
+      window.start,
       window.rms_dbfs,
       window.cutoff_hz.map(f64::round),
       window.shelf_db.map(f64::round),

@@ -13,17 +13,27 @@ use crate::window::Window;
 /// The width of a cutoff histogram bucket, in Hz.
 const HISTOGRAM_HZ: f64 = 500.0;
 
+/// Count of the non-silent windows that cut off near one frequency.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct CutoffBucket {
+  /// Cutoff rounded to the nearest 500 Hz, in Hz.
+  pub hz: u32,
+  /// Number of non-silent windows with that cutoff.
+  pub windows: u32,
+}
+
 /// Aggregate measures of a file.
+///
+/// They are gathered from its windows and running totals: the cutoff histogram and median,
+/// percentiles of the per-window measures, and the file-wide figures.
 ///
 /// Each optional measure is `None` when the file had too little non-silent audio to measure it
 /// or the measure does not apply to the file.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Measures {
-  /// Pairs of a cutoff in Hz and how many non-silent windows have it.
-  ///
-  /// Cutoffs are rounded to the nearest 500 Hz, and the pairs ascend by cutoff.
-  pub cutoff_hz_histogram: Vec<[u32; 2]>,
+  /// How many non-silent windows have each cutoff, ascending by cutoff.
+  pub cutoff_hz_histogram: Vec<CutoffBucket>,
   /// Median cutoff over the non-silent windows, in Hz.
   pub cutoff_median_hz: Option<u32>,
   /// Drop across the cutoff at the 95th percentile, in dB.
@@ -31,7 +41,7 @@ pub struct Measures {
   /// Median over the windows of the empty bins per populated bin.
   ///
   /// The bins are those of the band gaps are counted in.
-  pub sfb21_holes: Option<f64>,
+  pub top_band_holes: Option<f64>,
   /// Median over the windows of the noise's repetition at a codec frame length.
   ///
   /// It says how strongly the noise repeats at a lossy codec's frame length, from 0 to 1.
@@ -79,10 +89,13 @@ pub(crate) fn measures(
   let scores: Vec<f64> = windows.iter().filter_map(|w| w.frame_score).collect();
   let claimed_bits = measured.claimed.bit_depth;
   Measures {
-    cutoff_hz_histogram: histogram.into_iter().map(|(hz, n)| [hz, n]).collect(),
+    cutoff_hz_histogram: histogram
+      .into_iter()
+      .map(|(hz, windows)| CutoffBucket { hz, windows })
+      .collect(),
     cutoff_median_hz: (!cutoffs.is_empty()).then(|| middle(&cutoffs).round() as u32),
     shelf_sharpness_db_p95: percentile(&shelves, 0.95),
-    sfb21_holes: percentile(&holes, 0.5),
+    top_band_holes: percentile(&holes, 0.5),
     frame_artifact_score: percentile(&scores, 0.5),
     upsample_ratio,
     bit_depth_effective: measured
@@ -101,7 +114,7 @@ pub(crate) fn measures(
 pub(crate) fn upsample_ratio(windows: &[&Window]) -> f64 {
   let (high, total) = windows
     .iter()
-    .fold((0.0, 0.0), |(h, t), w| (h + w.energy.0, t + w.energy.1));
+    .fold((0.0, 0.0), |(h, t), w| (h + w.upper_power, t + w.power));
   if total > 0.0 { high / total } else { 0.0 }
 }
 

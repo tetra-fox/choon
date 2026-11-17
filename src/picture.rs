@@ -27,10 +27,10 @@ pub struct Shown {
   ///
   /// A whole second has [`COLUMNS_PER_SECOND`].
   pub columns: Vec<u8>,
-  /// Lowest and highest sample of each bucket, as two signed bytes.
+  /// Lowest and highest sample of each bucket, from -127 to 127.
   ///
   /// A whole second has [`PEAKS_PER_SECOND`] buckets.
-  pub peaks: Vec<u8>,
+  pub peaks: Vec<[i8; 2]>,
 }
 
 /// Returns a level in dB as a byte.
@@ -120,17 +120,16 @@ pub(crate) fn columns(
 }
 
 /// A sample from -1 to 1 as a signed byte from -127 to 127.
-fn sample_byte(sample: f32) -> u8 {
-  (sample * 127.0).round().clamp(-127.0, 127.0) as i8 as u8
+fn sample_byte(sample: f32) -> i8 {
+  (sample * 127.0).round().clamp(-127.0, 127.0) as i8
 }
 
-/// The lowest and the highest sample over every channel in each bucket of a window at `rate`,
-/// as two signed bytes a bucket.
-pub(crate) fn peaks(channels: &[Vec<f32>], rate: usize) -> Vec<u8> {
+/// The lowest and the highest sample over every channel in each bucket of a window at `rate`.
+pub(crate) fn peaks(channels: &[Vec<f32>], rate: usize) -> Vec<[i8; 2]> {
   let length = channels[0].len();
   let count = (length * PEAKS_PER_SECOND).div_ceil(rate);
   (0..count)
-    .flat_map(|bucket| {
+    .map(|bucket| {
       let from = bucket * rate / PEAKS_PER_SECOND;
       let to = ((bucket + 1) * rate / PEAKS_PER_SECOND).min(length);
       let (low, high) = channels
@@ -219,8 +218,8 @@ mod tests {
     right[300] = -1.5;
     left[44_099] = 1.0;
     let peaks = peaks(&[left, right], 44_100);
-    assert_eq!(peaks.len(), PEAKS_PER_SECOND * 2);
-    let bucket = |b: usize| [peaks[b * 2] as i8, peaks[b * 2 + 1] as i8];
+    assert_eq!(peaks.len(), PEAKS_PER_SECOND);
+    let bucket = |b: usize| peaks[b];
     // a bucket is 220.5 samples: 0-219, 220-440, ...
     assert_eq!(bucket(0), [0, 64]);
     assert_eq!(bucket(1), [-127, 0], "clipped at full scale");
@@ -228,7 +227,7 @@ mod tests {
     let short = super::peaks(&[vec![0.25; 1000]], 44_100);
     assert_eq!(
       short.len(),
-      5 * 2,
+      5,
       "a short last window has as many buckets as it covers"
     );
   }

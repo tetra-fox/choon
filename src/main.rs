@@ -336,9 +336,7 @@ fn words(reading: &Reading) -> String {
     let at = guess.map_or_else(String::new, |g| format!(", where {g} cuts"));
     return format!(
       "likely transcode: {} grid at offset {} (z {:.0}), {cut}{at}",
-      grid.codec.name(),
-      grid.scan.offset,
-      grid.scan.z
+      grid.codec, grid.scan.offset, grid.scan.z
     );
   }
   if reading.verdict == Verdict::PossiblyLossy {

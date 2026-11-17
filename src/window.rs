@@ -52,7 +52,7 @@ pub struct Step {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Window {
   /// Start of the window, in seconds.
-  pub t: f64,
+  pub start: f64,
   /// Length of the window, in seconds.
   ///
   /// It is 1 but for a shorter last window.
@@ -74,8 +74,10 @@ pub struct Window {
   pub inner_shelf: Option<Step>,
   /// How strongly the noise repeats at a lossy codec's frame length, from 0 to 1.
   pub frame_score: Option<f64>,
-  /// Power above half the band, and in the whole band.
-  pub energy: (f64, f64),
+  /// Power above half the band.
+  pub upper_power: f64,
+  /// Power in the whole band.
+  pub power: f64,
   /// What the spectrogram and the waveform show of the window.
   pub shown: Shown,
 }
@@ -140,9 +142,9 @@ impl<'a> Analyzer<'a> {
     }
   }
 
-  /// Measures the window starting at `t` seconds, one sample vector per analyzed channel, and
+  /// Measures the window starting at `start` seconds, one sample vector per analyzed channel, and
   /// adds its samples to `totals`.
-  pub fn measure(&mut self, t: f64, channels: &[Vec<f32>], totals: &mut Totals) -> Window {
+  pub fn measure(&mut self, start: f64, channels: &[Vec<f32>], totals: &mut Totals) -> Window {
     let length = channels[0].len();
     totals.add(channels);
     let squares: f64 = channels
@@ -156,7 +158,7 @@ impl<'a> Analyzer<'a> {
     let spectrum = self.spectrum(channels);
     let shown = self.shown(channels, spectrum.as_deref());
     let mut window = Window {
-      t,
+      start,
       seconds: length as f64 / self.rate,
       rms_dbfs,
       cutoff_hz: None,
@@ -164,14 +166,16 @@ impl<'a> Analyzer<'a> {
       holes: None,
       inner_shelf: None,
       frame_score: None,
-      energy: (0.0, 0.0),
+      upper_power: 0.0,
+      power: 0.0,
       shown,
     };
     let Some(power) = spectrum else {
       return window;
     };
     let half = (self.rate / 4.0 / self.bin_hz).ceil() as usize;
-    window.energy = (power[half..].iter().sum(), power[1..].iter().sum());
+    window.upper_power = power[half..].iter().sum();
+    window.power = power[1..].iter().sum();
     let t = self.thresholds;
     if window.silent(t) {
       return window;

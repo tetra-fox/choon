@@ -109,7 +109,7 @@ fn json_is_a_line_per_file_with_a_reading_per_profile() {
     "mp3 ~128 kbps"
   );
   // the file's grid scan, and the grid its reading found
-  assert_eq!(lines[1]["grid"]["mp3"]["agree"], 4);
+  assert_eq!(lines[1]["grid"]["mp3"]["segmentsAgreeing"], 4);
   assert_eq!(
     lines[1]["readings"][0]["grid"]["offset"],
     lines[1]["grid"]["mp3"]["offset"]

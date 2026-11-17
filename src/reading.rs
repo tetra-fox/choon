@@ -7,7 +7,7 @@ use crate::aggregate::{Measures, measures, middle, percentile, upsample_ratio};
 use crate::engine::Measured;
 use crate::flags::{Flag, findings};
 use crate::grid::{self, Codec, Found};
-use crate::thresholds::{Profile, ReadingThresholds};
+use crate::thresholds::{EncoderProfile, ReadingThresholds};
 use crate::window::{Step, Window};
 
 /// The top of the band of a 48 kHz recording; a file whose band goes past it is hi-res.
@@ -175,7 +175,7 @@ impl<'a> Heard<'a> {
   }
 
   /// A window that stops short of the top at an encoder's cutoff, with a sharp shelf.
-  fn limited(&self, window: &Seen) -> Option<&'a Profile> {
+  fn limited(&self, window: &Seen) -> Option<&'a EncoderProfile> {
     let cutoff = window.cutoff_hz?;
     (!self.full(window) && window.sharp)
       .then(|| lower_profile_at(self.thresholds, cutoff))
@@ -220,7 +220,7 @@ fn problems(measured: &Measured) -> Vec<String> {
 
 /// The profile at `hz` when it is one below the highest bitrates: a cut where those cut is
 /// also where recordings are filtered, so it is no sign of a lossy part in a mix either.
-fn lower_profile_at(thresholds: &ReadingThresholds, hz: f64) -> Option<&Profile> {
+fn lower_profile_at(thresholds: &ReadingThresholds, hz: f64) -> Option<&EncoderProfile> {
   thresholds
     .profile_at(hz)
     .filter(|p| p.kbps < thresholds.high_bitrate_kbps)
@@ -383,7 +383,7 @@ fn weighed(
   thresholds: &ReadingThresholds,
 ) -> CutoffReading {
   if let Some(grid) = grid {
-    let name = grid.codec.name();
+    let name = grid.codec;
     let mut limitations = found.limitations;
     if grid.codec == Codec::Aac {
       limitations.push("A Vorbis decode's frame grid reads as AAC's".to_string());
@@ -396,7 +396,7 @@ fn weighed(
          agreeing), as audio decoded from {name} does. {}",
         grid.scan.offset,
         grid.scan.z,
-        grid.scan.agree,
+        grid.scan.segments_agreeing,
         grid::SEGMENTS,
         found.summary
       ),
@@ -463,8 +463,9 @@ fn verdict(
         .is_some_and(|c| (c - median).abs() <= t.cluster_hz)
   }) / clustered.max(f64::EPSILON);
   // a lossy file's own encoder cuts off too: only a cutoff well below its bitrate's counts
-  let below_claim =
-    |profile: &Profile| lossless || bitrate.is_some_and(|kbps| below_bitrate(profile.kbps, kbps));
+  let below_claim = |profile: &EncoderProfile| {
+    lossless || bitrate.is_some_and(|kbps| below_bitrate(profile.kbps, kbps))
+  };
 
   if let Some(profile) = lower_profile_at(t, median).filter(|p| below_claim(p))
     && clustered >= t.transcode_share

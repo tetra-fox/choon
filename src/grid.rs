@@ -21,6 +21,7 @@
 //! after decoding removes it, Opus leaves none, and clipping hides it frame by frame. Vorbis's
 //! grid shows through the AAC scan, so a Vorbis decode reads as AAC.
 
+use std::fmt;
 use std::sync::Arc;
 
 use rayon::prelude::*;
@@ -61,13 +62,12 @@ pub enum Codec {
   Mp3,
 }
 
-impl Codec {
-  /// Returns the codec's name as a reading writes it.
-  pub fn name(self) -> &'static str {
-    match self {
+impl fmt::Display for Codec {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.write_str(match self {
       Self::Aac => "AAC",
       Self::Mp3 => "MP3",
-    }
+    })
   }
 }
 
@@ -85,7 +85,7 @@ pub struct CodecScan {
   /// estimated from the median absolute deviation.
   pub z: f64,
   /// Number of segments whose own lowest count is at `offset`.
-  pub agree: usize,
+  pub segments_agreeing: usize,
   /// Each segment's own z, in file order.
   pub segment_z: [f64; SEGMENTS],
 }
@@ -127,7 +127,7 @@ pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found
     ),
   ]
   .into_iter()
-  .filter(|(_, scan, z, agreeing)| scan.z > *z && scan.agree >= *agreeing)
+  .filter(|(_, scan, z, agreeing)| scan.z > *z && scan.segments_agreeing >= *agreeing)
   .max_by(|(_, a, za, _), (_, b, zb, _)| (a.z / za).total_cmp(&(b.z / zb)))
   .map(|(codec, scan, _, _)| Found {
     codec,
@@ -299,7 +299,7 @@ fn codec_scan(curves: &[Vec<f64>]) -> CodecScan {
   CodecScan {
     offset,
     z,
-    agree: curves.iter().filter(|c| robust_z(c).1 == offset).count(),
+    segments_agreeing: curves.iter().filter(|c| robust_z(c).1 == offset).count(),
     segment_z: std::array::from_fn(|i| robust_z(&curves[i]).0),
   }
 }
@@ -795,10 +795,10 @@ mod tests {
       mp3_grid_segments_agreeing: 3,
       ..ReadingThresholds::default()
     };
-    let codec_scan = |z: f64, agree: usize| CodecScan {
+    let codec_scan = |z: f64, segments_agreeing: usize| CodecScan {
       offset: 0,
       z,
-      agree,
+      segments_agreeing,
       segment_z: [0.0; SEGMENTS],
     };
     let scan = |aac: (f64, usize), mp3: (f64, usize)| Scan {
@@ -832,6 +832,6 @@ mod tests {
     ];
     let scan = codec_scan(&curves);
     assert_eq!(scan.offset, 6);
-    assert_eq!(scan.agree, 3);
+    assert_eq!(scan.segments_agreeing, 3);
   }
 }
