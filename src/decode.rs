@@ -171,23 +171,29 @@ impl Decoder {
     // behind version 0, where the decoder reads the little-endian header of version 1
     // (https://github.com/pdeljanov/Symphonia/pull/398)
     // TODO: remove once a symphonia release carries the fix
-    if params.codec == CODEC_ID_OPUS
-      && format.format_info().short_name == "isomp4"
-      && let Some(head) = params.extra_data.as_deref().map(opus::head_from_mp4)
-    {
+    let opus_in_mp4 = params.codec == CODEC_ID_OPUS && format.format_info().short_name == "isomp4";
+    if opus_in_mp4 && let Some(head) = params.extra_data.as_deref().map(opus::head_from_mp4) {
       params.with_extra_data(head.into_boxed_slice());
     }
     let track_id = track.id;
     let time_base = track.time_base;
-    let opus = (params.codec == CODEC_ID_OPUS).then(|| Opus {
+    let opus = (params.codec == CODEC_ID_OPUS).then(|| {
       // a header too short to state it is one the decoder refuses below
-      skip: params
+      let pre_skip = params
         .extra_data
         .as_deref()
         .and_then(opus::pre_skip)
-        .unwrap_or(0),
-      delay: u64::from(track.delay.unwrap_or(0)),
-      tally: opus::Tally::default(),
+        .unwrap_or(0);
+      Opus {
+        skip: pre_skip,
+        // an MP4's timestamps count the pre-skip, and symphonia states no delay for it
+        delay: if opus_in_mp4 {
+          pre_skip
+        } else {
+          u64::from(track.delay.unwrap_or(0))
+        },
+        tally: opus::Tally::default(),
+      }
     });
     // a container that counts the frames before the audio in its timestamps counts them in the
     // length it states too
@@ -401,6 +407,12 @@ impl Decoder {
     denom % (numer * u128::from(self.claimed.sample_rate)) == 0
   }
 
+  /// whether the container's timestamps count sample frames
+  fn ticks_are_frames(&self) -> bool {
+    let (numer, denom) = self.ticks();
+    denom == numer * u128::from(self.claimed.sample_rate)
+  }
+
   /// the sample frames a packet at timestamp `pts` lasting `dur` covers; `None` when they are out
   /// of range
   fn frames_of(&self, pts: i64, dur: u64) -> Option<Range<u64>> {
@@ -526,18 +538,20 @@ impl Decoder {
       }
       // the Opus decoder hands back every frame of a packet, the ones the container says to
       // trim too. they are still there when the frames decoded are the packet's duration and
-      // its trims together
-      let (lead, tail) = (packet.trim_start.get(), packet.trim_end.get());
-      let untrimmed = self.opus.is_some()
-        && packet
-          .dur
-          .get()
-          .checked_add(lead)
-          .and_then(|d| d.checked_add(tail))
-          == Some(frames);
-      let trim = if untrimmed {
-        // both are at most the frames decoded, which fit a usize
+      // its trims together. an MP4 states no trim: its last packet lasts as long as its audio
+      let (dur, lead, tail) = (
+        packet.dur.get(),
+        packet.trim_start.get(),
+        packet.trim_end.get(),
+      );
+      let stated = dur.checked_add(lead).and_then(|d| d.checked_add(tail));
+      // each is at most the frames decoded, which fit a usize
+      let trim = if self.opus.is_none() {
+        (0, 0)
+      } else if stated == Some(frames) {
         (lead as usize, tail as usize)
+      } else if stated == Some(dur) && dur < frames && self.ticks_are_frames() {
+        (0, (frames - dur) as usize)
       } else {
         (0, 0)
       };
@@ -707,13 +721,19 @@ mod tests {
   }
 
   #[test]
-  fn an_opus_stream_starts_after_its_pre_skip_in_ogg_and_in_webm() {
+  fn an_opus_stream_starts_after_its_pre_skip_in_ogg_mp4_and_webm() {
     let audio = tone_48k(2);
     let stream = fixtures::opus(&audio, OpusSettings::music(128));
     assert!(stream.pre_skip > 0);
     let (_, ogg) = decoded(stream.ogg());
     // half a cycle off is twice the tone's level apart
     let off = apart(&ogg[0][1000..], &audio.channels[0][1000..]);
+    assert!(off < 0.05, "{off}");
+    // an MP4 states its length with the pre-skip and ends its last packet where the audio does
+    let (claimed, mp4) = decoded(stream.mp4());
+    assert_eq!(claimed.frames, Some(144_000));
+    assert_eq!(mp4[0].len(), 144_000);
+    let off = apart(&mp4[0][1000..], &audio.channels[0][1000..]);
     assert!(off < 0.05, "{off}");
     let (claimed, webm) = decoded(stream.webm());
     assert_eq!(claimed.frames, None);
@@ -745,17 +765,19 @@ mod tests {
   #[test]
   fn a_seek_in_opus_gives_the_samples_a_read_from_the_start_gives() {
     let audio = fixtures::music_for(12, 3, 48_000, fixtures::pink);
-    let bytes = fixtures::opus(&audio, OpusSettings::music(128)).ogg();
-    let (_, straight) = decoded(bytes.clone());
-    let mut decoder =
-      Decoder::from_source(Box::new(std::io::Cursor::new(bytes)), &Hint::new()).unwrap();
-    let mut window = vec![Vec::new(); 2];
-    for second in [5, 0, 11, 4] {
-      decoder.seek(f64::from(second)).unwrap();
-      assert_eq!(decoder.fill(&mut window, 48_000), Filled::Full);
-      let from = second as usize * 48_000;
-      let off = apart(&window[0], &straight[0][from..from + 48_000]);
-      assert!(off < 1e-5, "second {second}: {off}");
+    let stream = fixtures::opus(&audio, OpusSettings::music(128));
+    for (container, bytes) in [("ogg", stream.ogg()), ("mp4", stream.mp4())] {
+      let (_, straight) = decoded(bytes.clone());
+      let mut decoder =
+        Decoder::from_source(Box::new(std::io::Cursor::new(bytes)), &Hint::new()).unwrap();
+      let mut window = vec![Vec::new(); 2];
+      for second in [5, 0, 11, 4] {
+        decoder.seek(f64::from(second)).unwrap();
+        assert_eq!(decoder.fill(&mut window, 48_000), Filled::Full);
+        let from = second as usize * 48_000;
+        let off = apart(&window[0], &straight[0][from..from + 48_000]);
+        assert!(off < 1e-5, "{container}, second {second}: {off}");
+      }
     }
   }
 
