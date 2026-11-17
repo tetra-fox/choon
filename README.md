@@ -1,68 +1,60 @@
 # choon
 
+_Checks if a choon is proper, mate._
+
 [![crates.io](https://img.shields.io/crates/v/choon)](https://crates.io/crates/choon)
 [![docs.rs](https://img.shields.io/docsrs/choon)](https://docs.rs/choon)
 [![ci](https://github.com/tetra-fox/choon/actions/workflows/ci.yml/badge.svg)](https://github.com/tetra-fox/choon/actions/workflows/ci.yml)
 [![license](https://img.shields.io/crates/l/choon)](#license)
 
-Checks if a choon is proper, mate.
+Tells whether an audio file is what its format claims, such as a FLAC made from an MP3. A
+command-line tool and a Rust library.
 
-Reads an audio file's spectrum a second at a time and judges whether the audio is what its
-format claims, such as a FLAC made from an MP3. It comes as a program, `choon`, and as a
-library.
+## Features
 
-## What it reads
+- Spots lossless files decoded from lossy ones by the encoder's cutoff in the spectrum
+- Guesses the encoder setting behind a transcode (`mp3 ~128 kbps`, ...)
+- Flags upsampled audio and bit-padded samples
+- Finds lossy parts mixed into lossless audio (an intro, a stem)
+- Exit codes and JSON output for scripts
+- Every threshold is data, readable from a profile file
 
-Each one-second window of the file is measured: its loudness, the frequency its content stops at
-(the cutoff), how sharply it stops there, gaps in the band below the cutoff and steps inside a
-band that reaches the top. A lossy encoder throws away the top of the band with a steep
-low-pass at a frequency that depends on its bitrate, and decoding the result to FLAC or WAV
-does not bring it back. The reading looks at the spread over all windows, not an average, and
-gives one of four verdicts:
+## Methodology
 
-- **consistent**: nearly every window reaches the top of the band the format claims, or a lossy
-  file stops where its own bitrate cuts
-- **likely transcode**: nearly every window stops at the same known encoder cutoff with a sharp
-  shelf, with a guess of the encoder setting (`mp3 ~128 kbps`, ...)
-- **mixed sources**: part of the time or part of the band is band-limited while the rest is full
-  band, as when a lossy intro or stem is mixed into lossless audio
-- **inconclusive**: too little audio, measures that fit no pattern, or a cut the analyzer
-  cannot tell apart from an honest one
+Each one-second window of the file is measured: its loudness, where its content stops (the
+cutoff), how sharply it stops, gaps below the cutoff and steps inside a full band. A lossy encoder
+cuts the top of the band with a steep low-pass at a frequency set by its bitrate, and decoding to
+FLAC or WAV does not bring it back. The reading looks at the spread over all windows, not an
+average.
 
-Beside the verdict it flags audio converted up from a lower sample rate (`upsampled`) and
-samples that claim more than 16 bits but carry no more (`bit_padded`), and it reports a summary
-in words, what made the reading less reliable, and measures such as the effective bit depth,
-the noise floor, stereo correlation, DC offset and clipping.
+| Verdict          | Means                                                                                                     |
+| ---------------- | --------------------------------------------------------------------------------------------------------- |
+| consistent       | nearly every window reaches the top of the claimed band, or a lossy file stops where its own bitrate cuts |
+| likely transcode | nearly every window stops at one known encoder cutoff with a sharp shelf                                  |
+| mixed sources    | part of the time or part of the band is band-limited, the rest full band                                  |
+| inconclusive     | too little audio, no pattern, or a cut indistinguishable from an honest one                               |
 
-It decodes FLAC, ALAC, WAV, AIFF, CAF, MP3, AAC and Vorbis, in their own files and in MP4/M4A,
-Ogg and Matroska/WebM, through [symphonia](https://github.com/pdeljanov/Symphonia). Opus is not
-decoded: the library reads such a file as inconclusive, and the program reports it as not read
-as audio.
+Beside the verdict: the `upsampled` and `bit_padded` flags, a summary in words, what made the
+reading less reliable, and measures such as effective bit depth, noise floor, stereo
+correlation, DC offset and clipping.
 
-## What it cannot tell
+## Supported formats
 
-A reading is evidence, not proof. The analyzer looks at where and how the content stops, so:
+| Codecs                                       | Containers                                   |
+| -------------------------------------------- | -------------------------------------------- |
+| FLAC, ALAC, WAV, AIFF, CAF, MP3, AAC, Vorbis | their own files, MP4/M4A, Ogg, Matroska/WebM |
 
-- A lossless recording that was filtered with a sharp low-pass where an encoder would cut (some
-  masters are cut at 16 or 19 kHz) reads the same as a transcode. Nothing in the spectrum tells
-  them apart.
-- The highest bitrates (MP3 at 320 kbps, AAC) cut near 20 kHz, where many recordings are filtered
-  when they are made. A sharp cut there reads as inconclusive, never as a transcode, so those
-  transcodes are not caught.
-- The rules prefer saying they cannot tell over calling an honest file fake, so many transcodes
-  read as inconclusive rather than as likely transcodes. An inconclusive reading is not a clean
-  one.
-- Content that is band-limited by nature (old or lo-fi recordings, quiet or dark material) can
-  stop low without any encoder. A gentle roll-off reads as inconclusive, but a recording that
-  happens to stop sharply near an encoder cutoff can be misread.
-- Fewer than about 30 seconds of audio above silence is too little for a reading.
-- Only the first two channels of a surround file are read.
+Decoding is done by [symphonia](https://github.com/pdeljanov/Symphonia). Opus is not decoded.
 
-## The program
+## Installation
 
 ```sh
 cargo install choon
 ```
+
+## Usage
+
+### CLI
 
 ```console
 $ choon check *.flac
@@ -72,44 +64,32 @@ fake-320.flac: inconclusive, cutoff 20.2 kHz
 mixed.flac: mixed sources, cutoff 16.8 kHz, mp3 ~128 kbps, confidence 0.75
 ```
 
-With `--json` each file is one JSON object on a line of its own: the format the file claims,
-its length, how many windows were read, and the full reading under each profile.
+| Option                                     | Does                                                                                   |
+| ------------------------------------------ | -------------------------------------------------------------------------------------- |
+| `--json`                                   | one JSON object per file and line: claimed format, length, windows read, every reading |
+| `--profile FILE`                           | read with the thresholds in FILE instead of the defaults; repeat for several profiles  |
+| `--defaults`                               | print the default thresholds as JSON                                                   |
+| `--max-full-minutes M --sampled-windows N` | read files longer than M minutes at N one-second windows instead of in full            |
 
-The exit status is 0 when every file is consistent or inconclusive, 1 when at least one reads as
-a likely transcode or mixed sources, and 2 when a file could not be read or an argument was
-wrong, so a script can act on it. A file the analyzer cannot open as audio prints `not read as
-audio` with the reason, and counts as one that could not be read:
+A profile is `{"measure": {...}, "reading": {...}}`. Keys left out keep their default, unknown
+keys are refused, and profiles with the same `measure` thresholds share one decode.
+
+| Exit status | When                                           |
+| ----------- | ---------------------------------------------- |
+| 0           | every file consistent or inconclusive          |
+| 1           | at least one likely transcode or mixed sources |
+| 2           | a file not read as audio, or a wrong argument  |
 
 ```sh
 for f in *.flac; do choon check "$f" > /dev/null || mv "$f" suspect/; done
 ```
 
-Every file is read in full unless `--max-full-minutes MINUTES --sampled-windows COUNT` say how
-long a file read in full may be and how many one-second windows a longer one is read at.
-
-### Thresholds
-
-Every threshold is data. `choon check --defaults` prints the defaults as JSON:
-
-```json
-{ "measure": { "silenceDbfs": -70.0, "cutoffRangeDb": 60.0, ... },
-  "reading": { "sharpShelfDb": 30.0, "transcodeShare": 0.85, ..., "profiles": [...] } }
-```
-
-`--profile FILE` reads with the thresholds in FILE in place of the defaults. Keys left out keep
-their default and unknown keys are refused. The option can be repeated to read each file under
-several profiles, each named after its file; profiles with the same `measure` thresholds share
-one decode of the file.
-
-## The library
+### Library
 
 ```toml
 [dependencies]
 choon = { version = "0.1", default-features = false }
 ```
-
-The default `cli` feature builds the program and its dependencies (clap, serde_json); a library
-user turns it off.
 
 ```rust,no_run
 use std::path::Path;
@@ -137,16 +117,27 @@ fn main() -> Result<(), Canceled> {
 }
 ```
 
-`engine::run` blocks the thread it runs on. It reports progress through `progress`, stops and
-returns `Canceled` once `canceled` says so, and stops with what it has at `deadline`. Measuring
-is the slow step and reading is quick, so a sweep over reading thresholds measures each file
-once. The `picture` module holds the spectrogram and waveform data each window carries.
+- `engine::run` blocks its thread; `progress`, `canceled` and `deadline` report, stop and bound it
+- Measuring is slow and reading is quick: measure once, read under many thresholds
+- `picture` holds each window's spectrogram and waveform data
+- Logs through `tracing`, installs no subscriber
 
-The `testing` feature adds `fixtures`: the generated audio (shaped noise from a fixed seed,
-written as FLAC and through the LAME MP3 encoder) the crate's own tests read. It builds LAME
-from source, so it needs a C compiler and `make`.
+| Feature         | Adds                                                                                          |
+| --------------- | --------------------------------------------------------------------------------------------- |
+| `cli` (default) | the `choon` program and its dependencies (clap, serde_json)                                   |
+| `testing`       | `fixtures`, the generated audio the tests read; builds LAME, so needs a C compiler and `make` |
 
-The library logs through `tracing` and installs no subscriber.
+## Limitations
+
+A reading is evidence, not proof.
+
+- A lossless master filtered sharply where an encoder cuts (16 or 19 kHz) reads like a transcode
+- MP3 320 and AAC cut near 20 kHz, where many recordings are filtered anyway: read as
+  inconclusive, so those transcodes are missed
+- Inconclusive is not clean: the rules prefer "can't tell" over accusing an honest file
+- Naturally band-limited audio (old, lo-fi, dark) can stop near an encoder cutoff by chance
+- Needs about 30 seconds of non-silent audio
+- Reads only the first two channels of a surround file
 
 ## References
 
@@ -154,19 +145,19 @@ The frame-grid detection under development builds on this work on the compressio
 decoded audio:
 
 - O. Derrien, "Detection of genuine lossless audio files. Application to the MPEG-AAC codec",
-  *Journal of the Audio Engineering Society* 67(3), pp. 116-123, 2019.
+  _Journal of the Audio Engineering Society_ 67(3), pp. 116-123, 2019.
   [doi:10.17743/jaes.2019.0002](https://doi.org/10.17743/jaes.2019.0002),
   [author's version](https://hal.science/hal-02055742).
 - J. Lacroix, Y. Prime, A. Remy, O. Derrien, "Lossless Audio Checker: a software for the
   detection of upscaling, upsampling and transcoding in lossless musical tracks", AES 139th
   Convention, paper 9416, 2015. [AES E-Library](https://www.aes.org/e-lib/browse.cfm?elib=17972).
 - R. Yang, Z. Qu, J. Huang, "Detecting digital audio forgeries by checking frame offsets",
-  *Proceedings of the 10th ACM Workshop on Multimedia and Security*, pp. 21-26, 2008.
-- R. Korycki, "Detection of montage in lossy compressed digital audio recordings", *Archives of
-  Acoustics* 39(1), pp. 65-72, 2014.
+  _Proceedings of the 10th ACM Workshop on Multimedia and Security_, pp. 21-26, 2008.
+- R. Korycki, "Detection of montage in lossy compressed digital audio recordings", _Archives of
+  Acoustics_ 39(1), pp. 65-72, 2014.
 - T. Bianchi, A. De Rosa, M. Fontani, G. Rocciolo, A. Piva, "Detection and classification of
-  double compressed MP3 audio tracks", *Proceedings of the 1st ACM Workshop on Information Hiding
-  and Multimedia Security*, 2013.
+  double compressed MP3 audio tracks", _Proceedings of the 1st ACM Workshop on Information Hiding
+  and Multimedia Security_, 2013.
   [Open access](https://iris.polito.it/bitstream/11583/2508475/2/bianchi_IHMMSEC13_OA.pdf).
 
 The filterbanks follow the codec standards: ISO/IEC 11172-3 (MPEG-1 Audio Layer III) and
@@ -174,4 +165,4 @@ ISO/IEC 13818-7 (MPEG-2 AAC).
 
 ## License
 
-[AGPL-3.0-only](LICENSE).
+[AGPL-3.0-only](LICENSE)
