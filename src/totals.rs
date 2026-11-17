@@ -71,14 +71,18 @@ impl Totals {
   /// The level of the quietest passages, in dBFS: the second percentile of the loudness of
   /// short blocks, leaving out blocks of digital silence.
   pub fn noise_floor_dbfs(&self) -> Option<f64> {
-    let total: u64 = self.levels.iter().sum();
+    // counts read back from kept measures are any numbers, so they are summed without overflow
+    let total = self
+      .levels
+      .iter()
+      .fold(0u64, |sum, count| sum.saturating_add(*count));
     if total == 0 {
       return None;
     }
     let wanted = total.div_ceil(50);
-    let mut seen = 0;
+    let mut seen = 0u64;
     for (index, count) in self.levels.iter().enumerate() {
-      seen += count;
+      seen = seen.saturating_add(*count);
       if seen >= wanted {
         return Some(LEVELS_FROM_DB + index as f64);
       }
