@@ -418,11 +418,16 @@ impl Aac {
             self.mdct(&left[start..start + 2 * AAC_HOP], 0);
             self.mdct(&right[start..start + 2 * AAC_HOP], 1);
             let [l, r, m, s] = &mut self.wide;
-            for k in 0..AAC_HOP {
-              l[k] = f64::from(self.values[0][k]);
-              r[k] = f64::from(self.values[1][k]);
-              m[k] = (l[k] + r[k]) * half;
-              s[k] = (l[k] - r[k]) * half;
+            let [left, right] = &self.values;
+            let wide = l
+              .iter_mut()
+              .zip(r.iter_mut())
+              .zip(m.iter_mut().zip(s.iter_mut()));
+            for (((l, r), (m, s)), (left, right)) in wide.zip(left.iter().zip(right)) {
+              *l = f64::from(*left);
+              *r = f64::from(*right);
+              *m = (*l + *r) * half;
+              *s = (*l - *r) * half;
             }
             let lr = active(l, t2) + active(r, t2);
             let ms = active(m, t2) + active(s, t2);
@@ -447,11 +452,25 @@ impl Aac {
 /// (-c_r - d, a - b_r) for its quarters a, b, c, d, so that the DCT-IV gives
 /// X_k = sqrt(2/N) sum_n x_n cos(pi/N (n + 1/2 + N/2)(k + 1/2))
 fn fold<T: Float>(frame: &[T], folded: &mut [T]) {
-  let n = folded.len();
-  let q = n / 2;
-  for i in 0..q {
-    folded[i] = -frame[3 * q - 1 - i] - frame[3 * q + i];
-    folded[q + i] = frame[i] - frame[n - 1 - i];
+  fold_with(frame, folded, |c, d| -*c - *d, |a, b| *a - *b);
+}
+
+/// [`fold`] over any elements: `negated_sum(c, d)` is -c - d and `difference(a, b)` is a - b
+fn fold_with<T, U>(
+  frame: &[T],
+  folded: &mut [U],
+  negated_sum: impl Fn(&T, &T) -> U,
+  difference: impl Fn(&T, &T) -> U,
+) {
+  let q = folded.len() / 2;
+  let (ab, cd) = frame.split_at(2 * q);
+  let ((a, b), (c, d)) = (ab.split_at(q), cd.split_at(q));
+  let (low, high) = folded.split_at_mut(q);
+  for ((folded, c), d) in low.iter_mut().zip(c.iter().rev()).zip(d) {
+    *folded = negated_sum(c, d);
+  }
+  for ((folded, a), b) in high.iter_mut().zip(a).zip(b.iter().rev()) {
+    *folded = difference(a, b);
   }
 }
 
@@ -531,17 +550,22 @@ impl DctIv {
   /// with z_n = u_2n + i u_(N-1-2n) and Y_k = sum_n z_n exp(-i pi (2n + 1/2)(2k + 1/2) / N),
   /// X_2k is the real part of Y_k and X_(N-1-2k) minus its imaginary part.
   fn process(&mut self, input: &[f32], output: &mut [f32]) {
-    let n = input.len();
-    for (i, (b, pre)) in self.buffer.iter_mut().zip(&self.pre).enumerate() {
-      *b = Complex::new(input[2 * i], input[n - 1 - 2 * i]) * pre;
+    // pair i holds u_2i and u_(2i+1), so u_(N-1-2n) is the second of pair N/2-1-n
+    let (pairs, _) = input.as_chunks::<2>();
+    let turned = self.buffer.iter_mut().zip(&self.pre);
+    for ((b, pre), (even, odd)) in turned.zip(pairs.iter().zip(pairs.iter().rev())) {
+      *b = Complex::new(even[0], odd[1]) * pre;
     }
     self
       .fft
       .process_with_scratch(&mut self.buffer, &mut self.scratch);
-    for (k, (b, post)) in self.buffer.iter().zip(&self.post).enumerate() {
-      let y = b * post;
-      output[2 * k] = y.re;
-      output[n - 1 - 2 * k] = -y.im;
+    let (pairs, _) = output.as_chunks_mut::<2>();
+    let turned = || self.buffer.iter().zip(&self.post).map(|(b, post)| b * post);
+    for (pair, y) in pairs.iter_mut().zip(turned()) {
+      pair[0] = y.re;
+    }
+    for (pair, y) in pairs.iter_mut().rev().zip(turned()) {
+      pair[1] = -y.im;
     }
   }
 }
@@ -577,16 +601,19 @@ const ALIAS: [f64; 8] = [
 const SUBBAND_SAMPLES: usize = 36;
 const LINES: usize = 18;
 const SUBBANDS: usize = 32;
+/// the subbands whose line sums [`Mp3::hybrid`] keeps side by side
+const SIDE_BY_SIDE: usize = 16;
 
 /// the MP3 analysis: the layer III hybrid filterbank, in double precision
 struct Mp3 {
-  /// the analysis window C over 512 taps
-  window: [f64; 512],
-  /// cos((2i + 1)(k - 16) pi / 64) for subband i and k in 0..64
-  matrix: Vec<[f64; 64]>,
-  /// the sine window over 36 subband samples, for even subbands and with every odd sample
-  /// negated for odd subbands
-  windows: [[f64; SUBBAND_SAMPLES]; 2],
+  /// the analysis window C over 512 taps in blocks of 64, each block's last tap first, which is
+  /// the order the taps meet the input samples in
+  window: [[f64; 64]; 8],
+  /// cos((2i + 1)(k - 16) pi / 64) for k in 0..64, by subband i
+  matrix: [[f64; SUBBANDS]; 64],
+  /// the sine window over 36 subband samples, by subband: every odd sample of an odd subband is
+  /// negated
+  windows: [[f64; SUBBANDS]; SUBBAND_SAMPLES],
   /// cos(pi/18 (n + 1/2)(k + 1/2)), the DCT-IV that gives the 18-line MDCT
   /// sum_n w_n z_n cos(pi/72 (2n + 1 + 18)(2k + 1)) of the folded windowed samples, by line
   dct: Vec<[f64; LINES]>,
@@ -606,15 +633,13 @@ impl Mp3 {
     }
     let pi = std::f64::consts::PI;
     Self {
-      window: d.map(|v| v / 65536.0 / 32.0),
-      matrix: (0..SUBBANDS)
-        .map(|i| {
-          std::array::from_fn(|k| ((2 * i + 1) as f64 * (k as f64 - 16.0) * pi / 64.0).cos())
-        })
-        .collect(),
-      windows: [1.0, -1.0].map(|odd| {
-        std::array::from_fn(|n| {
-          let sign = if n % 2 == 1 { odd } else { 1.0 };
+      window: std::array::from_fn(|j| std::array::from_fn(|i| d[64 * j + 63 - i] / 65536.0 / 32.0)),
+      matrix: std::array::from_fn(|k| {
+        std::array::from_fn(|i| ((2 * i + 1) as f64 * (k as f64 - 16.0) * pi / 64.0).cos())
+      }),
+      windows: std::array::from_fn(|n| {
+        std::array::from_fn(|sb| {
+          let sign = if n % 2 == 1 && sb % 2 == 1 { -1.0 } else { 1.0 };
           sign * (pi / 36.0 * (n as f64 + 0.5)).sin()
         })
       }),
@@ -629,34 +654,56 @@ impl Mp3 {
   }
 
   /// the subband samples of `x`, 32 for every 32 input samples: sample t reads the 512 inputs
-  /// from 32 t on, the newest first
+  /// from 32 t on, the newest first.
+  ///
+  /// every sum here and in [`Mp3::hybrid`] adds its terms in the order of the formula, in one
+  /// running total per output, so the inner loops run over the outputs side by side.
   fn polyphase(&self, x: &[f64]) -> Vec<[f64; SUBBANDS]> {
     let count = (x.len() - 512) / 32 + 1;
     (0..count)
       .map(|t| {
-        let newest = 32 * t + 511;
-        let y: [f64; 64] = std::array::from_fn(|k| {
-          (0..8)
-            .map(|j| x[newest - (k + 64 * j)] * self.window[k + 64 * j])
-            .sum()
-        });
-        std::array::from_fn(|i| self.matrix[i].iter().zip(&y).map(|(m, y)| m * y).sum())
+        // with the newest input at 32 t + 511, y[63 - k] is the sum over j of
+        // x[newest - k - 64 j] window[k + 64 j]
+        let (blocks, _) = x[32 * t..32 * t + 512].as_chunks::<64>();
+        let mut y = [0.0; 64];
+        for (taps, x) in self.window.iter().zip(blocks.iter().rev()) {
+          for ((y, x), tap) in y.iter_mut().zip(x).zip(taps) {
+            *y += x * tap;
+          }
+        }
+        let mut subbands = [0.0; SUBBANDS];
+        for (row, y) in self.matrix.iter().zip(y.iter().rev()) {
+          for (subband, m) in subbands.iter_mut().zip(row) {
+            *subband += m * y;
+          }
+        }
+        subbands
       })
       .collect()
   }
 
   /// the 576 values of the granule whose 36 subband samples are `samples`, subband by subband
   fn hybrid(&self, samples: &[[f64; SUBBANDS]], out: &mut [f64; MP3_HOP]) {
-    let mut windowed = [0.0; SUBBAND_SAMPLES];
-    let mut folded = [0.0; LINES];
-    for sb in 0..SUBBANDS {
-      // odd subbands have every odd subband sample negated before the MDCT
-      for ((w, s), window) in windowed.iter_mut().zip(samples).zip(&self.windows[sb % 2]) {
-        *w = s[sb] * window;
-      }
-      fold(&windowed, &mut folded);
-      for (k, dct) in self.dct.iter().enumerate() {
-        out[sb * LINES + k] = dct.iter().zip(&folded).map(|(d, f)| d * f).sum();
+    // each subband sample with its window, multiplied as the two are folded
+    let windowed: [_; SUBBAND_SAMPLES] = std::array::from_fn(|n| (&samples[n], &self.windows[n]));
+    let mut folded = [[0.0; SUBBANDS]; LINES];
+    fold_with(
+      &windowed,
+      &mut folded,
+      |c, d| std::array::from_fn(|sb| -(c.0[sb] * c.1[sb]) - d.0[sb] * d.1[sb]),
+      |a, b| std::array::from_fn(|sb| a.0[sb] * a.1[sb] - b.0[sb] * b.1[sb]),
+    );
+    for (k, dct) in self.dct.iter().enumerate() {
+      for from in (0..SUBBANDS).step_by(SIDE_BY_SIDE) {
+        let mut line = [0.0; SIDE_BY_SIDE];
+        for (d, folded) in dct.iter().zip(&folded) {
+          for (l, f) in line.iter_mut().zip(&folded[from..from + SIDE_BY_SIDE]) {
+            *l += d * f;
+          }
+        }
+        for (i, l) in line.iter().enumerate() {
+          out[(from + i) * LINES + k] = *l;
+        }
       }
     }
     for sb in 0..SUBBANDS - 1 {
