@@ -27,7 +27,7 @@ cuts the top of the band with a steep low-pass at a frequency set by its bitrate
 FLAC or WAV does not bring it back. The verdict comes from how the cutoffs spread across all
 windows.
 
-| Verdict          | Means                                                                                                     |
+| Verdict          | Description                                                                                                 |
 | ---------------- | --------------------------------------------------------------------------------------------------------- |
 | consistent       | nearly every window reaches the top of the claimed band, or a lossy file stops where its own bitrate cuts |
 | likely transcode | nearly every window stops at one known encoder cutoff with a sharp shelf                                  |
@@ -64,7 +64,7 @@ fake-320.flac: inconclusive, cutoff 20.2 kHz
 mixed.flac: mixed sources, cutoff 16.8 kHz, mp3 ~128 kbps, confidence 0.75
 ```
 
-| Option                                     | Does                                                                                   |
+| Option                                     | Description                                                                                   |
 | ------------------------------------------ | -------------------------------------------------------------------------------------- |
 | `--json`                                   | one JSON object per file and line: claimed format, length, windows read, every reading |
 | `--profile FILE`                           | read with the thresholds in FILE instead of the defaults; repeat for several profiles  |
@@ -74,7 +74,7 @@ mixed.flac: mixed sources, cutoff 16.8 kHz, mp3 ~128 kbps, confidence 0.75
 A profile is `{"measure": {...}, "reading": {...}}`. Keys left out keep their default, unknown
 keys are refused, and profiles with the same `measure` thresholds share one decode.
 
-| Exit status | When                                           |
+| Exit code | Description                                   |
 | ----------- | ---------------------------------------------- |
 | 0           | every file consistent or inconclusive          |
 | 1           | at least one likely transcode or mixed sources |
@@ -122,7 +122,7 @@ fn main() -> Result<(), Canceled> {
 - `picture` holds each window's spectrogram and waveform data
 - Logs through `tracing`, installs no subscriber
 
-| Feature         | Adds                                                                                          |
+| Feature         | Description                                                                                          |
 | --------------- | --------------------------------------------------------------------------------------------- |
 | `cli` (default) | the `choon` program and its dependencies (clap, serde_json)                                   |
 | `testing`       | `fixtures`, the generated audio the tests read; builds LAME, so needs a C compiler and `make` |
