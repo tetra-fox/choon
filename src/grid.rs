@@ -318,24 +318,32 @@ fn median(mut values: Vec<f64>) -> f64 {
 const EXPONENT_BITS: u64 = 0x7ff0_0000_0000_0000;
 const ONE: u64 = 0x3ff0_0000_0000_0000;
 
+/// The products [`active`] keeps side by side, so they can be multiplied in parallel.
+const LANES: usize = 8;
+
 /// The active count of `values`: the sum of log10(max(v^2 / t2, 1)).
 ///
 /// The log of a product is the sum of the logs, so the values' exponents are summed and their
-/// mantissas, each in [1, 2), multiplied 32 at a time, which stays under 2^32, with one log per
-/// product.
+/// mantissas, each in [1, 2), multiplied in [`LANES`] products of up to 32 each, which stay
+/// under 2^32, with one log per product.
 fn active(values: &[f64], t2: f64) -> f64 {
-  let mut exponents = 0i64;
+  let mut exponents = [0i64; LANES];
+  let mut products = [1.0f64; LANES];
   let mut logs = 0.0;
-  for chunk in values.chunks(32) {
-    let mut product = 1.0;
-    for v in chunk {
+  for (i, group) in values.chunks(LANES).enumerate() {
+    for ((product, exponent), v) in products.iter_mut().zip(&mut exponents).zip(group) {
       // t2 is a normal number, so every square at or above it is one too
       let bits = (v * v).max(t2).to_bits();
-      exponents += ((bits & EXPONENT_BITS) >> 52) as i64 - 1023;
-      product *= f64::from_bits((bits & !EXPONENT_BITS) | ONE);
+      *exponent += ((bits & EXPONENT_BITS) >> 52) as i64 - 1023;
+      *product *= f64::from_bits((bits & !EXPONENT_BITS) | ONE);
     }
-    logs += product.log2();
+    if i % 32 == 31 {
+      logs += products.iter().map(|p| p.log2()).sum::<f64>();
+      products = [1.0; LANES];
+    }
   }
+  logs += products.iter().map(|p| p.log2()).sum::<f64>();
+  let exponents: i64 = exponents.iter().sum();
   (exponents as f64 + logs - values.len() as f64 * t2.log2()) * std::f64::consts::LOG10_2
 }
 
