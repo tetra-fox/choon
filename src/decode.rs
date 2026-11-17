@@ -233,10 +233,12 @@ impl Decoder {
     }
   }
 
-  /// Moves to `seconds` from the start, dropping what was decoded and not taken.
+  /// Moves to `seconds` from the start, dropping what was decoded and not taken. The container
+  /// moves to the start of a packet, so the sample frames between it and the position are
+  /// decoded and dropped.
   pub(crate) fn seek(&mut self, seconds: f64) -> Result<(), String> {
     let time = Time::try_from_secs_f64(seconds).ok_or("the position is out of range")?;
-    self
+    let sought = self
       .format
       .seek(
         SeekMode::Accurate,
@@ -251,6 +253,23 @@ impl Decoder {
       pending.clear();
     }
     self.taken = 0;
+    // a seek that lands past the position has nothing to drop
+    let ticks = sought
+      .required_ts
+      .checked_delta(sought.actual_ts)
+      .map(|ticks| u128::try_from(ticks.get()).unwrap_or(0));
+    let mut early = ticks
+      .and_then(|ticks| self.frame_at(ticks))
+      .and_then(|frames| usize::try_from(frames).ok())
+      .ok_or("the position is out of range")?;
+    while early > 0 {
+      if self.pending[0].len() == self.taken && !self.decode_next() {
+        break;
+      }
+      let dropped = early.min(self.pending[0].len() - self.taken);
+      self.taken += dropped;
+      early -= dropped;
+    }
     Ok(())
   }
 
@@ -306,13 +325,18 @@ impl Decoder {
   /// The sample frames a packet at timestamp `pts` lasting `dur` covers; `None` when they are out
   /// of range.
   fn frames_of(&self, pts: i64, dur: u64) -> Option<Range<u64>> {
-    let (numer, denom) = self.ticks();
-    let rate = u128::from(self.claimed.sample_rate);
-    // a timestamp and a duration add to below 2^65, a tick's numerator is below 2^32 and the rate
-    // at most `MAX_RATE`, below 2^20, so the product fits
-    let frame = |ticks: u128| u64::try_from(ticks * numer * rate / denom).ok();
     let pts = u128::try_from(pts).ok()?;
-    Some(frame(pts)?..frame(pts + u128::from(dur))?)
+    Some(self.frame_at(pts)?..self.frame_at(pts + u128::from(dur))?)
+  }
+
+  /// The sample frame `ticks` timestamp ticks from the start, below 2^65; `None` when it is out
+  /// of range.
+  fn frame_at(&self, ticks: u128) -> Option<u64> {
+    let (numer, denom) = self.ticks();
+    // a tick's numerator is below 2^32 and the rate at most `MAX_RATE`, below 2^20, so the
+    // product fits
+    let rate = u128::from(self.claimed.sample_rate);
+    u64::try_from(ticks * numer * rate / denom).ok()
   }
 
   /// A timestamp tick as a fraction of a second; one sample frame when the container gives none.

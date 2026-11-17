@@ -528,6 +528,24 @@ fn a_long_file_is_sampled_at_windows_spread_over_it() {
 }
 
 #[test]
+fn a_sampled_window_holds_the_same_second_as_one_read_in_full() {
+  let dir = tempfile::tempdir().unwrap();
+  let path = flac(dir.path(), "a.flac", &music(1, 44_100, pink), 16);
+  let full = measure(&path, &settings()).unwrap();
+  // no second but the first starts where a packet does
+  let sampled = Settings {
+    coverage: sampled(10.0, 5),
+    ..settings()
+  };
+  let sampled = measure(&path, &sampled).unwrap();
+  assert_eq!(sampled.windows.len(), 5);
+  for window in &sampled.windows {
+    let same = full.windows.iter().find(|w| w.start == window.start);
+    assert!(Some(window) == same, "the window at {} s", window.start);
+  }
+}
+
+#[test]
 fn a_sampled_file_scans_the_same_samples_for_a_grid_as_one_read_in_full() {
   let dir = tempfile::tempdir().unwrap();
   let through = fixtures::through_mp3(&music(1, 44_100, pink), Bitrate::Kbps128, dir.path());
