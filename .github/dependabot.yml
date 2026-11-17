@@ -1,0 +1,43 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      rust:
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
+      # `decode` re-exports symphonia's `Hint` and `MediaSource`, so a new 0.x of symphonia is a
+      # breaking change of this crate; symphonia-common is released with it
+      - dependency-name: symphonia
+        update-types: [version-update:semver-minor]
+      - dependency-name: symphonia-common
+        update-types: [version-update:semver-minor]
+  # flake inputs are tracked by commit, so there is no major to hold back
+  - package-ecosystem: nix
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      nix:
+        patterns: ["*"]
+  # the workflows pin each action to a commit, with its version beside it
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      actions:
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]

@@ -1,0 +1,43 @@
+# a v* tag makes a draft release; publishing the draft by hand runs publish.yml
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+# the checks run every dependency's code, so only the release job can write
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+      - name: The tag names the manifest's version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="$(nix develop -c cargo pkgid | sed 's/.*[#@]//')"
+          if [ "$TAG" != "v$version" ]; then
+            echo "tag $TAG does not match the manifest's version $version" >&2
+            exit 1
+          fi
+      - run: nix develop -c just ci
+      - run: nix develop -c just publish-check
+
+  release:
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
+        with:
+          draft: true
+          # a tag such as v0.2.0-rc1 is published as a prerelease, which is never marked latest
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
