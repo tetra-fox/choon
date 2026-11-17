@@ -333,13 +333,16 @@ impl Decoder {
       // the frames before the audio are among those dropped below
       opus.skip = 0;
     }
-    // a seek that lands past the position has nothing to drop
+    // the frames from where the container landed to the position are decoded and dropped. a
+    // landing past the position, which symphonia 0.6.1's Matroska reader can give, fails
     let ticks = sought
       .required_ts
       .checked_delta(sought.actual_ts)
-      .map(|ticks| u128::try_from(ticks.get()).unwrap_or(0));
-    let mut early = ticks
-      .and_then(|ticks| self.frame_at(ticks))
+      .ok_or("the position is out of range")?;
+    let ticks =
+      u128::try_from(ticks.get()).map_err(|_| "the container sought past the position")?;
+    let mut early = self
+      .frame_at(ticks)
       .and_then(|frames| usize::try_from(frames).ok())
       .and_then(|frames| frames.checked_add(lead))
       .ok_or("the position is out of range")?;
@@ -754,6 +757,20 @@ mod tests {
       let off = apart(&window[0], &straight[0][from..from + 48_000]);
       assert!(off < 1e-5, "second {second}: {off}");
     }
+  }
+
+  #[test]
+  fn a_seek_that_lands_past_its_position_fails() {
+    // the WebM's blocks state no duration, so its reader lands on the first block that starts
+    // at or after a position, not on the one that holds it
+    let audio = fixtures::music_for(12, 3, 48_000, fixtures::pink);
+    let bytes = fixtures::opus(&audio, OpusSettings::music(128)).webm();
+    let mut decoder =
+      Decoder::from_source(Box::new(std::io::Cursor::new(bytes)), &Hint::new()).unwrap();
+    assert_eq!(
+      decoder.seek(5.0),
+      Err("the container sought past the position".to_string())
+    );
   }
 
   #[test]
