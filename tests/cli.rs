@@ -261,6 +261,63 @@ fn a_file_not_read_as_audio_fails_the_run_and_says_so() {
   );
 }
 
+#[test]
+fn an_opus_file_and_a_flac_decoded_from_it_say_opus() {
+  let dir = tempfile::tempdir().unwrap();
+  let source = music(1, 48_000, pink);
+  let opus = dir.path().join("music.opus");
+  let stream = fixtures::opus(&source, fixtures::OpusSettings::music(128));
+  std::fs::write(&opus, stream.ogg()).unwrap();
+  let webm = dir.path().join("music.webm");
+  std::fs::write(&webm, stream.webm()).unwrap();
+  let fake = dir.path().join("fake.flac");
+  fixtures::write_flac(&fixtures::decoded(&opus), 16, false, &fake);
+  let (opus, webm, fake) = (path(&opus), path(&webm), path(&fake));
+
+  // an Opus file is read by its cutoff, and its line ends with what its packets state
+  for file in [&opus, &webm] {
+    let output = choon(&[file]);
+    assert_eq!(status(&output), 0, "{output:?}");
+    let line = String::from_utf8(output.stdout).unwrap();
+    assert!(
+      line.starts_with(&format!("{file}: consistent, cutoff 20.")),
+      "{line}"
+    );
+    assert!(line.trim_end().ends_with("; Opus CELT fullband"), "{line}");
+  }
+
+  let output = choon(&[&fake]);
+  assert_eq!(status(&output), 1, "{output:?}");
+  let line = String::from_utf8(output.stdout).unwrap();
+  assert!(
+    line.starts_with(&format!(
+      "{fake}: likely transcode: Opus grid at offset 228 ("
+    )),
+    "{line}"
+  );
+  assert!(line.contains(" frames), cut at 20."), "{line}");
+
+  let output = choon(&["--json", &opus, &fake]);
+  assert_eq!(status(&output), 1, "{output:?}");
+  let [fake, opus] = &sorted_json(&output)[..] else {
+    panic!("two files: {output:?}")
+  };
+  assert_eq!(opus["claimed"]["codec"], "opus");
+  assert_eq!(opus["opus"][0]["mode"], "celt");
+  assert_eq!(opus["opus"][0]["bandwidth"], "fullband");
+  // the packets run a frame past the audio, which starts after the pre-skip
+  assert_eq!(opus["opus"][0]["seconds"], 34.02);
+  assert_eq!(opus["grid"], serde_json::Value::Null);
+  // a file that is not Opus has no packets to state anything
+  assert_eq!(fake.get("opus"), None);
+  assert_eq!(fake["grid"]["opus"]["offset"], 228);
+  let found = &fake["readings"][0]["grid"];
+  assert_eq!(found["codec"], "opus");
+  assert_eq!(found["offset"], 228);
+  assert_eq!(found["frames"], fake["grid"]["opus"]["frames"]);
+  assert!(found["uncutFrames"].as_u64().unwrap() >= 100, "{found}");
+}
+
 #[cfg(unix)]
 #[test]
 fn a_directory_is_read_through_for_its_audio_files() {

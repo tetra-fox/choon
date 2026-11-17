@@ -153,6 +153,141 @@ fn an_mp3_decode_carries_the_mp3_grid_and_its_source_none() {
   }
 }
 
+/// `source`, at 48 kHz, through Opus at `kbps` kbit/s and decoded again
+fn through_opus(source: &Audio, kbps: u32, dir: &Path) -> Audio {
+  let path = dir.join(format!("through-{kbps}.opus"));
+  let stream = fixtures::opus(source, fixtures::OpusSettings::music(kbps));
+  std::fs::write(&path, stream.ogg()).unwrap();
+  fixtures::decoded(&path)
+}
+
+#[test]
+fn an_opus_decode_carries_opus_frames_at_48_khz_at_44_1_khz_and_with_its_start_cut() {
+  let dir = tempfile::tempdir().unwrap();
+  let source = music(1, 48_000, pink);
+  let thresholds = ReadingThresholds::default();
+  for kbps in [64, 160] {
+    let through = through_opus(&source, kbps, dir.path());
+    let cut = Audio {
+      rate: through.rate,
+      channels: through
+        .channels
+        .iter()
+        .map(|c| c[1000..].to_vec())
+        .collect(),
+    };
+    // a cut of 1000 samples moves the frames of an uncut decode by as many
+    let moved = (grid::OPUS_UNCUT_OFFSET + 960 * 2 - 1000) % 960;
+    for (name, audio, offset, uncut) in [
+      ("decoded.flac", &through, grid::OPUS_UNCUT_OFFSET, true),
+      (
+        "at-44100.flac",
+        &through.resampled(44_100),
+        grid::OPUS_UNCUT_OFFSET,
+        true,
+      ),
+      ("cut.flac", &cut, moved, false),
+    ] {
+      let measured = measure(flac(dir.path(), name, audio, 16), &settings()).unwrap();
+      let scan = measured.grid.as_ref().expect("a lossless file is scanned");
+      let opus = scan
+        .opus
+        .as_ref()
+        .expect("the rate is one Opus is looked for at");
+      let said = format!("{kbps} kbit/s, {name}: {scan:?}");
+      assert_eq!(opus.offset, offset, "{said}");
+      assert!(opus.frames >= 4 * thresholds.opus_grid_frames, "{said}");
+      assert_eq!(opus.frames, opus.segment_frames.iter().sum::<usize>());
+      assert_eq!(
+        opus.uncut_frames >= 4 * thresholds.opus_uncut_frames,
+        uncut,
+        "{said}"
+      );
+      let reading = read(&measured);
+      assert_eq!(reading.verdict, Verdict::LikelyTranscode, "{reading:#?}");
+      assert_eq!(reading.grid.map(|found| found.codec), Some(Codec::Opus));
+      assert!(reading.summary.contains("Opus"), "{}", reading.summary);
+    }
+  }
+}
+
+#[test]
+fn audio_that_was_never_opus_carries_no_opus_frames() {
+  let dir = tempfile::tempdir().unwrap();
+  let source = music(1, 44_100, pink);
+  let through = fixtures::through_mp3(&source, Bitrate::Kbps128, dir.path());
+  for (name, audio) in [
+    ("honest-44100.flac", &source),
+    ("honest-48000.flac", &music(2, 48_000, pink)),
+    ("mp3.flac", &through),
+  ] {
+    let measured = measure(flac(dir.path(), name, audio, 16), &settings()).unwrap();
+    let opus = measured.grid.unwrap().opus.expect("the rate is one read");
+    assert!(
+      opus.frames <= 1 && opus.uncut_frames == 0,
+      "{name}: {opus:?}"
+    );
+  }
+  let high = flac(dir.path(), "at-96000.flac", &music(1, 96_000, pink), 24);
+  let measured = measure(high, &settings()).unwrap();
+  assert_eq!(measured.grid.expect("scanned for MP3 and AAC").opus, None);
+}
+
+#[test]
+fn an_opus_file_reads_by_its_cutoff_with_what_its_packets_state() {
+  let dir = tempfile::tempdir().unwrap();
+  let source = music(1, 48_000, pink);
+  let path = dir.path().join("music.opus");
+  let stream = fixtures::opus(&source, fixtures::OpusSettings::music(128));
+  std::fs::write(&path, stream.ogg()).unwrap();
+  let measured = measure(&path, &settings()).unwrap();
+  assert_eq!(measured.claimed.codec, "opus");
+  assert!((measured.duration - fixtures::SECONDS as f64).abs() < 1e-9);
+  let kbps = measured.bitrate_kbps.expect("a lossy file has a bitrate");
+  assert!((110..=140).contains(&kbps), "{kbps}");
+  assert_eq!(measured.grid, None, "a lossy file is not scanned");
+  let [most] = &measured.opus[..] else {
+    panic!("one mode and bandwidth: {:?}", measured.opus)
+  };
+  assert_eq!(
+    (most.mode, most.bandwidth),
+    (crate::OpusMode::Celt, crate::OpusBandwidth::Fullband)
+  );
+  let reading = read(&measured);
+  assert_eq!(reading.verdict, Verdict::Consistent, "{reading:#?}");
+  assert!(
+    reading
+      .summary
+      .ends_with("Its Opus packets are CELT fullband."),
+    "{}",
+    reading.summary
+  );
+  // voice at a low bitrate is coded with SILK, which the packets say
+  let voice = fixtures::OpusSettings {
+    bitrate: 16_000,
+    voice: true,
+    ..fixtures::OpusSettings::music(16)
+  };
+  let mono = Audio {
+    rate: 48_000,
+    channels: vec![source.channels[0].clone()],
+  };
+  std::fs::write(&path, fixtures::opus(&mono, voice).ogg()).unwrap();
+  let measured = measure(&path, &settings()).unwrap();
+  let most = measured
+    .opus
+    .first()
+    .expect("an Opus file's packets are counted");
+  assert!(most.mode.is_voice(), "{:?}", measured.opus);
+  let reading = read(&measured);
+  assert!(
+    reading.summary.contains("voice mode"),
+    "{}",
+    reading.summary
+  );
+  assert_ne!(reading.verdict, Verdict::LikelyTranscode, "{reading:#?}");
+}
+
 #[test]
 fn an_honest_mp3_is_judged_against_its_own_bitrate() {
   let dir = tempfile::tempdir().unwrap();
@@ -531,7 +666,7 @@ fn progress_goes_on_through_the_grid_scan() {
     .windows(2)
     .filter(|pair| pair[1] - pair[0] >= 50)
     .count();
-  assert_eq!(jobs_ended, grid::JOBS - 1, "{seen:?}");
+  assert_eq!(jobs_ended, grid::jobs(true) - 1, "{seen:?}");
   assert_eq!(progress.load(std::sync::atomic::Ordering::Relaxed), 1000);
 }
 
@@ -744,6 +879,29 @@ proptest::proptest! {
     ];
     let mut input = headers[header].to_vec();
     input.extend_from_slice(&bytes);
+    if let Ok(measured) = measure_bytes(input, &settings()) {
+      read(&measured);
+    }
+  }
+
+  /// an Opus file with bytes overwritten and its end cut off is read without a panic. WebM has
+  /// no checksums, so the damage reaches the Opus decoder
+  #[test]
+  fn a_damaged_opus_file_is_read_without_panicking(
+    damage in proptest::collection::vec((0.0f64..1.0, proptest::prelude::any::<u8>()), 0..64),
+    kept in 0.2f64..1.0,
+    ogg in proptest::prelude::any::<bool>(),
+  ) {
+    static STREAM: std::sync::LazyLock<fixtures::OpusStream> = std::sync::LazyLock::new(|| {
+      let audio = music_for(3, 1, 48_000, pink);
+      fixtures::opus(&audio, fixtures::OpusSettings::music(64))
+    });
+    let mut input = if ogg { STREAM.ogg() } else { STREAM.webm() };
+    let length = input.len();
+    for (at, byte) in damage {
+      input[(at * length as f64) as usize] = byte;
+    }
+    input.truncate((kept * length as f64) as usize);
     if let Ok(measured) = measure_bytes(input, &settings()) {
       read(&measured);
     }

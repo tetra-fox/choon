@@ -1,7 +1,7 @@
 //! Audio analysis that tells whether a file is what its format claims.
 //!
 //! The usual case is a FLAC made from an MP3. The analyzer judges from the file's spectrum and
-//! from the frame grid an MP3 or AAC encoder leaves in decoded samples.
+//! from the frame grid an MP3, AAC or Opus encoder leaves in decoded samples.
 //!
 //! # Examples
 //!
@@ -28,7 +28,8 @@
 //! - what a spectrogram and a waveform show of it ([`picture`])
 //!
 //! In a file that claims a lossless format it also scans four stretches of the samples for a
-//! codec's frame grid ([`grid`]).
+//! codec's frame grid ([`grid`]). Of an Opus file it keeps the coding mode and audio bandwidth
+//! each packet states ([`OpusUse`]).
 //!
 //! [`Measured::read`] turns the measures into a [`Reading`]:
 //!
@@ -64,7 +65,9 @@ mod decode;
 mod engine;
 mod flags;
 pub mod grid;
+mod lattice;
 mod limitation;
+mod opus;
 pub mod picture;
 mod reading;
 mod thresholds;
@@ -85,6 +88,7 @@ pub use decode::Claimed;
 pub use engine::{CancelCheck, Coverage, Error, Measured, Settings, measure, measure_bytes};
 pub use flags::Flag;
 pub use limitation::Limitation;
+pub use opus::{OpusBandwidth, OpusMode, OpusUse};
 pub use reading::{EncoderGuess, Reading, Verdict};
 pub use thresholds::{EncoderProfile, MeasureThresholds, RateEdge, ReadingThresholds};
 pub use window::{Step, Window};

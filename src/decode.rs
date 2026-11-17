@@ -3,16 +3,18 @@
 
 use std::ops::Range;
 use std::path::Path;
+use std::sync::LazyLock;
 
 use symphonia::core::audio::GenericAudioBufferRef;
 use symphonia::core::audio::sample::{i24, u24};
 use symphonia::core::audio::{Audio, AudioBuffer};
 use symphonia::core::codecs::audio::well_known::{
-  CODEC_ID_ALAC, CODEC_ID_FLAC, CODEC_ID_PCM_ALAW, CODEC_ID_PCM_MULAW,
+  CODEC_ID_ALAC, CODEC_ID_FLAC, CODEC_ID_OPUS, CODEC_ID_PCM_ALAW, CODEC_ID_PCM_MULAW,
 };
 use symphonia::core::codecs::audio::{
   AudioCodecId, AudioCodecParameters, AudioDecoder, AudioDecoderOptions,
 };
+use symphonia::core::codecs::registry::CodecRegistry;
 use symphonia::core::errors::{Error, SeekErrorKind};
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, TrackType};
@@ -23,6 +25,7 @@ use symphonia_common::apple::audio::alac::MagicCookie;
 use tracing::{debug, trace};
 
 use crate::engine;
+use crate::opus::{self, OpusUse};
 
 /// the most channels the analyzer reads; the rest of a surround file is left out
 const ANALYZED_CHANNELS: usize = 2;
@@ -33,6 +36,22 @@ const MAX_RATE: u32 = 768_000;
 
 /// how many undecodable packets are skipped before reading stops
 const MAX_SKIPPED: u32 = 1000;
+
+/// the audio an Opus decoder is given before a position sought to, in seconds. its band energies
+/// are predicted from the frame before, and after this much what a fresh decoder predicts
+/// differs from a read from the start by less than a millionth
+const OPUS_PRE_ROLL: f64 = 0.5;
+
+/// the codecs the analyzer decodes: symphonia's own, and Opus
+fn codecs() -> &'static CodecRegistry {
+  static CODECS: LazyLock<CodecRegistry> = LazyLock::new(|| {
+    let mut codecs = CodecRegistry::new();
+    symphonia::default::register_enabled_codecs(&mut codecs);
+    codecs.register_audio_decoder::<symphonia_opus::OpusDecoder>();
+    codecs
+  });
+  &CODECS
+}
 
 /// Format a file's container and codec claim.
 #[derive(Clone, Debug, PartialEq)]
@@ -82,6 +101,25 @@ pub(crate) struct Decoder {
   pub(crate) skipped: u32,
   /// why decoding stopped before the end of the file, when it did
   pub(crate) stopped: Option<String>,
+  /// what an Opus stream's header and packets state
+  opus: Option<Opus>,
+}
+
+/// what the analyzer keeps of an Opus stream beside its samples
+struct Opus {
+  /// decoded frames still to drop before the audio starts: the header's pre-skip, until a seek
+  skip: u64,
+  /// frames the track's timestamps count before the audio starts
+  delay: u64,
+  tally: opus::Tally,
+}
+
+/// a packet decoded: where the container puts it, and the frames at its ends that are not audio
+struct Stepped {
+  pts: i64,
+  dur: u64,
+  /// frames to drop from the start and the end of what the decoder gave
+  trim: (usize, usize),
 }
 
 /// a hint of what the file at `path` holds: its extension
@@ -131,8 +169,21 @@ impl Decoder {
       .clone();
     let track_id = track.id;
     let time_base = track.time_base;
-    let frames = track.num_frames;
-    let codecs = symphonia::default::get_codecs();
+    let opus = (params.codec == CODEC_ID_OPUS).then(|| Opus {
+      // a header too short to state it is one the decoder refuses below
+      skip: params
+        .extra_data
+        .as_deref()
+        .and_then(opus::pre_skip)
+        .unwrap_or(0),
+      delay: u64::from(track.delay.unwrap_or(0)),
+      tally: opus::Tally::default(),
+    });
+    // a container that counts the frames before the audio in its timestamps counts them in the
+    // length it states too
+    let delay = opus.as_ref().map_or(0, |opus| opus.delay);
+    let frames = track.num_frames.map(|frames| frames.saturating_sub(delay));
+    let codecs = codecs();
     let codec = codecs
       .get_audio_decoder(params.codec)
       .map(|registered| registered.codec.info.short_name.to_string())
@@ -178,7 +229,17 @@ impl Decoder {
       densest: None,
       skipped: 0,
       stopped: None,
+      opus,
     })
+  }
+
+  /// the time the packets decoded so far spend in each Opus mode and bandwidth; empty for other
+  /// codecs
+  pub(crate) fn opus_uses(&self) -> Vec<OpusUse> {
+    self
+      .opus
+      .as_ref()
+      .map_or_else(Vec::new, |opus| opus.tally.uses())
   }
 
   /// the sample type's width less the low bits that were zero in every integer sample decoded so
@@ -231,7 +292,18 @@ impl Decoder {
   /// moves to `seconds` from the start, dropping what was decoded and not taken. the container
   /// moves to the start of a packet, so the frames before the position are decoded and dropped
   pub(crate) fn seek(&mut self, seconds: f64) -> Result<(), String> {
-    let time = Time::try_from_secs_f64(seconds).ok_or("the position is out of range")?;
+    // an Opus stream is sought to a little before the position, in the time its container
+    // counts, and the frames decoded on the way are dropped with the others
+    let rate = f64::from(self.claimed.sample_rate);
+    let (at, lead) = match &self.opus {
+      Some(opus) => {
+        let position = seconds + opus.delay as f64 / rate;
+        let lead = position.min(OPUS_PRE_ROLL);
+        (position - lead, (lead * rate).round() as usize)
+      }
+      None => (seconds, 0),
+    };
+    let time = Time::try_from_secs_f64(at).ok_or("the position is out of range")?;
     let sought = self
       .format
       .seek(
@@ -247,6 +319,10 @@ impl Decoder {
       pending.clear();
     }
     self.taken = 0;
+    if let Some(opus) = &mut self.opus {
+      // the frames before the audio are among those dropped below
+      opus.skip = 0;
+    }
     // a seek that lands past the position has nothing to drop
     let ticks = sought
       .required_ts
@@ -255,6 +331,7 @@ impl Decoder {
     let mut early = ticks
       .and_then(|ticks| self.frame_at(ticks))
       .and_then(|frames| usize::try_from(frames).ok())
+      .and_then(|frames| frames.checked_add(lead))
       .ok_or("the position is out of range")?;
     while early > 0 {
       if self.pending[0].len() == self.taken && !self.decode_next() {
@@ -294,7 +371,7 @@ impl Decoder {
   /// decodes the next packet into `samples`, interleaved, each sample at the top of its 32 bits.
   /// returns the frames the container says it covers, which the samples can fall short of or pass
   pub(crate) fn next_interleaved(&mut self, samples: &mut Vec<i32>) -> Option<Range<u64>> {
-    let (pts, dur) = self.step()?;
+    let Stepped { pts, dur, .. } = self.step()?;
     self.decoder.last_decoded().copy_to_vec_interleaved(samples);
     let frames = self.frames_of(pts, dur);
     if frames.is_none() {
@@ -343,9 +420,9 @@ impl Decoder {
       pending.drain(..shift);
     }
     self.taken = 0;
-    if self.step().is_none() {
+    let Some(Stepped { trim, .. }) = self.step() else {
       return false;
-    }
+    };
     self
       .decoder
       .last_decoded()
@@ -359,15 +436,30 @@ impl Decoder {
       self.stopped = Some("a packet holds fewer channels than the stream".to_string());
       return false;
     }
+    let length = self.scratch[0].len();
+    let (start, end) = (trim.0.min(length), length.saturating_sub(trim.1));
+    // what is left of the frames before the audio comes off the packet's start too
+    let skipped = match &mut self.opus {
+      Some(opus) => {
+        let skipped = usize::try_from(opus.skip)
+          .unwrap_or(usize::MAX)
+          .min(end.saturating_sub(start));
+        opus.skip -= skipped as u64;
+        skipped
+      }
+      None => 0,
+    };
+    let kept = (start + skipped).min(end)..end;
     for (pending, plane) in self.pending.iter_mut().zip(&self.scratch) {
-      pending.extend_from_slice(plane);
+      pending.extend_from_slice(&plane[kept.clone()]);
     }
     true
   }
 
-  /// decodes the next packet of the track that holds samples and returns its timestamp and
-  /// duration; `None` at the end of the file or when decoding cannot go on, the reason in `stopped`
-  fn step(&mut self) -> Option<(i64, u64)> {
+  /// decodes the next packet of the track that holds samples and returns its timestamp, its
+  /// duration and its trim; `None` at the end of the file or when decoding cannot go on, the
+  /// reason in `stopped`
+  fn step(&mut self) -> Option<Stepped> {
     loop {
       let packet = match self.format.next_packet() {
         Ok(Some(packet)) => packet,
@@ -419,7 +511,31 @@ impl Decoder {
       if bytes > 0 && self.densest.is_none_or(|(b, f)| frames * b > f * bytes) {
         self.densest = Some((bytes, frames));
       }
-      return Some((packet.pts.get(), packet.dur.get()));
+      // the Opus decoder hands back every frame of a packet, the ones the container says to
+      // trim too. they are still there when the frames decoded are the packet's duration and
+      // its trims together
+      let (lead, tail) = (packet.trim_start.get(), packet.trim_end.get());
+      let untrimmed = self.opus.is_some()
+        && packet
+          .dur
+          .get()
+          .checked_add(lead)
+          .and_then(|d| d.checked_add(tail))
+          == Some(frames);
+      let trim = if untrimmed {
+        // both are at most the frames decoded, which fit a usize
+        (lead as usize, tail as usize)
+      } else {
+        (0, 0)
+      };
+      if let Some(opus) = &mut self.opus {
+        opus.tally.count(&packet.data);
+      }
+      return Some(Stepped {
+        pts: packet.pts.get(),
+        dur: packet.dur.get(),
+        trim,
+      });
     }
   }
 
@@ -456,7 +572,7 @@ fn lossless(codec: AudioCodecId) -> bool {
   }
   codec != CODEC_ID_PCM_ALAW
     && codec != CODEC_ID_PCM_MULAW
-    && symphonia::default::get_codecs()
+    && codecs()
       .get_audio_decoder(codec)
       .is_some_and(|registered| registered.codec.info.short_name.starts_with("pcm_"))
 }
@@ -491,12 +607,143 @@ fn note_bits(bits: &mut Option<(u32, u32)>, decoded: &GenericAudioBufferRef<'_>)
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::fixtures::TONE;
+  use crate::fixtures::{self, OpusSettings, TONE};
 
   fn opened(bytes: Vec<u8>) -> Decoder {
     let mut hint = Hint::new();
     hint.with_extension("m4a");
     Decoder::from_source(Box::new(std::io::Cursor::new(bytes)), &hint).unwrap()
+  }
+
+  /// every sample of `bytes`, with what it claims
+  fn decoded(bytes: Vec<u8>) -> (Claimed, Vec<Vec<f32>>) {
+    let mut decoder = Decoder::from_source(Box::new(std::io::Cursor::new(bytes)), &Hint::new())
+      .expect("the fixture opens");
+    let rate = decoder.claimed.sample_rate as usize;
+    let mut channels = vec![Vec::new(); decoder.channels];
+    let mut window = vec![Vec::new(); decoder.channels];
+    loop {
+      let filled = decoder.fill(&mut window, rate);
+      for (all, part) in channels.iter_mut().zip(&window) {
+        all.extend_from_slice(part);
+      }
+      if filled != Filled::Full {
+        break;
+      }
+    }
+    assert_eq!(decoder.stopped, None);
+    (decoder.claimed.clone(), channels)
+  }
+
+  fn rms(samples: &[f32]) -> f64 {
+    (samples.iter().map(|s| f64::from(*s).powi(2)).sum::<f64>() / samples.len() as f64).sqrt()
+  }
+
+  /// the rms of the difference of `a` and `b` over the rms of `b`
+  fn apart(a: &[f32], b: &[f32]) -> f64 {
+    let difference: Vec<f32> = a.iter().zip(b).map(|(a, b)| a - b).collect();
+    rms(&difference) / rms(b)
+  }
+
+  /// three seconds of a 1 kHz tone at 48 kHz, on `channels` channels
+  fn tone_48k(channels: usize) -> fixtures::Audio {
+    let tone = fixtures::tone(1000.0, 3).resampled(48_000);
+    fixtures::Audio {
+      rate: 48_000,
+      channels: vec![tone.channels[0].clone(); channels],
+    }
+  }
+
+  #[test]
+  fn opus_decodes_to_the_length_rate_and_tone_it_was_made_from() {
+    let settings = |bitrate: u32, frame: usize, voice: bool| OpusSettings {
+      bitrate,
+      frame,
+      voice,
+      gain: 0,
+    };
+    for (channels, settings) in [
+      (2, settings(128_000, 960, false)),
+      (2, settings(64_000, 960, false)),
+      (1, settings(96_000, 480, false)),
+      (2, settings(160_000, 240, false)),
+      (1, settings(64_000, 120, false)),
+      (1, settings(16_000, 1920, true)),
+      (2, settings(32_000, 2880, true)),
+    ] {
+      let audio = tone_48k(channels);
+      let stream = fixtures::opus(&audio, settings);
+      let (claimed, samples) = decoded(stream.ogg());
+      let said = format!("{channels} channels, {settings:?}");
+      assert_eq!(claimed.codec, "opus", "{said}");
+      assert_eq!(claimed.sample_rate, 48_000, "{said}");
+      assert_eq!(claimed.channels as usize, channels, "{said}");
+      assert!(!claimed.lossless, "{said}");
+      assert_eq!(claimed.frames, Some(144_000), "{said}");
+      assert_eq!(samples.len(), channels, "{said}");
+      for channel in &samples {
+        assert_eq!(channel.len(), 144_000, "{said}");
+        // a tone of 1 kHz rises through zero a thousand times a second
+        let rises = channel
+          .windows(2)
+          .filter(|pair| pair[0] < 0.0 && pair[1] >= 0.0)
+          .count();
+        assert!((2990..=3010).contains(&rises), "{said}: {rises} cycles");
+      }
+    }
+  }
+
+  #[test]
+  fn an_opus_stream_starts_after_its_pre_skip_in_ogg_and_in_webm() {
+    let audio = tone_48k(2);
+    let stream = fixtures::opus(&audio, OpusSettings::music(128));
+    assert!(stream.pre_skip > 0);
+    let (_, ogg) = decoded(stream.ogg());
+    // half a cycle off is twice the tone's level apart
+    let off = apart(&ogg[0][1000..], &audio.channels[0][1000..]);
+    assert!(off < 0.05, "{off}");
+    let (claimed, webm) = decoded(stream.webm());
+    assert_eq!(claimed.frames, None);
+    // the container counts in milliseconds and keeps the last packet's padding
+    let (length, most) = (webm[0].len(), 144_000 + 960);
+    assert!((144_000..=most).contains(&length), "{length}");
+    let off = apart(&webm[0][1000..144_000], &audio.channels[0][1000..]);
+    assert!(off < 0.05, "{off}");
+  }
+
+  #[test]
+  fn an_opus_headers_output_gain_scales_the_samples() {
+    let audio = tone_48k(1);
+    let plain = fixtures::opus(&audio, OpusSettings::music(96));
+    let quieter = fixtures::OpusStream {
+      settings: OpusSettings {
+        // 6 dB down, in 1/256 dB
+        gain: -6 * 256,
+        ..plain.settings
+      },
+      ..plain.clone()
+    };
+    let (_, plain) = decoded(plain.ogg());
+    let (_, quieter) = decoded(quieter.ogg());
+    let ratio = rms(&quieter[0]) / rms(&plain[0]);
+    assert!((ratio - 10f64.powf(-6.0 / 20.0)).abs() < 0.001, "{ratio}");
+  }
+
+  #[test]
+  fn a_seek_in_opus_gives_the_samples_a_read_from_the_start_gives() {
+    let audio = fixtures::music_for(12, 3, 48_000, fixtures::pink);
+    let bytes = fixtures::opus(&audio, OpusSettings::music(128)).ogg();
+    let (_, straight) = decoded(bytes.clone());
+    let mut decoder =
+      Decoder::from_source(Box::new(std::io::Cursor::new(bytes)), &Hint::new()).unwrap();
+    let mut window = vec![Vec::new(); 2];
+    for second in [5, 0, 11, 4] {
+      decoder.seek(f64::from(second)).unwrap();
+      assert_eq!(decoder.fill(&mut window, 48_000), Filled::Full);
+      let from = second as usize * 48_000;
+      let off = apart(&window[0], &straight[0][from..from + 48_000]);
+      assert!(off < 1e-5, "second {second}: {off}");
+    }
   }
 
   #[test]

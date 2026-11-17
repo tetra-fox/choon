@@ -187,6 +187,17 @@ pub struct ReadingThresholds {
   ///
   /// [`CodecScan::segments_agreeing`]: crate::grid::CodecScan::segments_agreeing
   pub mp3_grid_segments_agreeing: usize,
+  /// Fewest frames on Opus's lattice at one offset of the four segments, for an Opus grid.
+  ///
+  /// It is compared with [`OpusScan::frames`](crate::grid::OpusScan::frames). A frame of
+  /// lossless audio lands on the lattice by chance at some offset in some files, never at the
+  /// same offset often.
+  pub opus_grid_frames: usize,
+  /// Fewest frames on Opus's lattice in the windows measured, for an Opus grid.
+  ///
+  /// It is compared with [`OpusScan::uncut_frames`](crate::grid::OpusScan::uncut_frames), the
+  /// count on the one grid a decode has when nothing was cut from its start.
+  pub opus_uncut_frames: usize,
 }
 
 /// Band top of a rate some old equipment recorded at.
@@ -279,6 +290,8 @@ impl Default for ReadingThresholds {
       aac_grid_segments_agreeing: 0,
       mp3_grid_z: 12.0,
       mp3_grid_segments_agreeing: 3,
+      opus_grid_frames: 3,
+      opus_uncut_frames: 3,
     }
   }
 }

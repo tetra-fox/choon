@@ -17,7 +17,9 @@ use tracing::debug;
 
 use crate::decode::{self, Claimed, Decoder, Filled};
 use crate::grid::{self, Scan, Segments};
+use crate::lattice::{self, Uncut};
 use crate::limitation::Limitation;
+use crate::opus::OpusUse;
 use crate::thresholds::MeasureThresholds;
 use crate::totals::Totals;
 use crate::window::{Analyzer, FFT_SIZE, Window};
@@ -126,6 +128,29 @@ fn thousandths(done: f64) -> u32 {
 /// the two in the progress an analysis reports
 const SCAN_JOB_WINDOWS: f64 = 110.0;
 
+/// what measures a file's windows: the analyzer, and in a file scanned for Opus's frames the
+/// count of them on the grid of an uncut decode
+struct Measuring<'a> {
+  analyzer: Analyzer<'a>,
+  uncut: Option<Uncut>,
+}
+
+impl Measuring<'_> {
+  /// measures the window of `buffer` at `second` into `measured`
+  fn window(&mut self, second: u64, buffer: &[Vec<f32>], rate: usize, measured: &mut Measured) {
+    let window = self
+      .analyzer
+      .measure(second as f64, buffer, &mut measured.totals);
+    measured.windows.push(window);
+    // a short last window has too few frames to be worth resampling
+    if let Some(uncut) = &mut self.uncut
+      && buffer.first().is_some_and(|channel| channel.len() == rate)
+    {
+      uncut.take(second * rate as u64, buffer);
+    }
+  }
+}
+
 /// an analysis under way: its settings, and how its progress splits between the windows and the
 /// grid scan
 struct Run<'a> {
@@ -166,6 +191,12 @@ pub struct Measured {
   pub duration: f64,
   /// Lossy file's bitrate in kbit/s, from its decoded packets.
   pub bitrate_kbps: Option<u32>,
+  /// Modes and bandwidths an Opus file's packets state, the one with the most time first.
+  ///
+  /// Each packet states its own, so they are read, never measured. Only the packets decoded
+  /// count, which in a sampled file are those around its windows. Empty for other codecs.
+  #[cfg_attr(feature = "serde", serde(default))]
+  pub opus: Vec<OpusUse>,
   /// Every analyzed window, in time order.
   pub windows: Vec<Window>,
   /// the figures over every analyzed sample
@@ -371,7 +402,13 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
   let claimed = decoder.claimed.clone();
   let rate = claimed.sample_rate as usize;
   let stated = claimed.frames.map(|frames| frames as f64 / rate as f64);
-  let mut analyzer = Analyzer::new(claimed.sample_rate, claimed.bit_depth, &settings.thresholds);
+  // samples without a stated depth are floats, which round no coarser than 24 bits
+  let bits = claimed.bit_depth.unwrap_or(24);
+  let scans_opus = claimed.lossless && lattice::reads(claimed.sample_rate);
+  let mut measuring = Measuring {
+    analyzer: Analyzer::new(claimed.sample_rate, claimed.bit_depth, &settings.thresholds),
+    uncut: scans_opus.then(|| Uncut::new(claimed.sample_rate, bits)),
+  };
   let mut buffer: Vec<Vec<f32>> = (0..decoder.channels)
     .map(|_| Vec::with_capacity(rate))
     .collect();
@@ -384,6 +421,7 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
   let mut measured = Measured {
     duration: stated.unwrap_or(0.0),
     bitrate_kbps: None,
+    opus: Vec::new(),
     channels_left_out: claimed.channels.saturating_sub(decoder.channels as u32),
     claimed,
     windows: Vec::new(),
@@ -412,7 +450,7 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
     settings,
     // a file with segments states its length, so its count of windows is finite
     windows_share: if segments.is_some() {
-      windows / (windows + grid::JOBS as f64 * SCAN_JOB_WINDOWS)
+      windows / (windows + grid::jobs(scans_opus) as f64 * SCAN_JOB_WINDOWS)
     } else {
       1.0
     },
@@ -422,7 +460,7 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
       measured.sampled = true;
       sampled(
         &mut decoder,
-        &mut analyzer,
+        &mut measuring,
         &mut buffer,
         &picks,
         &mut segments,
@@ -432,7 +470,7 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
     }
     None => whole(
       &mut decoder,
-      &mut analyzer,
+      &mut measuring,
       &mut buffer,
       Windows::Upto(longest as u64),
       &mut segments,
@@ -459,6 +497,7 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
     read_segments(&mut decoder, segments, settings, &mut measured)?;
   }
   measured.bits_used = decoder.bits_used();
+  measured.opus = decoder.opus_uses();
   if !measured.claimed.lossless {
     measured.bitrate_kbps = decoder.bitrate_kbps();
   }
@@ -474,7 +513,12 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
     measured.problems.push(Limitation::GridNotScanned);
   }
   if let Some(segments) = &segments {
-    measured.grid = scan_grid(segments, &run, &mut measured)?;
+    let opus = measuring.uncut.as_ref().map(|uncut| grid::Opus {
+      rate: measured.claimed.sample_rate,
+      bits,
+      uncut_frames: uncut.frames(),
+    });
+    measured.grid = scan_grid(segments, opus, &run, &mut measured)?;
   }
   settings.report(1.0);
   debug!(
@@ -554,6 +598,7 @@ fn read_segments(
 /// not full or the analysis runs out of time first
 fn scan_grid(
   segments: &Segments,
+  opus: Option<grid::Opus>,
   run: &Run<'_>,
   measured: &mut Measured,
 ) -> Result<Option<Scan>, Error> {
@@ -564,12 +609,14 @@ fn scan_grid(
     return Ok(None);
   }
   let ended = AtomicUsize::new(0);
+  let jobs = grid::jobs(opus.is_some());
   let scan = grid::scan(
     segments,
+    opus,
     || !is_canceled(settings.canceled.as_ref()) && !is_past(settings.deadline),
     || {
       let ended = ended.fetch_add(1, Ordering::Relaxed) + 1;
-      run.scan(ended as f64 / grid::JOBS as f64);
+      run.scan(ended as f64 / jobs as f64);
     },
   );
   if scan.is_none() && is_canceled(settings.canceled.as_ref()) {
@@ -669,7 +716,7 @@ enum Windows<'a> {
 /// reads windows one after another from where the decoder is and measures those `read` asks for
 fn whole(
   decoder: &mut Decoder,
-  analyzer: &mut Analyzer,
+  measuring: &mut Measuring<'_>,
   buffer: &mut [Vec<f32>],
   read: Windows<'_>,
   segments: &mut Option<Segments>,
@@ -724,8 +771,7 @@ fn whole(
       Windows::Only(picks) => picks.contains(&second),
     };
     if usable(&filled, rate) && wanted {
-      let window = analyzer.measure(second as f64, buffer, &mut measured.totals);
-      measured.windows.push(window);
+      measuring.window(second, buffer, rate, measured);
     }
     if filled != Filled::Full {
       return Ok(Reached::End(second as f64 + length as f64 / rate as f64));
@@ -738,7 +784,7 @@ fn whole(
 /// file cannot be sought in. a file that gives out early ends where the furthest window read ends
 fn sampled(
   decoder: &mut Decoder,
-  analyzer: &mut Analyzer,
+  measuring: &mut Measuring<'_>,
   buffer: &mut [Vec<f32>],
   picks: &BTreeSet<u64>,
   segments: &mut Option<Segments>,
@@ -771,7 +817,7 @@ fn sampled(
       debug!(problem, "the file cannot be sought in, reading it through");
       return match whole(
         decoder,
-        analyzer,
+        measuring,
         buffer,
         Windows::Only(picks),
         segments,
@@ -795,15 +841,13 @@ fn sampled(
         furthest = second as f64 + length as f64 / rate as f64;
       }
       if usable(&filled, rate) {
-        let window = analyzer.measure(second as f64, buffer, &mut measured.totals);
-        measured.windows.push(window);
+        measuring.window(second, buffer, rate, measured);
       }
       debug!(second, "the file ended before its last pick");
       return Ok(Reached::End(furthest));
     }
     furthest = (second + 1) as f64;
-    let window = analyzer.measure(second as f64, buffer, &mut measured.totals);
-    measured.windows.push(window);
+    measuring.window(second, buffer, rate, measured);
   }
   Ok(Reached::Sampled)
 }

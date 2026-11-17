@@ -1,29 +1,57 @@
-//! Frame grids that MP3 and AAC encoders leave in decoded audio.
+//! Frame grids that MP3, AAC and Opus encoders leave in decoded audio.
 //!
-//! An encoder transforms its input in frames on a fixed grid and quantizes the transform values,
-//! zeroing many of them. The decoder's synthesis inverts the encoder's analysis, so running that
-//! analysis again on the decoded samples, with frames on the encoder's grid, gives back the
-//! quantized values, and every value the encoder zeroed comes out at the level of the samples'
-//! rounding noise. With frames at any other offset those values are filled by the neighbouring
-//! frames. Lossless audio has no such offset.
+//! An encoder transforms its input in frames on a fixed grid and quantizes what the transform
+//! gives. The decoder's synthesis inverts the encoder's analysis, so running that analysis again
+//! on the decoded samples, with frames on the encoder's grid, gives the quantized values back.
+//! With frames at any other offset they are mixed with the neighbouring frames'. Lossless audio
+//! has no such offset.
 //!
-//! The scan reads four stretches of 40960 samples, at 20, 40, 60 and 80% of the file. For each
-//! codec and each offset of its grid, it counts the transform values that stand above the
-//! rounding noise of 16-bit samples, on a log scale, in left and right or in mid and side,
-//! whichever pair counts fewer in a frame. The offset with the lowest count, and how far that
-//! count sits below the others, is the codec's [`CodecScan`]. The AAC analysis is the long
-//! window of ffmpeg's AAC encoder: a 2048-point MDCT at a hop of 1024 with the
-//! Kaiser-Bessel-derived window. The MP3 analysis is the layer III hybrid filterbank: the
-//! 512-tap polyphase filterbank, an 18-line MDCT per subband and the alias-reduction butterflies,
-//! at a hop of 576. Short blocks are not analyzed.
+//! The scan reads four stretches of 40960 samples, at 20, 40, 60 and 80% of the file.
 //!
-//! A grid is evidence that the samples were decoded from that codec, at some point. Resampling
-//! after decoding removes it, Opus leaves none, and clipping hides it frame by frame. Vorbis's
-//! grid shows through the AAC scan, so a Vorbis decode reads as AAC.
+//! # MP3 and AAC
+//!
+//! Both zero many transform values, and on the grid every zeroed value comes out at the level
+//! of the samples' rounding noise. For each offset of a codec's grid, the scan counts the
+//! transform values that stand above the rounding noise of 16-bit samples, on a log scale, in
+//! left and right or in mid and side, whichever pair counts fewer in a frame. The offset with
+//! the lowest count, and how far that count sits below the others, is the codec's
+//! [`CodecScan`]. The AAC analysis is the long window of ffmpeg's AAC encoder: a 2048-point
+//! MDCT at a hop of 1024 with the Kaiser-Bessel-derived window. The MP3 analysis is the layer
+//! III hybrid filterbank: the 512-tap polyphase filterbank, an 18-line MDCT per subband and the
+//! alias-reduction butterflies, at a hop of 576. Short blocks are not analyzed.
+//!
+//! # Opus
+//!
+//! Opus's CELT layer codes the energy of each of its 21 bands, in each frame, as a step from a
+//! prediction: half the band's energy a frame earlier plus a sum over the frame's lower bands.
+//! The step is a whole number of 6 dB refined by a few bits. On the grid, each band's energy
+//! comes back, and taking the prediction off it leaves a number on that lattice. A frame counts
+//! when at least 80% of the bands that stand over the samples' rounding noise, in each channel,
+//! are within 0.003 of a 32nd of 6 dB. The offset that counts the most frames is the
+//! [`OpusScan`].
+//!
+//! The analysis is of 20 ms frames at 48 kHz, the rate Opus runs at: a 1920-point MDCT at a
+//! hop of 960 with CELT's low-overlap window, after the encoder's pre-emphasis. Samples at
+//! 44.1 kHz are brought back to 48 kHz first; other rates are not scanned. Only a frame coded
+//! as one long block with the pitch post-filter off, after another such frame, counts. The
+//! windows the file is measured at are read too, on the one grid a decode has when nothing was
+//! cut from its start.
+//!
+//! # Limits
+//!
+//! A grid is evidence that the samples were decoded from that codec, at some point.
+//!
+//! - Resampling after decoding removes an MP3 or AAC grid. Opus's energies are still found
+//!   after a conversion from 48 to 44.1 kHz.
+//! - Clipping hides a grid frame by frame.
+//! - Vorbis's grid shows through the AAC scan, so a Vorbis decode reads as AAC.
+//! - Opus frames of other lengths than 20 ms, and its SILK and hybrid modes below 8 kHz, leave
+//!   nothing the scan looks for.
 
 use std::fmt;
 use std::sync::Arc;
 
+use crate::lattice;
 use crate::thresholds::ReadingThresholds;
 use rayon::prelude::*;
 use rustfft::num_complex::Complex;
@@ -59,6 +87,8 @@ pub enum Codec {
   Aac,
   /// MP3, layer III.
   Mp3,
+  /// Opus, by the band energies of its CELT layer in 20 ms frames.
+  Opus,
 }
 
 impl fmt::Display for Codec {
@@ -66,6 +96,7 @@ impl fmt::Display for Codec {
     f.write_str(match self {
       Self::Aac => "AAC",
       Self::Mp3 => "MP3",
+      Self::Opus => "Opus",
     })
   }
 }
@@ -90,7 +121,38 @@ pub struct CodecScan {
   pub segment_z: [f64; SEGMENTS],
 }
 
-/// Scan of a file for the frame grids of MP3 and AAC.
+/// Offset of an Opus decode's frames when nothing was cut from its start, in samples.
+///
+/// It is where frames start at 48 kHz, modulo the 960 samples of a 20 ms frame, counted from
+/// the file's first sample.
+pub const OPUS_UNCUT_OFFSET: usize = lattice::UNCUT_OFFSET;
+
+/// How many frames of a file carry Opus's band energies.
+///
+/// A frame counts when the energies of its bands, taken with the analysis of Opus's CELT layer,
+/// sit on the lattice of the codec's energy quantizer. Samples at 44.1 kHz are brought back to
+/// the 48 kHz Opus runs at first.
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct OpusScan {
+  /// Offset of the frame grid that counts the most frames in the four segments, in samples.
+  ///
+  /// It is where frames start at 48 kHz, modulo the 960 samples of a 20 ms frame, counted
+  /// from the file's first sample. Where no offset counts a frame it is the uncut decode's.
+  pub offset: usize,
+  /// Number of frames counted at `offset`, over the four segments.
+  pub frames: usize,
+  /// Each segment's count at `offset`, in file order.
+  pub segment_frames: [usize; SEGMENTS],
+  /// Number of frames counted in the windows measured, on the grid of an uncut decode.
+  ///
+  /// The grid is the one a decode has when nothing was cut from its start: libopus's encoders
+  /// all delay their input by the same 312 samples. Up to 60 windows are read.
+  pub uncut_frames: usize,
+}
+
+/// Scan of a file for the frame grids of MP3, AAC and Opus.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Scan {
@@ -98,6 +160,30 @@ pub struct Scan {
   pub aac: CodecScan,
   /// MP3's grid.
   pub mp3: CodecScan,
+  /// Opus's frames, `None` at a sample rate other than 44.1 and 48 kHz.
+  #[cfg_attr(feature = "serde", serde(default))]
+  pub opus: Option<OpusScan>,
+}
+
+/// What shows a codec's frame grid.
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(untagged))]
+pub enum Evidence {
+  /// Offset whose transform values count far fewer than the others, for MP3 and AAC.
+  Count(CodecScan),
+  /// Frames whose band energies sit on the quantizer's lattice, for Opus.
+  Lattice(OpusScan),
+}
+
+impl Evidence {
+  /// Returns the offset of the frame grid, in samples.
+  pub fn offset(&self) -> usize {
+    match self {
+      Self::Count(scan) => scan.offset,
+      Self::Lattice(scan) => scan.offset,
+    }
+  }
 }
 
 /// Frame grid a reading finds.
@@ -106,15 +192,18 @@ pub struct Scan {
 pub struct Found {
   /// Codec whose grid it is.
   pub codec: Codec,
-  /// How far the grid stands out.
+  /// What shows the grid.
   #[cfg_attr(feature = "serde", serde(flatten))]
-  pub scan: CodecScan,
+  pub evidence: Evidence,
 }
 
-/// the grid `scan` shows under `thresholds`: a codec over its z threshold with as many segments
-/// agreeing as its own threshold asks, the one furthest over its z threshold when both are
+/// the grid `scan` shows under `thresholds`: MP3 or AAC over its z threshold with as many
+/// segments agreeing as its own threshold asks, the one furthest over its z threshold when both
+/// are. without either, Opus with enough frames on its lattice in the segments or in the
+/// windows: the codec decoded last leaves the grid that counts, and Opus's energies can show
+/// through an MP3 made from its decode
 pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found> {
-  [
+  let counted = [
     (
       Codec::Aac,
       &scan.aac,
@@ -133,7 +222,16 @@ pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found
   .max_by(|(_, a, za, _), (_, b, zb, _)| (a.z / za).total_cmp(&(b.z / zb)))
   .map(|(codec, scan, _, _)| Found {
     codec,
-    scan: scan.clone(),
+    evidence: Evidence::Count(scan.clone()),
+  });
+  counted.or_else(|| {
+    let opus = scan.opus.as_ref()?;
+    (opus.frames >= thresholds.opus_grid_frames
+      || opus.uncut_frames >= thresholds.opus_uncut_frames)
+      .then(|| Found {
+        codec: Codec::Opus,
+        evidence: Evidence::Lattice(opus.clone()),
+      })
   })
 }
 
@@ -245,49 +343,109 @@ impl Segments {
   }
 }
 
-/// the jobs of one scan: each codec in each segment
-pub(crate) const JOBS: usize = 2 * SEGMENTS;
+/// what the scan for Opus's frames needs beside the segments
+#[derive(Clone, Copy)]
+pub(crate) struct Opus {
+  /// the file's sample rate
+  pub(crate) rate: u32,
+  /// the bits of its samples, whose rounding noise a band must stand over
+  pub(crate) bits: u32,
+  /// the frames counted in the windows measured, on the grid of an uncut decode
+  pub(crate) uncut_frames: usize,
+}
+
+/// the jobs of one scan: MP3 and AAC in each segment, and Opus where `opus`
+pub(crate) fn jobs(opus: bool) -> usize {
+  (2 + usize::from(opus)) * SEGMENTS
+}
 /// the tasks a job's offsets are split into at most, so that one file's scan can fill the pool
 const TASKS: usize = 32;
 
 /// the scan of full `segments`, each codec of each segment a job on rayon's thread pool that
-/// splits its offsets into tasks on the same pool. `go_on` is asked before each job, `None` once
-/// it says not to, and `ended` is called as each job ends.
+/// splits its offsets into tasks on the same pool; Opus is among the codecs with `opus`. `go_on`
+/// is asked before each job, `None` once it says not to, and `ended` is called as each job ends.
 /// panics when a segment is not full.
 pub(crate) fn scan(
   segments: &Segments,
+  opus: Option<Opus>,
   go_on: impl Fn() -> bool + Sync,
   ended: impl Fn() + Sync,
 ) -> Option<Scan> {
   assert!(segments.complete(), "every segment is full before a scan");
+  let codecs = [
+    Some(Codec::Aac),
+    Some(Codec::Mp3),
+    opus.map(|_| Codec::Opus),
+  ];
   let jobs: Vec<(Codec, &Segment)> = segments
     .0
     .iter()
-    .flat_map(|segment| [(Codec::Aac, segment), (Codec::Mp3, segment)])
+    .flat_map(|segment| {
+      codecs
+        .into_iter()
+        .flatten()
+        .map(move |codec| (codec, segment))
+    })
     .collect();
   let curves: Vec<(Codec, Vec<f64>)> = jobs
     .into_par_iter()
     .map(|(codec, segment)| {
       go_on().then(|| {
-        let curve = match codec {
-          Codec::Aac => Aac::curve(segment),
-          Codec::Mp3 => Mp3::new().curve(segment),
+        let curve = match (codec, opus) {
+          (Codec::Aac, _) => in_file(&Aac::curve(segment), segment.start),
+          (Codec::Mp3, _) => in_file(&Mp3::new().curve(segment), segment.start),
+          // the counts come in the file's offsets, and are whole numbers far below 2^53
+          (Codec::Opus, Some(opus)) => {
+            let channels = [&segment.left[..], &segment.right[..]];
+            lattice::curve(&channels, segment.start, opus.rate, opus.bits)
+              .into_iter()
+              .map(|count| count as f64)
+              .collect()
+          }
+          (Codec::Opus, None) => unreachable!("opus is a job only with what it needs"),
         };
         ended();
-        (codec, in_file(&curve, segment.start))
+        (codec, curve)
       })
     })
     .collect::<Option<_>>()?;
-  let (aac, mp3): (Vec<_>, Vec<_>) = curves
-    .into_iter()
-    .partition(|(codec, _)| *codec == Codec::Aac);
-  let only = |pairs: Vec<(Codec, Vec<f64>)>| -> Vec<Vec<f64>> {
-    pairs.into_iter().map(|(_, curve)| curve).collect()
+  let of = |wanted: Codec| -> Vec<Vec<f64>> {
+    curves
+      .iter()
+      .filter(|(codec, _)| *codec == wanted)
+      .map(|(_, curve)| curve.clone())
+      .collect()
   };
   Some(Scan {
-    aac: codec_scan(&only(aac)),
-    mp3: codec_scan(&only(mp3)),
+    aac: codec_scan(&of(Codec::Aac)),
+    mp3: codec_scan(&of(Codec::Mp3)),
+    opus: opus.map(|opus| opus_scan(&of(Codec::Opus), opus.uncut_frames)),
   })
+}
+
+/// the scan for Opus from its segments' counts in the file's offsets: the first offset with the
+/// most frames over the segments, the uncut decode's when none has any
+fn opus_scan(curves: &[Vec<f64>], uncut_frames: usize) -> OpusScan {
+  let summed: Vec<f64> = (0..lattice::FRAME)
+    .map(|o| curves.iter().map(|c| c[o]).sum())
+    .collect();
+  let (offset, frames) =
+    summed
+      .iter()
+      .enumerate()
+      .fold((OPUS_UNCUT_OFFSET, 0.0), |(at, most), (o, count)| {
+        if *count > most {
+          (o, *count)
+        } else {
+          (at, most)
+        }
+      });
+  OpusScan {
+    offset,
+    frames: frames as usize,
+    segment_frames: std::array::from_fn(|i| curves[i][offset] as usize),
+    uncut_frames,
+  }
 }
 
 /// a segment's curve, whose entry `o` is for frames starting `o` samples into the segment
@@ -456,7 +614,7 @@ impl Aac {
 /// the input of the DCT-IV whose output is the MDCT of `frame`, 2N windowed samples:
 /// (-c_r - d, a - b_r) for its quarters a, b, c, d, so that the DCT-IV gives
 /// X_k = sqrt(2/N) sum_n x_n cos(pi/N (n + 1/2 + N/2)(k + 1/2))
-fn fold<T: Float>(frame: &[T], folded: &mut [T]) {
+pub(crate) fn fold<T: Float>(frame: &[T], folded: &mut [T]) {
   fold_with(frame, folded, |c, d| -*c - *d, |a, b| *a - *b);
 }
 
@@ -504,7 +662,7 @@ fn kbd_window(length: usize, alpha: f64) -> Vec<f64> {
 }
 
 /// the modified Bessel function of the first kind of order 0, from its power series
-fn bessel_i0(x: f64) -> f64 {
+pub(crate) fn bessel_i0(x: f64) -> f64 {
   let quarter = x * x / 4.0;
   let mut term = 1.0;
   let mut sum = 1.0;
@@ -520,7 +678,7 @@ fn bessel_i0(x: f64) -> f64 {
 
 /// the orthonormal DCT-IV of length N through a complex FFT of length N/2:
 /// X_k = sqrt(2/N) sum_n u_n cos(pi/N (n + 1/2)(k + 1/2))
-struct DctIv {
+pub(crate) struct DctIv {
   fft: Arc<dyn Fft<f32>>,
   /// exp(-i pi n / N), for the input
   pre: Vec<Complex<f32>>,
@@ -531,7 +689,7 @@ struct DctIv {
 }
 
 impl DctIv {
-  fn new(n: usize) -> Self {
+  pub(crate) fn new(n: usize) -> Self {
     let half = n / 2;
     let fft = FftPlanner::new().plan_fft_forward(half);
     let turn = |angle: f64, scale: f64| {
@@ -554,7 +712,7 @@ impl DctIv {
   ///
   /// with z_n = u_2n + i u_(N-1-2n) and Y_k = sum_n z_n exp(-i pi (2n + 1/2)(2k + 1/2) / N),
   /// X_2k is the real part of Y_k and X_(N-1-2k) minus its imaginary part.
-  fn process(&mut self, input: &[f32], output: &mut [f32]) {
+  pub(crate) fn process(&mut self, input: &[f32], output: &mut [f32]) {
     // pair i holds u_2i and u_(2i+1), so u_(N-1-2n) is the second of pair N/2-1-n
     let (pairs, _) = input.as_chunks::<2>();
     let turned = self.buffer.iter_mut().zip(&self.pre);
@@ -876,6 +1034,7 @@ mod tests {
     let scan = |aac: (f64, usize), mp3: (f64, usize)| Scan {
       aac: codec_scan(aac.0, aac.1),
       mp3: codec_scan(mp3.0, mp3.1),
+      opus: None,
     };
     let codec = |scan: &Scan| found(scan, &thresholds).map(|f| f.codec);
     // an MP3 dip in one segment is no grid, an AAC dip the segments place differently is one

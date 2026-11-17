@@ -4,8 +4,9 @@
 use crate::aggregate::{Measures, measures, middle, percentile, upsample_ratio};
 use crate::engine::Measured;
 use crate::flags::{Flag, findings};
-use crate::grid::{self, Codec, Found};
+use crate::grid::{self, Codec, Evidence, Found};
 use crate::limitation::{Limitation, khz};
+use crate::opus::OpusUse;
 use crate::thresholds::{EncoderProfile, ReadingThresholds};
 use crate::window::{Step, Window};
 
@@ -346,6 +347,9 @@ impl Measured {
       encoder_guess: found.encoder_guess,
       summary: std::iter::once(found.summary)
         .chain(found_beside.notes)
+        .chain(
+          OpusUse::describe(&self.opus).map(|coding| format!("Its Opus packets are {coding}.")),
+        )
         .collect::<Vec<_>>()
         .join(" "),
       measures,
@@ -368,18 +372,31 @@ fn weighed(
     if grid.codec == Codec::Aac {
       limitations.push(Limitation::VorbisReadsAsAac);
     }
+    let evidence = match &grid.evidence {
+      Evidence::Count(scan) => format!(
+        "The samples carry an {name} frame grid at offset {} (z {:.0}, {} of {} segments \
+         agreeing), as audio decoded from {name} does.",
+        scan.offset,
+        scan.z,
+        scan.segments_agreeing,
+        grid::SEGMENTS,
+      ),
+      // the frames of whichever count passed its threshold
+      Evidence::Lattice(scan) if scan.frames >= thresholds.opus_grid_frames => format!(
+        "The band energies of {} frames at offset {} sit on the lattice of Opus's quantizer, as \
+         in audio decoded from Opus.",
+        scan.frames, scan.offset,
+      ),
+      Evidence::Lattice(scan) => format!(
+        "The band energies of {} frames sit on the lattice of Opus's quantizer, on the frame \
+         grid of an Opus decode whose start was not cut.",
+        scan.uncut_frames,
+      ),
+    };
     return CutoffReading {
       verdict: Verdict::LikelyTranscode,
       confidence: thresholds.confidence_cap,
-      summary: format!(
-        "The samples carry an {name} frame grid at offset {} (z {:.0}, {} of {} segments \
-         agreeing), as audio decoded from {name} does. {}",
-        grid.scan.offset,
-        grid.scan.z,
-        grid.scan.segments_agreeing,
-        grid::SEGMENTS,
-        found.summary
-      ),
+      summary: format!("{evidence} {}", found.summary),
       limitations,
       ..found
     };
@@ -392,8 +409,8 @@ fn weighed(
         verdict: Verdict::PossiblyLossy,
         confidence: 0.4,
         summary: format!(
-          "{} No MP3 or AAC frame grid shows in the samples, so the cutoff alone cannot confirm \
-           a lossy source.",
+          "{} No MP3, AAC or Opus frame grid shows in the samples, so the cutoff alone cannot \
+           confirm a lossy source.",
           found.summary
         ),
         limitations,

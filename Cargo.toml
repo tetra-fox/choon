@@ -29,9 +29,9 @@ cli = [
 serde = ["dep:serde"]
 # the generated audio and the sample file the analyzer is tested on, for the program's tests here
 # and the tests of the crates that use this one
-testing = ["dep:flacenc", "dep:mp3lame-encoder"]
+testing = ["dep:flacenc", "dep:mp3lame-encoder", "dep:opus"]
 
-# docs.rs shows what `serde` adds; `testing` builds LAME, which it cannot
+# docs.rs shows what `serde` adds; `testing` builds LAME and libopus, which it cannot
 [package.metadata.docs.rs]
 features = ["serde"]
 
@@ -50,6 +50,9 @@ serde = { version = "1.0.229", features = ["derive"], optional = true }
 # decodes every audio format the analyzer reads, streamed
 symphonia = { version = "0.6.1", features = ["all"] }
 symphonia-common = "0.6.1"
+# decodes Opus, which symphonia does not. pinned to the release checked against the Opus test
+# vectors and libopus
+symphonia-opus = "=0.1.3"
 tracing = "0.1.44"
 
 # the program's own: arguments, the walk of a directory, the terminal's progress, colour and tables
@@ -72,9 +75,11 @@ serde_json = { version = "1.0.154", features = [
 ], optional = true }
 
 # make the lossless and lossy audio the analyzer is tested on. mp3lame-encoder builds the LAME
-# source it carries with autotools (`configure`, `make`, a C compiler)
+# source it carries with autotools (`configure`, `make`, a C compiler), and opus builds the
+# libopus source it carries with CMake
 flacenc = { version = "0.5.1", default-features = false, optional = true }
 mp3lame-encoder = { version = "0.3.0", optional = true }
+opus = { version = "0.4.0", optional = true }
 
 [dev-dependencies]
 # the crate itself with `testing`, for the generated audio its tests read
@@ -107,6 +112,9 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package.symphonia-core]
+opt-level = 3
+
+[profile.dev.package.symphonia-opus]
 opt-level = 3
 
 # the encoders the tests make audio with

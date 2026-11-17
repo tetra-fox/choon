@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use walkdir::{DirEntry, WalkDir};
 
 /// the extensions a walk takes for audio, in any case: the codecs and containers the analyzer is
-/// given to decode, and Opus, which it reports as not read
+/// given to decode
 pub const EXTENSIONS: [&str; 16] = [
   "flac", "wav", "aif", "aiff", "aifc", "caf", "m4a", "mp4", "alac", "mp3", "aac", "ogg", "oga",
   "opus", "mka", "webm",

@@ -43,11 +43,13 @@
             }.minimal;
         in
         {
-          # the test fixtures build LAME's C source with the shell's compiler and make
+          # the test fixtures build LAME's C source with the shell's compiler and make, and
+          # libopus's with CMake
           default = pkgs.mkShell {
             packages = with pkgs; [
               (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
               cargo-nextest
+              cmake
               just
               git
             ];

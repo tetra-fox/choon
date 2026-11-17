@@ -18,9 +18,9 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use choon::grid::Scan;
+use choon::grid::{Evidence, Scan};
 use choon::{
-  CancelCheck, Claimed, Coverage, Error, Flag, MeasureThresholds, Measured, Reading,
+  CancelCheck, Claimed, Coverage, Error, Flag, MeasureThresholds, Measured, OpusUse, Reading,
   ReadingThresholds, Settings, Verdict,
 };
 use clap::{Args, ColorChoice, Parser, Subcommand};
@@ -160,6 +160,7 @@ struct Checked {
   sampled: bool,
   windows: usize,
   grid: Option<Scan>,
+  opus: Vec<OpusUse>,
   readings: Vec<Read>,
 }
 
@@ -174,6 +175,9 @@ struct Analyzed<'a> {
   sampled: bool,
   windows: usize,
   grid: Option<&'a Scan>,
+  /// left out for a file that is not Opus
+  #[serde(skip_serializing_if = "<[OpusUse]>::is_empty")]
+  opus: &'a [OpusUse],
   readings: &'a [Read],
 }
 
@@ -397,11 +401,12 @@ fn printed(
             sampled: checked.sampled,
             windows: checked.windows,
             grid: checked.grid.as_ref(),
+            opus: &checked.opus,
             readings: &checked.readings,
           })
           .expect("a reading serializes")
         } else {
-          format!("{}: {}", file.display(), said(&checked.readings, false))
+          format!("{}: {}", file.display(), said(&checked, false))
         }
       }
       Err(Error::Open(e)) => {
@@ -468,11 +473,7 @@ fn shown(
               .iter()
               .any(|read| flagged(read.reading.verdict));
             if !one && (flagged || check.verbose) {
-              let line = format!(
-                "{}: {}",
-                terminal::legible(path),
-                said(&checked.readings, colour)
-              );
+              let line = format!("{}: {}", terminal::legible(path), said(&checked, colour));
               bars.say(&line).map_err(Failed::Output)?;
             }
             Ok(checked)
@@ -653,24 +654,29 @@ fn analyzed(
     sampled: first.sampled,
     windows: first.windows.len(),
     grid: first.grid,
+    opus: first.opus,
     readings,
   })
 }
 
-/// the readings in a few words each, named after their profile when there are several, with
-/// the verdicts coloured when `colour`
-fn said(readings: &[Read], colour: bool) -> String {
+/// a file's readings in a few words each, named after their profile when there are several, with
+/// the verdicts coloured when `colour`, then what an Opus file's packets state
+fn said(checked: &Checked, colour: bool) -> String {
   let words = |reading: &Reading| {
     let (verdict, rest) = words(reading);
     terminal::painted(Some(reading.verdict), verdict, colour) + &rest
   };
-  match readings {
+  let readings = match &checked.readings[..] {
     [read] => words(&read.reading),
-    _ => readings
+    readings => readings
       .iter()
       .map(|read| format!("[{}] {}", read.profile, words(&read.reading)))
       .collect::<Vec<_>>()
       .join("; "),
+  };
+  match OpusUse::describe(&checked.opus) {
+    Some(coding) => format!("{readings}; Opus {coding}"),
+    None => readings,
   }
 }
 
@@ -684,9 +690,14 @@ fn words(reading: &Reading) -> (&'static str, String) {
   let guess = named_guess(reading);
   if let Some(grid) = &reading.grid {
     let at = guess.map_or_else(String::new, |g| format!(", where {g} cuts"));
+    let how = match &grid.evidence {
+      Evidence::Count(scan) => format!("z {:.0}", scan.z),
+      Evidence::Lattice(scan) => format!("{} frames", scan.frames.max(scan.uncut_frames)),
+    };
     let rest = format!(
-      ": {} grid at offset {} (z {:.0}), {cut}{at}",
-      grid.codec, grid.scan.offset, grid.scan.z
+      ": {} grid at offset {} ({how}), {cut}{at}",
+      grid.codec,
+      grid.evidence.offset()
     );
     return (verdict, rest);
   }

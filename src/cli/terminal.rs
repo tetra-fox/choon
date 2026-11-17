@@ -8,7 +8,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use anstyle::{AnsiColor, Style};
-use choon::{Reading, Verdict};
+use choon::grid::Evidence;
+use choon::{OpusUse, Reading, Verdict};
 use comfy_table::{CellAlignment, ContentArrangement, LineStyle, Table, TableStyle};
 use console::{Alignment, Term};
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
@@ -326,6 +327,9 @@ pub fn readout(path: &Path, checked: &Checked, profiled: bool, colour: bool, wid
       table.add_row([label, &value]);
     };
     add("Format", format.clone());
+    if let Some(coding) = OpusUse::describe(&checked.opus) {
+      add("Opus packets", coding);
+    }
     add(
       "Verdict",
       painted(Some(reading.verdict), label(reading.verdict), colour),
@@ -365,18 +369,29 @@ pub fn readout(path: &Path, checked: &Checked, profiled: bool, colour: bool, wid
 /// what the grid scan showed of a file, for its reading
 fn grid(checked: &Checked, reading: &Reading) -> String {
   match (&reading.grid, &checked.grid) {
-    (Some(found), _) => format!(
-      "{} at offset {}, z {:.0}, {} of {} stretches agree",
-      found.codec,
-      found.scan.offset,
-      found.scan.z,
-      found.scan.segments_agreeing,
-      found.scan.segment_z.len()
-    ),
-    (None, Some(scan)) => format!(
-      "none over the thresholds (MP3 z {:.1}, AAC z {:.1})",
-      scan.mp3.z, scan.aac.z
-    ),
+    (Some(found), _) => match &found.evidence {
+      Evidence::Count(scan) => format!(
+        "{} at offset {}, z {:.0}, {} of {} stretches agree",
+        found.codec,
+        scan.offset,
+        scan.z,
+        scan.segments_agreeing,
+        scan.segment_z.len()
+      ),
+      Evidence::Lattice(scan) => format!(
+        "{} at offset {}, {} frames on its energy lattice in the stretches, {} in the windows",
+        found.codec, scan.offset, scan.frames, scan.uncut_frames
+      ),
+    },
+    (None, Some(scan)) => {
+      let opus = scan.opus.as_ref().map_or_else(String::new, |opus| {
+        format!(", Opus frames {} and {}", opus.frames, opus.uncut_frames)
+      });
+      format!(
+        "none over the thresholds (MP3 z {:.1}, AAC z {:.1}{opus})",
+        scan.mp3.z, scan.aac.z
+      )
+    }
     (None, None) => "not scanned".to_string(),
   }
 }
@@ -470,7 +485,7 @@ pub fn tables(
         let mut row = vec![
           painted(Some(reading.verdict), label(reading.verdict), colour),
           reading.grid.as_ref().map_or_else(String::new, |found| {
-            format!("{}, offset {}", found.codec, found.scan.offset)
+            format!("{}, offset {}", found.codec, found.evidence.offset())
           }),
           reading.cutoff_hz.map_or_else(String::new, khz),
           named_guess(reading).unwrap_or_default().to_string(),

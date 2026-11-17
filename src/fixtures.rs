@@ -1,8 +1,9 @@
 //! Audio the analyzer is tested on.
 //!
 //! It is made in the test from a fixed seed: noise shaped like music's spectrum, written as
-//! FLAC, and the same noise through the LAME MP3 encoder and back for the transcodes. The one
-//! file kept as bytes is a short ALAC tone, which nothing here can encode.
+//! FLAC, the same noise through the LAME MP3 encoder and back for the transcodes, and through
+//! libopus for Opus streams in Ogg and WebM. The one file kept as bytes is a short ALAC tone,
+//! which nothing here can encode.
 //!
 //! As test support, every function here panics when encoding, writing or decoding fails.
 
@@ -636,4 +637,208 @@ pub fn write_repeating_mp4(audio: &Audio, chunks: u32, delta: u32, path: &Path) 
   let offset = (ftyp.len() + moov(0).len() + 8) as u32;
   let file = [ftyp, moov(offset), mp4_box(b"mdat", &pcm)].concat();
   std::fs::write(path, file).unwrap();
+}
+
+/// Settings an Opus stream is encoded with.
+#[derive(Clone, Copy, Debug)]
+pub struct OpusSettings {
+  /// Bitrate in bit/s.
+  pub bitrate: u32,
+  /// Length of a frame in sample frames: 120, 240, 480, 960, 1920 or 2880.
+  pub frame: usize,
+  /// Whether the encoder is set for voice, not for music.
+  pub voice: bool,
+  /// Output gain the stream's header states, in 1/256 dB.
+  pub gain: i16,
+}
+
+impl OpusSettings {
+  /// Returns the settings of music at `kbps` kbit/s in 20 ms frames, with no output gain.
+  pub fn music(kbps: u32) -> Self {
+    Self {
+      bitrate: kbps * 1000,
+      frame: 960,
+      voice: false,
+      gain: 0,
+    }
+  }
+}
+
+/// Opus packets of some audio, and what a container states of them.
+#[derive(Clone, Debug)]
+pub struct OpusStream {
+  /// Packets, one frame each, in order.
+  pub packets: Vec<Vec<u8>>,
+  /// Decoded sample frames a player drops before the audio starts.
+  pub pre_skip: u16,
+  /// Length of the audio in sample frames, less than the packets decode to.
+  pub frames: u64,
+  /// Number of channels, one or two.
+  pub channels: u8,
+  /// Settings the packets were encoded with.
+  pub settings: OpusSettings,
+}
+
+/// Returns `audio`, one or two channels at 48 kHz, encoded by libopus with `settings`.
+pub fn opus(audio: &Audio, settings: OpusSettings) -> OpusStream {
+  assert_eq!(audio.rate, 48_000, "opus is encoded at 48 kHz");
+  let channels = match audio.channels.len() {
+    1 => opus::Channels::Mono,
+    _ => opus::Channels::Stereo,
+  };
+  let count = channels as usize;
+  let application = if settings.voice {
+    opus::Application::Voip
+  } else {
+    opus::Application::Audio
+  };
+  let mut encoder = opus::Encoder::new(48_000, channels, application).unwrap();
+  encoder
+    .set_bitrate(opus::Bitrate::Bits(settings.bitrate as i32))
+    .unwrap();
+  let pre_skip = encoder.get_lookahead().unwrap() as usize;
+  let frames = audio.channels[0].len();
+  // the decoder gives the audio back after the pre-skip, so silence that long follows it
+  let padded = (frames + pre_skip).div_ceil(settings.frame) * settings.frame;
+  let interleaved: Vec<f32> = (0..padded)
+    .flat_map(|i| {
+      audio.channels[..count]
+        .iter()
+        .map(move |channel| channel.get(i).copied().unwrap_or(0.0))
+    })
+    .collect();
+  let packets = interleaved
+    .chunks(settings.frame * count)
+    .map(|frame| encoder.encode_vec_float(frame, 4000).unwrap())
+    .collect();
+  OpusStream {
+    packets,
+    pre_skip: pre_skip as u16,
+    frames: frames as u64,
+    channels: count as u8,
+    settings,
+  }
+}
+
+impl OpusStream {
+  /// the identification header: the channels, the pre-skip, the input rate and the output gain,
+  /// for one stream of one or two channels
+  fn head(&self) -> Vec<u8> {
+    let mut head = b"OpusHead\x01".to_vec();
+    head.push(self.channels);
+    head.extend_from_slice(&self.pre_skip.to_le_bytes());
+    head.extend_from_slice(&48_000u32.to_le_bytes());
+    head.extend_from_slice(&self.settings.gain.to_le_bytes());
+    head.push(0);
+    head
+  }
+
+  /// Returns the stream in an Ogg container, as an `.opus` file holds it.
+  ///
+  /// Each page holds up to a second of packets, 50 at most, and the last page states where the
+  /// audio ends.
+  pub fn ogg(&self) -> Vec<u8> {
+    // an empty vendor string and no comments
+    let tags = b"OpusTags\0\0\0\0\0\0\0\0".to_vec();
+    let mut out = ogg_page(0x02, 0, 0, &[self.head()]);
+    out.extend(ogg_page(0, 0, 1, &[tags]));
+    let pages = self.packets.chunks((48_000 / self.settings.frame).min(50));
+    let last = pages.len();
+    let end = u64::from(self.pre_skip) + self.frames;
+    let mut held = 0;
+    for (index, page) in pages.enumerate() {
+      held += (page.len() * self.settings.frame) as u64;
+      let (kind, granule) = if index + 1 == last {
+        (0x04, end)
+      } else {
+        (0, held)
+      };
+      out.extend(ogg_page(kind, granule, index as u32 + 2, page));
+    }
+    out
+  }
+
+  /// Returns the stream in a WebM container.
+  ///
+  /// Each cluster holds a second of packets. The container counts in milliseconds and does not
+  /// state where the audio ends, so a reader gets the frames that pad the last packet too.
+  pub fn webm(&self) -> Vec<u8> {
+    let unsigned = |value: u64| -> Vec<u8> {
+      let bytes = value.to_be_bytes();
+      let skip = bytes.iter().take_while(|b| **b == 0).count().min(7);
+      bytes[skip..].to_vec()
+    };
+    let header = [
+      ebml(&[0x42, 0x86], &[1]),
+      ebml(&[0x42, 0xf7], &[1]),
+      ebml(&[0x42, 0xf2], &[4]),
+      ebml(&[0x42, 0xf3], &[8]),
+      ebml(&[0x42, 0x82], b"webm"),
+      ebml(&[0x42, 0x87], &[4]),
+      ebml(&[0x42, 0x85], &[2]),
+    ]
+    .concat();
+    // a tick of a millisecond, and the names of what wrote the file
+    let info = [
+      ebml(&[0x2a, 0xd7, 0xb1], &unsigned(1_000_000)),
+      ebml(&[0x4d, 0x80], b"choon"),
+      ebml(&[0x57, 0x41], b"choon"),
+    ]
+    .concat();
+    let delay_ns = u64::from(self.pre_skip) * 1_000_000_000 / 48_000;
+    let audio = [
+      ebml(&[0xb5], &48_000f64.to_be_bytes()),
+      ebml(&[0x9f], &[self.channels]),
+    ]
+    .concat();
+    let track = [
+      ebml(&[0xd7], &[1]),
+      ebml(&[0x73, 0xc5], &[1]),
+      ebml(&[0x83], &[2]),
+      ebml(&[0x86], b"A_OPUS"),
+      ebml(&[0x56, 0xaa], &unsigned(delay_ns)),
+      ebml(&[0x56, 0xbb], &unsigned(80_000_000)),
+      ebml(&[0x63, 0xa2], &self.head()),
+      ebml(&[0xe1], &audio),
+    ]
+    .concat();
+    let per_cluster = 48_000 / self.settings.frame;
+    let clusters: Vec<u8> = self
+      .packets
+      .chunks(per_cluster)
+      .enumerate()
+      .flat_map(|(second, packets)| {
+        let mut cluster = ebml(&[0xe7], &unsigned(second as u64 * 1000));
+        for (index, packet) in packets.iter().enumerate() {
+          let ms = (index * self.settings.frame / 48) as i16;
+          // track 1, the time within the cluster, a keyframe
+          let mut block = vec![0x81];
+          block.extend_from_slice(&ms.to_be_bytes());
+          block.push(0x80);
+          block.extend_from_slice(packet);
+          cluster.extend(ebml(&[0xa3], &block));
+        }
+        ebml(&[0x1f, 0x43, 0xb6, 0x75], &cluster)
+      })
+      .collect();
+    let segment = [
+      ebml(&[0x15, 0x49, 0xa9, 0x66], &info),
+      ebml(&[0x16, 0x54, 0xae, 0x6b], &ebml(&[0xae], &track)),
+      clusters,
+    ]
+    .concat();
+    [
+      ebml(&[0x1a, 0x45, 0xdf, 0xa3], &header),
+      ebml(&[0x18, 0x53, 0x80, 0x67], &segment),
+    ]
+    .concat()
+  }
+}
+
+/// one EBML element: its id, its size in eight bytes, then `body`
+fn ebml(id: &[u8], body: &[u8]) -> Vec<u8> {
+  let mut out = id.to_vec();
+  out.extend_from_slice(&((1u64 << 56) | body.len() as u64).to_be_bytes());
+  out.extend_from_slice(body);
+  out
 }
