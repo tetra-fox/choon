@@ -161,12 +161,22 @@ impl Decoder {
     let track = format
       .default_track(TrackType::Audio)
       .ok_or_else(|| not_audio("the file holds no audio track".to_string()))?;
-    let params = track
+    let mut params = track
       .codec_params
       .as_ref()
       .and_then(|p| p.audio())
       .ok_or_else(|| unsupported("the audio track has no codec parameters"))?
       .clone();
+    // symphonia 0.6.1 hands an MP4's Opus header over as the container stores it, big-endian
+    // behind version 0, where the decoder reads the little-endian header of version 1
+    // (https://github.com/pdeljanov/Symphonia/pull/398)
+    // TODO: remove once a symphonia release carries the fix
+    if params.codec == CODEC_ID_OPUS
+      && format.format_info().short_name == "isomp4"
+      && let Some(head) = params.extra_data.as_deref().map(opus::head_from_mp4)
+    {
+      params.with_extra_data(head.into_boxed_slice());
+    }
     let track_id = track.id;
     let time_base = track.time_base;
     let opus = (params.codec == CODEC_ID_OPUS).then(|| Opus {

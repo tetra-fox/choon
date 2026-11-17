@@ -85,7 +85,7 @@ A reading also holds:
 Decoding is done by [symphonia](https://github.com/pdeljanov/Symphonia), and Opus by
 [symphonia-opus](https://github.com/jiztastamablastamarang/symphonia-opus).
 
-- Opus is read in Ogg (`.opus`, `.ogg`) and in Matroska/WebM (`.mka`, `.webm`)
+- Opus is read in Ogg (`.opus`, `.ogg`), Matroska/WebM (`.mka`, `.webm`) and MP4
 - An Opus file starts after its pre-skip and has its header's output gain applied
 - Matroska does not say where the last Opus packet's audio ends, so up to 20 ms of padding is
   read with it

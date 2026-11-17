@@ -200,6 +200,23 @@ impl Tally {
   }
 }
 
+/// the identification header an Ogg stream would carry, from `head`, the signature followed by
+/// what an MP4 stores: the same fields with a version of 0 and its numbers big-endian. a header
+/// too short for a field keeps that field's bytes as they are
+pub(crate) fn head_from_mp4(head: &[u8]) -> Vec<u8> {
+  let mut head = head.to_vec();
+  if let Some(version) = head.get_mut(8) {
+    *version = 1;
+  }
+  // the pre-skip, the input rate and the output gain
+  for field in [10..12, 12..16, 16..18] {
+    if let Some(bytes) = head.get_mut(field) {
+      bytes.reverse();
+    }
+  }
+  head
+}
+
 /// the sample frames a player drops from the start of the stream whose identification header is
 /// `head`, at 48 kHz: the header's pre-skip. `None` when the header is too short to hold it
 pub(crate) fn pre_skip(head: &[u8]) -> Option<u64> {
@@ -276,6 +293,26 @@ mod tests {
       Some("hybrid fullband, voice mode")
     );
     assert_eq!(OpusUse::describe(&[]), None);
+  }
+
+  #[test]
+  fn an_mp4s_header_is_turned_into_the_one_the_decoder_reads() {
+    // version 0, two channels, a pre-skip of 312, 48 kHz, a gain of -256, mapping family 0
+    let mut stored = b"OpusHead\x00\x02".to_vec();
+    stored.extend_from_slice(&312u16.to_be_bytes());
+    stored.extend_from_slice(&48_000u32.to_be_bytes());
+    stored.extend_from_slice(&(-256i16).to_be_bytes());
+    stored.push(0);
+    let mut wanted = b"OpusHead\x01\x02".to_vec();
+    wanted.extend_from_slice(&312u16.to_le_bytes());
+    wanted.extend_from_slice(&48_000u32.to_le_bytes());
+    wanted.extend_from_slice(&(-256i16).to_le_bytes());
+    wanted.push(0);
+    assert_eq!(head_from_mp4(&stored), wanted);
+    assert_eq!(pre_skip(&head_from_mp4(&stored)), Some(312));
+    // a header that ends inside a field keeps the bytes it has of it
+    let short = head_from_mp4(&stored[..11]);
+    assert_eq!((short[8], short[10]), (1, stored[10]));
   }
 
   #[test]
