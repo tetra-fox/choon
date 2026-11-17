@@ -30,6 +30,9 @@ pub const TONE: &[u8] = include_bytes!("fixtures/tone.m4a");
 /// It is more than the 30 s a reading needs.
 pub const SECONDS: usize = 34;
 
+/// Sample frames in each block of the FLAC written here.
+pub const FLAC_BLOCK: usize = 4096;
+
 /// Audio in memory: a sample rate and one sample vector per channel.
 #[derive(Clone, Debug)]
 pub struct Audio {
@@ -360,6 +363,76 @@ pub fn write_flac(audio: &Audio, bits: u32, padded: bool, path: &Path) {
 
 /// Returns `audio` encoded as FLAC, as [`write_flac`] writes it.
 pub fn flac(audio: &Audio, bits: u32, padded: bool) -> Vec<u8> {
+  let mut sink = flacenc::bitsink::ByteSink::new();
+  flac_stream(audio, bits, padded).write(&mut sink).unwrap();
+  sink.into_inner()
+}
+
+/// Returns `audio` encoded as `bits`-bit FLAC in an Ogg container.
+///
+/// Every page but the last holds three frames of [`FLAC_BLOCK`] sample frames each, so a seek
+/// lands on a page and reads on from its first frame.
+pub fn ogg_flac(audio: &Audio, bits: u32) -> Vec<u8> {
+  let stream = flac_stream(audio, bits, false);
+  let bytes = |part: &dyn Fn(&mut flacenc::bitsink::ByteSink)| {
+    let mut sink = flacenc::bitsink::ByteSink::new();
+    part(&mut sink);
+    sink.into_inner()
+  };
+  // the mapping's version 1.0 and one header packet after this one, then the native signature
+  // and the stream information as a metadata block of 34 bytes
+  let mut first = b"\x7fFLAC\x01\0\0\x01fLaC\0\0\0\x22".to_vec();
+  first.extend(bytes(&|sink| stream.stream_info().write(sink).unwrap()));
+  // the last metadata block: a comment block with an empty vendor and no comments
+  let comment = [0x84, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0];
+  let frames: Vec<Vec<u8>> = (0..stream.frame_count())
+    .map(|n| bytes(&|sink| stream.frame(n).unwrap().write(sink).unwrap()))
+    .collect();
+  let pages = frames.chunks(3);
+  let last = pages.len() + 1;
+  let mut out = ogg_page(0x02, 0, 0, &[first]);
+  out.extend(ogg_page(0, 0, 1, &[comment.to_vec()]));
+  let mut held = 0;
+  for (index, page) in pages.enumerate() {
+    held += (page.len() * FLAC_BLOCK) as u64;
+    let sequence = index as u32 + 2;
+    let kind = if sequence as usize == last { 0x04 } else { 0 };
+    out.extend(ogg_page(kind, held, sequence, page));
+  }
+  out
+}
+
+/// One Ogg page of whole `packets`: `kind` flags the stream's first and last page, and
+/// `granule` is how many sample frames the stream holds up to the page's end.
+fn ogg_page(kind: u8, granule: u64, sequence: u32, packets: &[Vec<u8>]) -> Vec<u8> {
+  let mut page = b"OggS\0".to_vec();
+  page.push(kind);
+  page.extend_from_slice(&granule.to_le_bytes());
+  // the stream's serial number, the page's place in it, and the checksum filled in below
+  page.extend_from_slice(&1u32.to_le_bytes());
+  page.extend_from_slice(&sequence.to_le_bytes());
+  page.extend_from_slice(&[0; 4]);
+  // a packet is laced as bytes of 255 and one below 255 that ends it
+  let lacing: Vec<u8> = packets
+    .iter()
+    .flat_map(|packet| {
+      std::iter::repeat_n(255, packet.len() / 255).chain([(packet.len() % 255) as u8])
+    })
+    .collect();
+  page.push(u8::try_from(lacing.len()).unwrap());
+  page.extend(lacing);
+  page.extend(packets.iter().flatten());
+  let checksum = page.iter().fold(0u32, |crc, byte| {
+    (0..8).fold(crc ^ (u32::from(*byte) << 24), |crc, _| {
+      (crc << 1) ^ if crc >> 31 == 1 { 0x04c1_1db7 } else { 0 }
+    })
+  });
+  page[22..26].copy_from_slice(&checksum.to_le_bytes());
+  page
+}
+
+/// `audio` as a FLAC stream of whole blocks of [`FLAC_BLOCK`] sample frames.
+fn flac_stream(audio: &Audio, bits: u32, padded: bool) -> flacenc::component::Stream {
   let mut planes = audio.quantized(if padded { 16 } else { bits }, 7);
   if padded {
     planes.iter_mut().flatten().for_each(|s| *s <<= 8);
@@ -372,7 +445,7 @@ pub fn flac(audio: &Audio, bits: u32, padded: bool) -> Vec<u8> {
   // stream of varying block sizes; whole blocks only keep the stream a fixed-size one
   // (https://github.com/yotarok/flacenc-rs/issues/242)
   // TODO: encode the tail once a flacenc release after 0.5.1 carries the fix (PR #255)
-  let frames = planes[0].len() / config.block_size * config.block_size;
+  let frames = planes[0].len() / FLAC_BLOCK * FLAC_BLOCK;
   let interleaved: Vec<i32> = (0..frames)
     .flat_map(|i| planes.iter().map(move |p| p[i]))
     .collect();
@@ -382,10 +455,7 @@ pub fn flac(audio: &Audio, bits: u32, padded: bool) -> Vec<u8> {
     bits as usize,
     audio.rate as usize,
   );
-  let stream = flacenc::encode_with_fixed_block_size(&config, source, config.block_size).unwrap();
-  let mut sink = flacenc::bitsink::ByteSink::new();
-  stream.write(&mut sink).unwrap();
-  sink.into_inner()
+  flacenc::encode_with_fixed_block_size(&config, source, FLAC_BLOCK).unwrap()
 }
 
 /// Writes `audio`, two channels at 44.1 kHz, as a constant-bitrate MP3 at `path`.

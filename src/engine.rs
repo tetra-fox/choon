@@ -432,7 +432,7 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
   Ok(measured)
 }
 
-/// Reads the segments of the grid scan that sampled windows did not, seeking to each and
+/// Reads the segments of the grid scan that sampled windows did not, seeking once to each and
 /// placing its samples by the timestamps of their packets. A segment that cannot be read whole
 /// stays short: a seek that fails is noted in `measured`, and a read that fails leaves its
 /// reason in the decoder.
@@ -449,29 +449,36 @@ fn read_segments(
   let channels = decoder.claimed.channels as usize;
   let mut samples = Vec::new();
   for index in segments.missing() {
-    while let Some(next) = segments.needs(index) {
+    if segments.untouched(index)
+      && let Some(first) = segments.needs(index)
+    {
       if halted(settings)? {
         return Ok(());
       }
-      if segments.untouched(index) {
-        match decoder.seek_frame(next) {
-          Ok(true) => {}
-          Ok(false) => {
-            debug!(
-              frame = next,
-              "a grid segment is not among the packets indexed"
-            );
-            return Ok(());
-          }
-          Err(problem) => {
-            // a seek the analysis's own stop cut short only says its source gave no more bytes
-            if !halted(settings)? {
-              debug!(problem, frame = next, "seeking to a grid segment failed");
-              measured.problems.push(Limitation::Decoder(problem));
-            }
-            return Ok(());
-          }
+      match decoder.seek_frame(first) {
+        Ok(true) => {}
+        Ok(false) => {
+          debug!(
+            frame = first,
+            "a grid segment is not among the packets indexed"
+          );
+          return Ok(());
         }
+        Err(problem) => {
+          // a seek the analysis's own stop cut short only says its source gave no more bytes
+          if !halted(settings)? {
+            debug!(problem, frame = first, "seeking to a grid segment failed");
+            measured.problems.push(Limitation::Decoder(problem));
+          }
+          return Ok(());
+        }
+      }
+    }
+    // a seek can give a packet that ends at or before the frame needed; nothing is taken of it
+    // and the next is read
+    while let Some(next) = segments.needs(index) {
+      if halted(settings)? {
+        return Ok(());
       }
       let Some(frames) = decoder.next_interleaved(&mut samples) else {
         // as with the seek, the decoder's reason for the analysis's own stop says nothing

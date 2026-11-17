@@ -546,6 +546,25 @@ fn a_sampled_file_scans_the_same_samples_for_a_grid_as_one_read_in_full() {
 }
 
 #[test]
+fn a_grid_stretch_starting_where_a_packet_ends_is_read_from_the_next_packet() {
+  // 400 blocks put the first stretch, a fifth of the way in, at the start of block 80, and
+  // an Ogg seek to a packet's first frame gives the packet that ends there
+  let mut audio = music_for(40, 1, 44_100, pink);
+  for channel in &mut audio.channels {
+    channel.truncate(400 * fixtures::FLAC_BLOCK);
+  }
+  let sampled = Settings {
+    coverage: sampled(10.0, 3),
+    ..settings()
+  };
+  let sampled = measure_bytes(fixtures::ogg_flac(&audio, 16), &sampled).unwrap();
+  assert!(sampled.sampled);
+  let full = measure_bytes(fixtures::flac(&audio, 16, false), &settings()).unwrap();
+  assert!(full.grid.is_some());
+  assert_eq!(sampled.grid, full.grid);
+}
+
+#[test]
 fn a_canceled_analysis_and_one_out_of_time_before_it_opens_report_nothing() {
   let dir = tempfile::tempdir().unwrap();
   let path = flac(dir.path(), "a.flac", &music(1, 44_100, pink), 16);
