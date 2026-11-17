@@ -344,37 +344,39 @@ fn median(mut values: Vec<f64>) -> f64 {
   }
 }
 
-/// the bits of an f64 exponent and the exponent that puts a value in [1, 2)
-const EXPONENT_BITS: u64 = 0x7ff0_0000_0000_0000;
-const ONE: u64 = 0x3ff0_0000_0000_0000;
+/// the bits of an f32 exponent and the exponent that puts a value in [1, 2)
+const EXPONENT_BITS: u32 = 0x7f80_0000;
+const ONE: u32 = 0x3f80_0000;
 
 /// the products [`active`] keeps side by side, so they can be multiplied in parallel
-const LANES: usize = 8;
+const LANES: usize = 16;
 
-/// the active count of `values`: the sum of log10(max(v^2 / t2, 1)).
+/// the active count of `values`: the sum of log10(max(v^2 / t2, 1)), counted in single
+/// precision.
 ///
 /// the log of a product is the sum of the logs, so the values' exponents are summed and their
 /// mantissas, each in [1, 2), multiplied in [`LANES`] products of up to 32 each, which stay
 /// under 2^32, with one log per product.
-fn active(values: &[f64], t2: f64) -> f64 {
-  let mut exponents = [0i64; LANES];
-  let mut products = [1.0f64; LANES];
+fn active(values: &[f32], t2: f32) -> f64 {
+  let mut exponents = [0i32; LANES];
+  let mut products = [1.0f32; LANES];
   let mut logs = 0.0;
   for (i, group) in values.chunks(LANES).enumerate() {
     for ((product, exponent), v) in products.iter_mut().zip(&mut exponents).zip(group) {
       // t2 is a normal number, so every square at or above it is one too
       let bits = (v * v).max(t2).to_bits();
-      *exponent += ((bits & EXPONENT_BITS) >> 52) as i64 - 1023;
-      *product *= f64::from_bits((bits & !EXPONENT_BITS) | ONE);
+      *exponent += ((bits & EXPONENT_BITS) >> 23) as i32 - 127;
+      *product *= f32::from_bits((bits & !EXPONENT_BITS) | ONE);
     }
     if i % 32 == 31 {
-      logs += products.iter().map(|p| p.log2()).sum::<f64>();
+      logs += products.iter().map(|p| f64::from(*p).log2()).sum::<f64>();
       products = [1.0; LANES];
     }
   }
-  logs += products.iter().map(|p| p.log2()).sum::<f64>();
-  let exponents: i64 = exponents.iter().sum();
-  (exponents as f64 + logs - values.len() as f64 * t2.log2()) * std::f64::consts::LOG10_2
+  logs += products.iter().map(|p| f64::from(*p).log2()).sum::<f64>();
+  let exponents: i32 = exponents.iter().sum();
+  (f64::from(exponents) + logs - values.len() as f64 * f64::from(t2).log2())
+    * std::f64::consts::LOG10_2
 }
 
 /// the AAC analysis: the KBD long window and an orthonormal MDCT, transformed in single
@@ -386,8 +388,8 @@ struct Aac {
   folded: Vec<f32>,
   /// the transform of left and right
   values: [Vec<f32>; 2],
-  /// the transform of left, right, mid and side in double precision, for the counts
-  wide: [Vec<f64>; 4],
+  /// mid and side of the transform
+  mid_side: [Vec<f32>; 2],
 }
 
 impl Aac {
@@ -401,7 +403,7 @@ impl Aac {
       frame: vec![0.0; 2 * AAC_HOP],
       folded: vec![0.0; AAC_HOP],
       values: std::array::from_fn(|_| vec![0.0; AAC_HOP]),
-      wide: std::array::from_fn(|_| vec![0.0; AAC_HOP]),
+      mid_side: std::array::from_fn(|_| vec![0.0; AAC_HOP]),
     }
   }
 
@@ -421,26 +423,20 @@ impl Aac {
   /// the active count summed over the long frames of `left` and `right` on the grid at `offset`
   fn count(&mut self, left: &[f32], right: &[f32], offset: usize) -> f64 {
     let frames = (SEGMENT - 2 * AAC_HOP) / AAC_HOP;
-    let t2 = f64::from((NOISE16 as f32).powi(2));
-    let half = std::f64::consts::FRAC_1_SQRT_2;
+    let t2 = (NOISE16 as f32).powi(2);
+    let half = std::f32::consts::FRAC_1_SQRT_2;
     (0..frames)
       .map(|j| {
         let start = offset + j * AAC_HOP;
         self.mdct(&left[start..start + 2 * AAC_HOP], 0);
         self.mdct(&right[start..start + 2 * AAC_HOP], 1);
-        let [l, r, m, s] = &mut self.wide;
+        let [m, s] = &mut self.mid_side;
         let [left, right] = &self.values;
-        let wide = l
-          .iter_mut()
-          .zip(r.iter_mut())
-          .zip(m.iter_mut().zip(s.iter_mut()));
-        for (((l, r), (m, s)), (left, right)) in wide.zip(left.iter().zip(right)) {
-          *l = f64::from(*left);
-          *r = f64::from(*right);
-          *m = (*l + *r) * half;
-          *s = (*l - *r) * half;
+        for ((m, s), (l, r)) in m.iter_mut().zip(s.iter_mut()).zip(left.iter().zip(right)) {
+          *m = (l + r) * half;
+          *s = (l - r) * half;
         }
-        let lr = active(l, t2) + active(r, t2);
+        let lr = active(left, t2) + active(right, t2);
         let ms = active(m, t2) + active(s, t2);
         lr.min(ms)
       })
@@ -742,28 +738,32 @@ impl Mp3 {
   /// subband sample g of the filterbank run from input sample `phase`
   fn phase(&self, segment: &Segment, phase: usize) -> [f64; LINES] {
     let granules = (SEGMENT - MP3_HOP - 512 - SUBBAND_SAMPLES * 32) / MP3_HOP;
-    let t2 = (NOISE16 * MP3_NOISE_GAIN).powi(2);
+    let t2 = (NOISE16 * MP3_NOISE_GAIN).powi(2) as f32;
     let half = std::f64::consts::FRAC_1_SQRT_2;
     let (mut l, mut r) = ([0.0; MP3_HOP], [0.0; MP3_HOP]);
-    let (mut m, mut s) = ([0.0; MP3_HOP], [0.0; MP3_HOP]);
+    // left, right, mid and side in single precision, for the counts
+    let mut narrow = [[0.0f32; MP3_HOP]; 4];
     let left = self.polyphase(&segment.left[phase..]);
     let right = self.polyphase(&segment.right[phase..]);
-    std::array::from_fn(|g| {
-      (0..granules)
+    let mut counts = [0.0; LINES];
+    for (g, count) in counts.iter_mut().enumerate() {
+      *count = (0..granules)
         .map(|granule| {
           let at = g + LINES * granule;
           self.hybrid(&left[at..at + SUBBAND_SAMPLES], &mut l);
           self.hybrid(&right[at..at + SUBBAND_SAMPLES], &mut r);
           for k in 0..MP3_HOP {
-            m[k] = (l[k] + r[k]) * half;
-            s[k] = (l[k] - r[k]) * half;
+            narrow[0][k] = l[k] as f32;
+            narrow[1][k] = r[k] as f32;
+            narrow[2][k] = ((l[k] + r[k]) * half) as f32;
+            narrow[3][k] = ((l[k] - r[k]) * half) as f32;
           }
-          let lr = active(&l, t2) + active(&r, t2);
-          let ms = active(&m, t2) + active(&s, t2);
-          lr.min(ms)
+          let count = narrow.each_ref().map(|values| active(values, t2));
+          (count[0] + count[1]).min(count[2] + count[3])
         })
-        .sum()
-    })
+        .sum();
+    }
+    counts
   }
 }
 
