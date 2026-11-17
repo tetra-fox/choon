@@ -309,6 +309,12 @@ fn measure(mut decoder: Decoder, settings: &Settings) -> Result<Measured, Cancel
       }
     }
   }
+  if let Some(segments) = &mut segments
+    && !segments.complete()
+    && measured.sampled
+  {
+    read_segments(&mut decoder, segments, settings, &mut measured)?;
+  }
   measured.bits_used = decoder.bits_used();
   if measured.claimed.as_ref().is_some_and(|c| !c.lossless) {
     measured.bitrate_kbps = decoder.bitrate_kbps();
@@ -325,11 +331,8 @@ fn measure(mut decoder: Decoder, settings: &Settings) -> Result<Measured, Cancel
   if unscanned {
     measured.problems.push(UNSCANNED.to_string());
   }
-  if let Some(mut segments) = segments {
-    if !segments.complete() && measured.sampled {
-      read_segments(&mut decoder, &mut segments, settings)?;
-    }
-    measured.grid = scan_grid(&segments, settings, &mut measured)?;
+  if let Some(segments) = &segments {
+    measured.grid = scan_grid(segments, settings, &mut measured)?;
   }
   settings.report(1.0);
   debug!(
@@ -346,11 +349,13 @@ const UNSCANNED: &str = "The file does not state its length, so its codec grid w
 
 /// Reads the segments of the grid scan that sampled windows did not, seeking to each and
 /// placing its samples by the timestamps of their packets. A segment that cannot be read whole
-/// stays short.
+/// stays short: a seek that fails is noted in `measured`, and a read that fails leaves its
+/// reason in the decoder.
 fn read_segments(
   decoder: &mut Decoder,
   segments: &mut Segments,
   settings: &Settings,
+  measured: &mut Measured,
 ) -> Result<(), Canceled> {
   // without whole frames per tick, a packet's timestamp does not place its first sample
   if !decoder.ticks_fit_frames() {
@@ -360,17 +365,34 @@ fn read_segments(
   let mut samples = Vec::new();
   for index in segments.missing() {
     while let Some(next) = segments.needs(index) {
-      if is_canceled(settings.canceled.as_ref()) {
-        return Err(Canceled);
-      }
-      if Instant::now() >= settings.deadline {
+      if halted(settings)? {
         return Ok(());
       }
-      if segments.untouched(index) && decoder.seek_frame(next) != Ok(true) {
-        debug!(frame = next, "seeking to a grid segment failed");
-        return Ok(());
+      if segments.untouched(index) {
+        match decoder.seek_frame(next) {
+          Ok(true) => {}
+          Ok(false) => {
+            debug!(
+              frame = next,
+              "a grid segment is not among the packets indexed"
+            );
+            return Ok(());
+          }
+          Err(problem) => {
+            // a seek the analysis's own stop cut short only says its source gave no more bytes
+            if !halted(settings)? {
+              debug!(problem, frame = next, "seeking to a grid segment failed");
+              measured.problems.push(problem);
+            }
+            return Ok(());
+          }
+        }
       }
       let Some(frames) = decoder.next_interleaved(&mut samples) else {
+        // as with the seek, the decoder's reason for the analysis's own stop says nothing
+        if halted(settings)? {
+          decoder.stopped = None;
+        }
         return Ok(());
       };
       // a packet past the frame needed leaves a gap no later packet fills
@@ -428,15 +450,20 @@ fn picks(seconds: f64, count: usize) -> BTreeSet<u64> {
 /// Whether the analysis is to stop: an error when it was canceled, true when its time is up,
 /// which is noted once in `measured`.
 fn stop(settings: &Settings, measured: &mut Measured) -> Result<bool, Canceled> {
+  let halted = halted(settings)?;
+  if halted {
+    debug!(windows = measured.windows.len(), "analysis out of time");
+    measured.problems.push(OUT_OF_TIME.to_string());
+  }
+  Ok(halted)
+}
+
+/// Whether the analysis is out of time; `Canceled` when it was told to stop.
+fn halted(settings: &Settings) -> Result<bool, Canceled> {
   if is_canceled(settings.canceled.as_ref()) {
     return Err(Canceled);
   }
-  if Instant::now() >= settings.deadline {
-    debug!(windows = measured.windows.len(), "analysis out of time");
-    measured.problems.push(OUT_OF_TIME.to_string());
-    return Ok(true);
-  }
-  Ok(false)
+  Ok(Instant::now() >= settings.deadline)
 }
 
 /// Whether decoding that just ended, or a seek that just failed, was the analysis's own stop
