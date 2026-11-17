@@ -611,6 +611,20 @@ fn measuring_uses_the_thresholds_it_is_given() {
   assert_eq!(read(&measured).verdict, Verdict::Inconclusive);
 }
 
+#[test]
+fn a_step_search_from_far_below_the_spectrum_ends() {
+  let far = Settings {
+    thresholds: MeasureThresholds {
+      inner_shelf_from_hz: -1e18,
+      ..MeasureThresholds::default()
+    },
+    ..settings()
+  };
+  let bytes = fixtures::flac(&music_for(2, 1, 44_100, pink), 16, false);
+  let measured = engine::read_bytes(bytes, &far).unwrap();
+  assert!(measured.windows.iter().any(|w| w.inner_shelf.is_some()));
+}
+
 proptest::proptest! {
   #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
 

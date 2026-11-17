@@ -289,8 +289,9 @@ impl<'a> Analyzer<'a> {
   fn inner_shelf(&self, smoothed: &[f64], cutoff: f64, line: f64) -> Option<Step> {
     let mut best: Option<Step> = None;
     let t = self.thresholds;
-    let mut hz = t.inner_shelf_from_hz;
-    while hz + t.shelf_gap_hz + t.shelf_span_hz <= cutoff {
+    // a step is only measured inside the spectrum, so the search covers no more than it
+    let mut hz = t.inner_shelf_from_hz.max(0.0);
+    while hz <= self.rate / 2.0 && hz + t.shelf_gap_hz + t.shelf_span_hz <= cutoff {
       if let Some((below, above)) = self.step(smoothed, hz)
         && best.is_none_or(|deepest| below - above > deepest.drop)
       {
