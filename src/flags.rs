@@ -2,16 +2,15 @@
 //! lower sample rate, samples that use fewer bits than they claim, and two channels that hold
 //! the same audio.
 
-use serde::Serialize;
-
 use crate::aggregate::Measures;
 use crate::decode::Claimed;
 use crate::thresholds::ReadingThresholds;
 use crate::window::Window;
 
 /// Finding reported beside the reading, independent of the cutoff.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum Flag {
   /// Audio made at a lower sample rate and converted up.
   ///

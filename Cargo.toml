@@ -14,10 +14,16 @@ include = ["/src/", "/README.md", "/LICENSE"]
 [features]
 default = ["cli"]
 # the `choon` program; a library user turns default features off and builds none of it
-cli = ["dep:clap", "dep:serde_json"]
+cli = ["dep:clap", "dep:serde_json", "serde"]
+# `Serialize` and `Deserialize` on the thresholds and the measures, `Serialize` on the reading
+serde = ["dep:serde"]
 # the generated audio and the sample file the analyzer is tested on, for the program's tests here
 # and the tests of the crates that use this one
 testing = ["dep:flacenc", "dep:mp3lame-encoder"]
+
+# docs.rs shows what `serde` adds; `testing` builds LAME, which it cannot
+[package.metadata.docs.rs]
+features = ["serde"]
 
 [[bin]]
 name = "choon"
@@ -30,7 +36,7 @@ rayon = "1.12.0"
 realfft = "3.5.1"
 # the half-length complex transform of the codec grid scan's DCT-IV
 rustfft = "6.4.1"
-serde = { version = "1.0.229", features = ["derive"] }
+serde = { version = "1.0.229", features = ["derive"], optional = true }
 # decodes every audio format the analyzer reads, streamed
 symphonia = { version = "0.6.1", features = ["all"] }
 symphonia-common = "0.6.1"
@@ -47,7 +53,7 @@ mp3lame-encoder = { version = "0.3.0", optional = true }
 
 [dev-dependencies]
 # the crate itself with `testing`, for the generated audio its tests read
-choon = { path = ".", features = ["testing"] }
+choon = { path = ".", features = ["testing", "serde"] }
 proptest = "1.12.0"
 serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
 tempfile = "3.27.0"

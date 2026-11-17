@@ -628,6 +628,22 @@ fn no_reading_is_surer_than_the_confidence_cap() {
 }
 
 #[test]
+fn measures_kept_as_json_read_the_same_when_read_back() {
+  let through = {
+    let dir = tempfile::tempdir().unwrap();
+    fixtures::through_mp3(&music(1, 44_100, pink), Bitrate::Kbps128, dir.path())
+  };
+  let measured = measure_bytes(fixtures::flac(&through, 16, false), &settings()).unwrap();
+  let kept = serde_json::to_string(&measured).unwrap();
+  let back: Measured = serde_json::from_str(&kept).unwrap();
+  assert_eq!(back.windows, measured.windows);
+  assert_eq!(back.grid, measured.grid);
+  let reading = read(&back);
+  assert_eq!(reading.verdict, Verdict::LikelyTranscode);
+  assert_eq!(reading, read(&measured));
+}
+
+#[test]
 fn a_step_search_from_far_below_the_spectrum_ends() {
   let far = Settings {
     thresholds: MeasureThresholds {

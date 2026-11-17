@@ -5,8 +5,6 @@
 //! against generated audio in the tests. They are rules of thumb that real files can break,
 //! which is why a reading is evidence and not proof.
 
-use serde::{Deserialize, Serialize};
-
 /// A cutoff at or above this fraction of the band's top counts as reaching it, when a window is
 /// measured and when it is read.
 const FULL_BAND: f64 = 0.9;
@@ -14,8 +12,12 @@ const FULL_BAND: f64 = 0.9;
 /// Thresholds each window is measured with.
 ///
 /// Changing one means measuring the audio again.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields, rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+  feature = "serde",
+  serde(default, deny_unknown_fields, rename_all = "camelCase")
+)]
 pub struct MeasureThresholds {
   /// Level in dBFS under which a window is near-silent.
   ///
@@ -71,8 +73,12 @@ impl Default for MeasureThresholds {
 /// Thresholds the measures are read with.
 ///
 /// A reading is quick, so these can be swept over audio measured once.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields, rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+  feature = "serde",
+  serde(default, deny_unknown_fields, rename_all = "camelCase")
+)]
 pub struct ReadingThresholds {
   /// Least drop in dB across the cutoff for an encoder's low-pass.
   ///
@@ -189,8 +195,9 @@ pub struct ReadingThresholds {
 }
 
 /// Band top of a rate some old equipment recorded at.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
 pub struct RateEdge {
   /// Half the rate, in Hz.
   pub hz: f64,
@@ -199,8 +206,9 @@ pub struct RateEdge {
 }
 
 /// Lossy encoder setting known by where it cuts off.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
 pub struct EncoderProfile {
   /// Cutoff at 44.1 and 48 kHz, in Hz.
   pub hz: f64,

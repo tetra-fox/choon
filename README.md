@@ -129,7 +129,8 @@ fn main() -> Result<(), choon::Error> {
 
 | Feature         | Description                                                                                   |
 | --------------- | --------------------------------------------------------------------------------------------- |
-| `cli` (default) | the `choon` program and its dependencies (clap, serde_json)                                   |
+| `cli` (default) | the `choon` program and its dependencies (clap, serde_json); turns `serde` on                 |
+| `serde`         | `Serialize` and `Deserialize` on the thresholds and the measures, `Serialize` on the reading  |
 | `testing`       | `fixtures`, the generated audio the tests read; builds LAME, so needs a C compiler and `make` |
 
 ## Limitations

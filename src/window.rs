@@ -35,6 +35,7 @@ const CODEC_PERIODS: [usize; 3] = [
 
 /// Step down in level inside a band that reaches the top.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Step {
   /// Frequency of the step, in Hz.
   pub hz: f64,
@@ -50,6 +51,8 @@ pub struct Step {
 
 /// Measures of one window.
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct Window {
   /// Start of the window, in seconds.
   pub start: f64,

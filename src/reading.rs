@@ -1,8 +1,6 @@
 //! The analyzer's reading of its measures: the cutoff read from its spread over the windows,
 //! weighed with the grid scan, with the findings beside it.
 
-use serde::Serialize;
-
 use crate::aggregate::{Measures, measures, middle, percentile, upsample_ratio};
 use crate::engine::Measured;
 use crate::flags::{Flag, findings};
@@ -33,8 +31,9 @@ const HI_RES_TOP_HZ: f64 = 24_000.0;
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum Verdict {
   /// Nearly every window reaches the top of the claimed band.
   ///
@@ -60,7 +59,8 @@ pub enum Verdict {
 }
 
 /// Encoder setting a cutoff matches.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct EncoderGuess {
   /// Setting's name, as its profile gives it.
   pub profile: String,
@@ -69,8 +69,9 @@ pub struct EncoderGuess {
 }
 
 /// What the analyzer makes of a file.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct Reading {
   /// Reading of the file, the cutoff weighed with the grid scan.
   pub verdict: Verdict,
@@ -89,7 +90,7 @@ pub struct Reading {
   /// Aggregate measures.
   pub measures: Measures,
   /// What made the reading less reliable.
-  #[serde(serialize_with = "sentences")]
+  #[cfg_attr(feature = "serde", serde(serialize_with = "sentences"))]
   pub limitations: Vec<Limitation>,
   /// Cutoff to mark on the spectrogram, when the content stops short of the top.
   pub cutoff_hz: Option<f64>,
@@ -106,6 +107,7 @@ struct CutoffReading {
 }
 
 /// Writes limitations as the sentences a person is shown.
+#[cfg(feature = "serde")]
 fn sentences<S: serde::Serializer>(
   limitations: &[Limitation],
   serializer: S,

@@ -116,7 +116,11 @@ impl Settings {
 }
 
 /// Measures an analysis took of a file.
-#[derive(Debug)]
+///
+/// With the `serde` feature they can be kept and read again later under other thresholds.
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct Measured {
   /// Format the file claims.
   pub claimed: Claimed,

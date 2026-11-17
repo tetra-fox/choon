@@ -9,6 +9,8 @@ const LEVELS_FROM_DB: f64 = -160.0;
 
 /// The running figures over every analyzed sample.
 #[derive(Clone, Debug, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub(crate) struct Totals {
   samples: u64,
   sum: f64,

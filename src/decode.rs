@@ -7,7 +7,6 @@
 use std::ops::Range;
 use std::path::Path;
 
-use serde::Serialize;
 use symphonia::core::audio::GenericAudioBufferRef;
 use symphonia::core::audio::sample::{i24, u24};
 use symphonia::core::audio::{Audio, AudioBuffer};
@@ -37,8 +36,9 @@ const MAX_RATE: u32 = 768_000;
 const MAX_SKIPPED: u32 = 1000;
 
 /// Format a file's container and codec claim.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct Claimed {
   /// Codec's short name, such as `flac` or `mp3`.
   pub codec: String,

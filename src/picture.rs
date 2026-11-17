@@ -20,6 +20,7 @@ pub const CEILING_DB: f64 = 0.0;
 
 /// Window as the spectrogram and the waveform show it.
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Shown {
   /// Spectrum over the whole window, [`BINS`] levels lowest first.
   pub spectrum: Vec<u8>,

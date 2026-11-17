@@ -24,13 +24,11 @@
 use std::fmt;
 use std::sync::Arc;
 
+use crate::thresholds::ReadingThresholds;
 use rayon::prelude::*;
 use rustfft::num_complex::Complex;
 use rustfft::num_traits::Float;
 use rustfft::{Fft, FftPlanner};
-use serde::Serialize;
-
-use crate::thresholds::ReadingThresholds;
 
 /// AAC's hop, the length of its long frames' new samples.
 const AAC_HOP: usize = 1024;
@@ -51,8 +49,9 @@ const MP3_NOISE_GAIN: f64 = 0.527_861_394_696_74;
 const MAD_TO_SD: f64 = 1.4826;
 
 /// Codec whose frame grid the scan looks for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum Codec {
   /// AAC, read with the long blocks of ffmpeg's encoder.
   ///
@@ -72,8 +71,9 @@ impl fmt::Display for Codec {
 }
 
 /// How far one codec's grid stands out in a file.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct CodecScan {
   /// Offset of the frames that count the fewest values, in samples.
   ///
@@ -91,7 +91,8 @@ pub struct CodecScan {
 }
 
 /// Scan of a file for the frame grids of MP3 and AAC.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Scan {
   /// AAC's grid.
   pub aac: CodecScan,
@@ -100,12 +101,13 @@ pub struct Scan {
 }
 
 /// Frame grid a reading finds.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Found {
   /// Codec whose grid it is.
   pub codec: Codec,
   /// How far the grid stands out.
-  #[serde(flatten)]
+  #[cfg_attr(feature = "serde", serde(flatten))]
   pub scan: CodecScan,
 }
 

@@ -3,13 +3,12 @@
 
 use std::fmt;
 
-use serde::{Deserialize, Serialize};
-
 /// Something that made a reading less reliable.
 ///
 /// `Display` writes it as the sentence a person is shown.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum Limitation {
   /// Analysis that ran out of time and covers only the part read by then.
   OutOfTime,

@@ -40,8 +40,9 @@
 //!
 //! `cli`, on by default, builds the `choon` program, which prints a reading of each file it
 //! is given, as a line of text or of JSON, under one or more sets of thresholds. A library user
-//! turns default features off. `testing` adds `fixtures`, the generated audio and the sample file
-//! the analyzer is tested on.
+//! turns default features off. `serde` derives `Serialize` and `Deserialize` on the thresholds
+//! and on [`Measured`], and `Serialize` on [`Reading`]. `testing` adds `fixtures`, the generated
+//! audio and the sample file the analyzer is tested on.
 
 mod aggregate;
 mod decode;

@@ -5,8 +5,6 @@
 
 use std::collections::BTreeMap;
 
-use serde::Serialize;
-
 use crate::engine::Measured;
 use crate::window::Window;
 
@@ -14,7 +12,8 @@ use crate::window::Window;
 const HISTOGRAM_HZ: f64 = 500.0;
 
 /// Count of the non-silent windows that cut off near one frequency.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CutoffBucket {
   /// Cutoff rounded to the nearest 500 Hz, in Hz.
   pub hz: u32,
@@ -29,8 +28,9 @@ pub struct CutoffBucket {
 ///
 /// Each optional measure is `None` when the file had too little non-silent audio to measure it
 /// or the measure does not apply to the file.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct Measures {
   /// How many non-silent windows have each cutoff, ascending by cutoff.
   pub cutoff_hz_histogram: Vec<CutoffBucket>,
