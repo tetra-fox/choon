@@ -13,10 +13,13 @@ command-line tool and a Rust library.
 ## Features
 
 - Spots lossless files decoded from MP3 or AAC by the frame grid the encoder leaves, tuned on
-  LAME at 96 to 320 kbps and V0 to V9 and on ffmpeg's AAC at 96 to 256 kbps
+  LAME at 96 to 320 kbps and V0 to V9 and on ffmpeg's AAC at 96 to 256 kbps, also after a
+  conversion between 44.1 and 48 kHz
 - Spots lossless files decoded from Opus by the band energies its encoder quantizes, at 48 kHz
-  and after a conversion to 44.1 kHz, with or without a gain after the decode, tuned on libopus
-  at 16 to 256 kbps
+  and after a conversion to 44.1 kHz, with or without a gain after the decode, in its CELT and
+  hybrid modes, tuned on libopus at 16 to 256 kbps
+- Names the encoder family a grid's offset fits: LAME, Helix, Apple, FAAC, Nero, ffmpeg or
+  fdk-aac, libopus
 - Reads Opus files, with the coding mode and audio bandwidth their packets state
 - Reads WavPack, Monkey's Audio and DSD files, and HE-AAC with the band its decoder rebuilds
 - Reads the encoder's cutoff in the spectrum, which alone raises a doubt
@@ -54,6 +57,17 @@ offset that counts far fewer than the rest; an MP3 grid also needs at least thre
 agreeing on it. It does not depend on where the encoder cut, so MP3 at 320 kbps or V0 and AAC at
 256 kbps show one too.
 
+The values an MP3 encoder kept are quantized too: each is a whole number to the power 4/3 times
+its scalefactor band's step, and a step is a whole power of the fourth root of two. With the
+granules where the count puts them, the scan counts the bands whose values all sit on one such
+step. Three stretches with enough of them are an MP3 grid where the count stands out too little.
+Steps finer than the rounding noise of 16-bit samples, as most are at 320 kbps, leave nothing to
+count.
+
+A decode converted between 44.1 and 48 kHz carries its grid at the rate it was decoded at. A
+file at either rate is scanned a second time with its stretches brought to the other, by a long
+filter that keeps the sample times the two rates share.
+
 Opus zeroes few values. Its CELT layer codes the energy of each of 21 bands in each 20 ms frame
 as a step from a prediction, a whole number of 6 dB refined by a few bits. With Opus's transform
 run again on the grid, each band's energy comes back and its step sits on that lattice. The scan
@@ -62,10 +76,36 @@ to 60 of the windows on the one grid a decode has when nothing was cut from its 
 at 44.1 kHz are brought back to the 48 kHz Opus runs at first. It does not depend on the
 bitrate.
 
+A frame is read as one long block after another. Where one frame at least sits on the lattice
+that way, the frames coded as eight short blocks, the frames after one, and the frames coded
+without the frame before them are counted with it. Opus's hybrid mode codes only the bands from
+8 kHz up with CELT, over a voice coder; its frames are counted on the two bands from 9.6 to
+15.6 kHz, as a share of the frames tested.
+
 A gain after the decode moves every step by the same amount, half the gain, so the lattice is
 still there, moved. The scan takes the move that the most frames of a channel name and counts
 the frames on the lattice once it is taken off. Moves 9.6 dB of gain apart fit most frames
 alike, so the count shows a decode and does not tell what the gain was.
+
+An encoder delays its input by a fixed number of samples, and an AAC encoder keeps to one window
+for its long blocks, so a grid's offset and window fit an encoder family:
+
+| Codec | Offset | Window         | Family                            |
+| ----- | ------ | -------------- | --------------------------------- |
+| MP3   | 48     |                | LAME                              |
+| MP3   | 96     |                | Helix                             |
+| MP3   | 1      |                | no delay stated: Shine, BladeEnc, GOGO |
+| AAC   | 960    | sine           | Apple                             |
+| AAC   | 0      | sine           | FAAC                              |
+| AAC   | 448    | Kaiser-Bessel  | Nero                              |
+| AAC   | 0      | Kaiser-Bessel  | ffmpeg or fdk-aac                 |
+| Opus  | 228    |                | libopus                           |
+
+- The offsets are those of a decode whose start was not cut, from a decoder that cuts the delay
+  the file states, as ffmpeg does
+- A LAME file decoded without that cut sits at offset 1
+- Versions of one encoder share its delay and read alike
+- About one Vorbis decode in thirteen reads as AAC at Nero's offset
 
 | Verdict          | Description                                                                 |
 | ---------------- | --------------------------------------------------------------------------- |
@@ -284,12 +324,13 @@ Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
 ## Limitations
 
 - A lossless master filtered sharply where an encoder cuts (16 or 19 kHz) reads as possibly lossy
-- Resampling after the decode removes an MP3 or AAC frame grid, so such a transcode reads as
-  possibly lossy at most
+- An MP3 or AAC decode converted to another rate is found between 44.1 and 48 kHz only; after
+  any other conversion it reads as possibly lossy at most
 - A Vorbis decode's grid mostly reads as AAC's
-- Opus is found in 20 ms frames (and the 40 and 60 ms packets made of them) coded as long
-  blocks with the pitch post-filter off; a decode made mostly of other frames, one of 2.5, 5 or
-  10 ms frames, and one in SILK or hybrid voice mode read as possibly lossy at most
+- Opus is found in 20 ms frames (and the 40 and 60 ms packets made of them) with the pitch
+  post-filter off; a decode made mostly of filtered frames, one of 2.5, 5 or 10 ms frames, and
+  one in SILK voice mode read as possibly lossy at most
+- A hybrid-mode Opus decode whose level was changed afterwards is not found
 - A level that changes over time after an Opus decode, as under a fade or a limiter, hides the
   lattice where it changes
 - Opus is looked for at 44.1 and 48 kHz only
