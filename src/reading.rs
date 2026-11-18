@@ -4,7 +4,7 @@
 use crate::aggregate::{Measures, measures, middle, percentile, upsample_ratio};
 use crate::engine::Measured;
 use crate::flags::{Flag, findings};
-use crate::grid::{self, Codec, Evidence, Found};
+use crate::grid::{self, Codec, Evidence, Family, Found};
 use crate::limitation::{Limitation, khz};
 use crate::opus::OpusUse;
 use crate::thresholds::{EncoderProfile, ReadingThresholds};
@@ -453,8 +453,12 @@ fn weighed(
         )
       }
     };
-    let family = grid.family.map_or_else(String::new, |family| {
-      format!(" The offset is the one {family} leaves in a decode whose start was not cut.")
+    let family = grid.family.map_or_else(String::new, |family| match family {
+      Family::Fraunhofer => format!(
+        " The offset is the one an encoder that states no delay leaves in a decode whose start \
+         was not cut, and the quantizer's steps move from band to band as {family} moves them."
+      ),
+      _ => format!(" The offset is the one {family} leaves in a decode whose start was not cut."),
     });
     return CutoffReading {
       verdict: Verdict::LikelyTranscode,

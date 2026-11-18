@@ -107,6 +107,32 @@ fn a_192_kbps_transcode_reads_as_a_transcode_of_its_bitrate() {
   reads_as_a_transcode_of(Bitrate::Kbps192, "mp3 ~192 kbps");
 }
 
+#[test]
+fn a_lame_decode_at_the_offset_of_no_delay_is_not_read_as_fraunhofers() {
+  let dir = tempfile::tempdir().unwrap();
+  let thresholds = ReadingThresholds::default();
+  for bitrate in [Bitrate::Kbps128, Bitrate::Kbps192] {
+    // the fixture's stream carries no tag, so its decode keeps LAME's delay and the grid
+    // sits where an encoder that states none leaves it
+    let through = fixtures::through_mp3(&music(1, 44_100, pink), bitrate, dir.path());
+    let measured = measure(flac(dir.path(), "t.flac", &through, 16), &settings()).unwrap();
+    let scan = measured.grid.as_ref().expect("scanned");
+    assert_eq!(scan.mp3.offset, 1, "{scan:?}");
+    let steps = scan
+      .mp3_steps
+      .as_ref()
+      .expect("the steps are read at 44.1 kHz");
+    let neighbours = steps.neighbours.as_ref().expect("neighbours are compared");
+    let rule = &thresholds.fraunhofer_steps;
+    assert!(
+      neighbours.pairs.iter().sum::<usize>() >= rule.min_pairs,
+      "{neighbours:?}"
+    );
+    let found = read(&measured).grid.expect("the decode carries its grid");
+    assert_eq!(found.family, Some(grid::Family::Untagged), "{neighbours:?}");
+  }
+}
+
 /// LAME 3.100 cuts 224 kbps where it cuts 256, at 19.53 kHz, so the two take one name
 #[test]
 fn a_224_kbps_transcode_reads_as_the_cut_it_shares_with_256_kbps() {

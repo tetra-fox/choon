@@ -75,7 +75,7 @@ use std::sync::Arc;
 
 use crate::lattice;
 use crate::resample::Resampler;
-use crate::thresholds::ReadingThresholds;
+use crate::thresholds::{FraunhoferSteps, ReadingThresholds};
 use rayon::prelude::*;
 use rustfft::num_complex::Complex;
 use rustfft::num_traits::Float;
@@ -396,6 +396,119 @@ pub struct Mp3Steps {
   pub whole: usize,
   /// Each segment's share of `whole`, in file order.
   pub segment_whole: [usize; SEGMENTS],
+  /// How the whole steps of neighbouring bands compare.
+  ///
+  /// `None` in measures kept by a version of the analyzer that did not compare them.
+  #[cfg_attr(feature = "serde", serde(default))]
+  pub neighbours: Option<Mp3Neighbours>,
+}
+
+/// How the whole steps of neighbouring scalefactor bands compare, over the four segments.
+///
+/// An encoder sets each band's step through its scalefactor, and encoders differ in how
+/// often and which way they move it from one band to the next. A pair is two neighbouring
+/// bands of one channel of one granule that both show a whole step; its region is where the
+/// lower band sits: bands 0 to 6, 7 to 12, and 13 up. A step is counted in quarter powers of
+/// two.
+#[derive(Clone, Debug, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct Mp3Neighbours {
+  /// Number of pairs, by region.
+  pub pairs: [usize; 3],
+  /// Number of pairs whose two steps are the same, by region.
+  pub same: [usize; 3],
+  /// Number of pairs whose higher band has the finer step, by region.
+  pub finer: [usize; 3],
+  /// Number of pairs whose higher band's step is two quarter powers finer.
+  pub two_finer: usize,
+  /// Number of pairs whose higher band's step is two quarter powers coarser.
+  pub two_coarser: usize,
+  /// Number of bands 0 to 5 with a whole step.
+  pub low_bands: usize,
+  /// Sum over those bands of the base-2 logarithm of one more than the largest quantized value.
+  pub low_log: f64,
+  /// Number of bands 12 up with a whole step.
+  pub high_bands: usize,
+  /// The same sum over those bands.
+  pub high_log: f64,
+}
+
+impl Mp3Neighbours {
+  /// the region of the pair whose lower band is `band`
+  fn region(band: usize) -> usize {
+    match band {
+      0..=6 => 0,
+      7..=12 => 1,
+      _ => 2,
+    }
+  }
+
+  /// takes a band with a whole step of `fourths` quarter powers whose largest quantized value
+  /// is `largest`, after the band under it with the step `under` when that has one
+  fn take(&mut self, band: usize, fourths: i32, largest: f64, under: Option<i32>) {
+    if let Some(under) = under {
+      let region = Self::region(band - 1);
+      let moved = fourths - under;
+      self.pairs[region] += 1;
+      self.same[region] += usize::from(moved == 0);
+      self.finer[region] += usize::from(moved < 0);
+      self.two_finer += usize::from(moved == -2);
+      self.two_coarser += usize::from(moved == 2);
+    }
+    let log = (largest + 1.0).log2();
+    if band < 6 {
+      self.low_bands += 1;
+      self.low_log += log;
+    } else if band >= 12 {
+      self.high_bands += 1;
+      self.high_log += log;
+    }
+  }
+
+  /// the sum of `rule`'s weights over the shares of these counts; `None` with fewer pairs
+  /// than the rule asks for, or no band at one end
+  fn weighed(&self, rule: &FraunhoferSteps) -> Option<f64> {
+    let total: usize = self.pairs.iter().sum();
+    let few = total < rule.min_pairs.max(1)
+      || self
+        .pairs
+        .iter()
+        .any(|pairs| *pairs < rule.min_region_pairs.max(1));
+    if few || self.low_bands == 0 || self.high_bands == 0 {
+      return None;
+    }
+    let of = |count: usize, all: usize| count as f64 / all as f64;
+    let regions: f64 = (0..3)
+      .map(|region| {
+        rule.same[region] * of(self.same[region], self.pairs[region])
+          + rule.finer[region] * of(self.finer[region], self.pairs[region])
+      })
+      .sum();
+    Some(
+      regions
+        + rule.two_finer * of(self.two_finer, total)
+        + rule.two_coarser * of(self.two_coarser, total)
+        + rule.low_log * self.low_log / self.low_bands as f64
+        + rule.high_log * self.high_log / self.high_bands as f64
+        + rule.low_share * of(self.pairs[0], total)
+        + rule.high_share * of(self.pairs[2], total),
+    )
+  }
+
+  fn add(&mut self, other: &Self) {
+    for region in 0..3 {
+      self.pairs[region] += other.pairs[region];
+      self.same[region] += other.same[region];
+      self.finer[region] += other.finer[region];
+    }
+    self.two_finer += other.two_finer;
+    self.two_coarser += other.two_coarser;
+    self.low_bands += other.low_bands;
+    self.low_log += other.low_log;
+    self.high_bands += other.high_bands;
+    self.high_log += other.high_log;
+  }
 }
 
 /// Scan for MP3 and AAC of a file's samples brought to the other of 44.1 and 48 kHz.
@@ -489,7 +602,9 @@ pub enum Family {
   Lame,
   /// Helix, with a delay of 1680 samples.
   Helix,
-  /// MP3 encoder that states no delay for a decoder to cut: Shine, BladeEnc, GOGO, Fraunhofer.
+  /// MP3 encoder that states no delay for a decoder to cut: Shine, BladeEnc, GOGO, Apple's.
+  ///
+  /// A decode of Fraunhofer's encoder reads so too where its steps do not show it.
   ///
   /// A LAME file reads the same from a decoder that cuts no delay.
   Untagged,
@@ -503,6 +618,11 @@ pub enum Family {
   Nero,
   /// ffmpeg's AAC encoder or fdk-aac: the Kaiser-Bessel-derived window, their delay cut whole.
   FfmpegOrFdk,
+  /// Fraunhofer's MP3 encoder: no delay stated, and its way of moving a band's step.
+  ///
+  /// It is told from the others that state no delay by
+  /// [`ReadingThresholds::fraunhofer_steps`], fitted on the codec Windows ships.
+  Fraunhofer,
   /// libopus, every version of which delays by 312 samples.
   Libopus,
 }
@@ -540,6 +660,7 @@ impl fmt::Display for Family {
       Self::Faac => "FAAC",
       Self::Nero => "Nero's AAC encoder",
       Self::FfmpegOrFdk => "ffmpeg's AAC encoder or fdk-aac",
+      Self::Fraunhofer => "Fraunhofer's MP3 encoder",
       Self::Libopus => "libopus",
     })
   }
@@ -574,7 +695,23 @@ pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found
       Family::of_aac(count.offset, sine(count))
     }
     (_, Codec::Aac) => None,
-    (_, Codec::Mp3) => Family::of_mp3(evidence.offset()),
+    // the steps were read on the grid of the file's own rate
+    (Evidence::CountAt { .. }, Codec::Mp3) => Family::of_mp3(evidence.offset()),
+    (_, Codec::Mp3) => {
+      let weighed = scan
+        .mp3_steps
+        .as_ref()
+        .and_then(|steps| steps.neighbours.as_ref())
+        .and_then(|neighbours| neighbours.weighed(&thresholds.fraunhofer_steps));
+      match Family::of_mp3(evidence.offset()) {
+        Some(Family::Untagged)
+          if weighed.is_some_and(|sum| sum > thresholds.fraunhofer_steps.over) =>
+        {
+          Some(Family::Fraunhofer)
+        }
+        family => family,
+      }
+    }
     (Evidence::Short { short }, Codec::Opus) => lattice::SHORT
       .iter()
       .filter(|length| length.length == short.length)
@@ -974,6 +1111,7 @@ pub(crate) fn scan(
       stepped: 0,
       whole: 0,
       segment_whole: [0; SEGMENTS],
+      neighbours: Some(Mp3Neighbours::default()),
     };
     for (segment, whole) in segments.0.iter().zip(0..) {
       // below the hop, so it fits
@@ -1693,26 +1831,40 @@ impl Mp3 {
       }
       let count = |pair: [&[f64; MP3_HOP]; 2]| {
         let (mut tested, mut stepped, mut whole) = (0, 0, 0);
+        let mut neighbours = Mp3Neighbours::default();
         for lines in pair {
-          for band in bands.windows(2) {
-            let Some(step) = band_step(&lines[band[0]..band[1]]) else {
-              continue;
-            };
-            tested += 1;
-            if let Some(step) = step {
+          // the whole step of the band under the one looked at
+          let mut under = None;
+          for (at, band) in bands.windows(2).enumerate() {
+            let lines = &lines[band[0]..band[1]];
+            let step = band_step(lines);
+            tested += usize::from(step.is_some());
+            let fourths = step.flatten().and_then(|step| {
               stepped += 1;
               let fourths = 4.0 * (step / MP3_UNIT).log2();
-              whole += usize::from((fourths - fourths.round()).abs() < WHOLE_STEP);
-            }
+              ((fourths - fourths.round()).abs() < WHOLE_STEP).then(|| {
+                let top = lines.iter().fold(0.0f64, |top, line| top.max(line.abs()));
+                let largest = (top / step).powf(0.75).round();
+                // a step within 2^-100 and 2^100, so its quarter powers fit
+                let fourths = fourths.round() as i32;
+                neighbours.take(at, fourths, largest, under);
+                fourths
+              })
+            });
+            whole += usize::from(fourths.is_some());
+            under = fourths;
           }
         }
-        (tested, stepped, whole)
+        (tested, stepped, whole, neighbours)
       };
       let (apart, joint) = (count([&l, &r]), count([&m, &s]));
-      let (tested, stepped, whole) = if joint.2 > apart.2 { joint } else { apart };
+      let (tested, stepped, whole, neighbours) = if joint.2 > apart.2 { joint } else { apart };
       steps.tested += tested;
       steps.stepped += stepped;
       steps.whole += whole;
+      if let Some(all) = &mut steps.neighbours {
+        all.add(&neighbours);
+      }
     }
   }
 }
@@ -1912,6 +2064,75 @@ mod tests {
     let last = found(&after, &thresholds).expect("the lattice is over");
     assert_eq!(last.evidence, Evidence::Lattice(opus));
     assert_eq!(last.family, Some(Family::Libopus));
+    // an MP3 grid at offset 1 whose steps weigh over the threshold is Fraunhofer's; the sums
+    // are the tuning's for two decodes of its codec
+    let fraunhofer =
+      |pairs, same, finer, twos: (usize, usize), low: (usize, f64), high: (usize, f64)| {
+        Mp3Neighbours {
+          pairs,
+          same,
+          finer,
+          two_finer: twos.0,
+          two_coarser: twos.1,
+          low_bands: low.0,
+          low_log: low.1,
+          high_bands: high.0,
+          high_log: high.1,
+        }
+      };
+    let at_128 = fraunhofer(
+      [725, 775, 1032],
+      [216, 427, 631],
+      [216, 231, 379],
+      (488, 174),
+      (838, 2179.864),
+      (1492, 2424.526),
+    );
+    let at_320 = fraunhofer(
+      [1118, 1058, 1078],
+      [447, 623, 609],
+      [313, 338, 377],
+      (750, 246),
+      (1108, 3340.91),
+      (1510, 4099.994),
+    );
+    let rule = &thresholds.fraunhofer_steps;
+    for (neighbours, sum) in [(&at_128, 28.7451), (&at_320, 28.6805)] {
+      let weighed = neighbours.weighed(rule).expect("pairs enough");
+      assert!((weighed - sum).abs() < 1e-3, "{weighed}");
+    }
+    // an encoder that never moves the step, and one with too few pairs to tell
+    let flat = fraunhofer(
+      [900; 3],
+      [900; 3],
+      [0; 3],
+      (0, 0),
+      (800, 2400.0),
+      (1500, 2500.0),
+    );
+    assert!(flat.weighed(rule).expect("pairs enough") < rule.over);
+    let few = fraunhofer([10; 3], [5; 3], [3; 3], (9, 2), (20, 60.0), (30, 50.0));
+    assert_eq!(few.weighed(rule), None);
+    let stepped = |neighbours: &Mp3Neighbours| Scan {
+      mp3: codec_scan(50.0, 4),
+      mp3_steps: Some(Mp3Steps {
+        tested: 9000,
+        stepped: 3400,
+        whole: 3300,
+        segment_whole: [800; SEGMENTS],
+        neighbours: Some(neighbours.clone()),
+      }),
+      ..scan((2.0, 0), (2.0, 0))
+    };
+    let family = |mut scan: Scan, offset: usize| {
+      scan.mp3.offset = offset;
+      found(&scan, &thresholds).and_then(|found| found.family)
+    };
+    assert_eq!(family(stepped(&at_128), 1), Some(Family::Fraunhofer));
+    assert_eq!(family(stepped(&flat), 1), Some(Family::Untagged));
+    assert_eq!(family(stepped(&few), 1), Some(Family::Untagged));
+    // LAME's offset names LAME whatever the steps weigh
+    assert_eq!(family(stepped(&at_128), 48), Some(Family::Lame));
     // frames under 20 ms make a grid where no count of 20 ms frames does, the length with
     // the most frames
     let short = |length: usize, frames: usize, uncut_frames: usize| OpusShort {
@@ -1953,6 +2174,29 @@ mod tests {
     assert_eq!(shown.codec, Codec::Aac);
     assert_eq!(shown.evidence, Evidence::Count(codec_scan(40.0, 4)));
     assert_eq!(shown.family, Some(Family::Faac));
+  }
+
+  #[test]
+  fn neighbouring_bands_are_compared_by_where_the_lower_one_sits() {
+    let mut neighbours = Mp3Neighbours::default();
+    // one channel: bands 5 to 8 with steps -40, -40, -42 and -40, then band 13 after a gap
+    let mut under = None;
+    for (band, fourths, largest) in [(5, -40, 7.0), (6, -40, 3.0), (7, -42, 1.0), (8, -40, 1.0)] {
+      neighbours.take(band, fourths, largest, under);
+      under = Some(fourths);
+    }
+    neighbours.take(13, -44, 3.0, None);
+    assert_eq!(neighbours.pairs, [2, 1, 0]);
+    assert_eq!(neighbours.same, [1, 0, 0]);
+    assert_eq!(neighbours.finer, [1, 0, 0]);
+    assert_eq!((neighbours.two_finer, neighbours.two_coarser), (1, 1));
+    // band 5 alone is under band 6, band 13 alone from band 12 up
+    assert_eq!((neighbours.low_bands, neighbours.low_log), (1, 3.0));
+    assert_eq!((neighbours.high_bands, neighbours.high_log), (1, 2.0));
+    let mut twice = neighbours.clone();
+    twice.add(&neighbours);
+    assert_eq!(twice.pairs, [4, 2, 0]);
+    assert_eq!(twice.high_log, 4.0);
   }
 
   #[test]

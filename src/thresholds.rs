@@ -242,6 +242,8 @@ pub struct ReadingThresholds {
   /// It is compared with [`OpusShort::uncut_frames`](crate::grid::OpusShort::uncut_frames),
   /// as `opus_short_frames` is with its count.
   pub opus_short_uncut_frames: usize,
+  /// Weights that read an MP3 grid at offset 1 as Fraunhofer's encoder.
+  pub fraunhofer_steps: FraunhoferSteps,
   /// Fewest different pairs of steps among Opus's hybrid frames, for an Opus grid.
   ///
   /// It is compared with [`OpusHybrid::steps`](crate::grid::OpusHybrid::steps) and with
@@ -256,6 +258,68 @@ pub struct ReadingThresholds {
 }
 
 /// Band top of a rate some old equipment recorded at.
+/// Weights that read the steps of an MP3 decode as Fraunhofer's encoder.
+///
+/// Encoders that state no delay all leave their grid at offset 1. They differ in how they
+/// move a band's quantizer step from the band under it, which
+/// [`Mp3Neighbours`](crate::grid::Mp3Neighbours) counts. Each weight multiplies one share of
+/// those counts, and a decode whose sum is over `over` reads as Fraunhofer's. The weights
+/// were fitted on decodes of the codec Windows ships against Shine, BladeEnc, GOGO, Apple,
+/// Helix and LAME; another version of Fraunhofer's encoder may fall under the threshold.
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+  feature = "serde",
+  serde(default, deny_unknown_fields, rename_all = "camelCase")
+)]
+pub struct FraunhoferSteps {
+  /// Fewest pairs of neighbouring bands, over the three regions.
+  pub min_pairs: usize,
+  /// Fewest pairs in each region.
+  pub min_region_pairs: usize,
+  /// Weight of the pairs whose higher band is two quarter powers finer, as a share of all.
+  pub two_finer: f64,
+  /// Weight of the pairs whose higher band is two quarter powers coarser, as a share of all.
+  pub two_coarser: f64,
+  /// Weight of each region's pairs with one step, as a share of the region's.
+  pub same: [f64; 3],
+  /// Weight of each region's pairs whose higher band is finer, as a share of the region's.
+  pub finer: [f64; 3],
+  /// Weight of the mean logarithm of the largest value in bands 0 to 5.
+  pub low_log: f64,
+  /// Weight of the mean logarithm of the largest value in bands 12 up.
+  pub high_log: f64,
+  /// Weight of the lowest region's pairs, as a share of all.
+  pub low_share: f64,
+  /// Weight of the highest region's pairs, as a share of all.
+  pub high_share: f64,
+  /// Sum over which the steps read as Fraunhofer's.
+  ///
+  /// A higher value names fewer of its decodes and fewer of another encoder's.
+  pub over: f64,
+}
+
+impl Default for FraunhoferSteps {
+  fn default() -> Self {
+    // fitted in the tuning on 445 decodes of Fraunhofer's codec against 2,989 of other
+    // encoders. each master left out in turn, the threshold names 361 of the 445, none of
+    // 468 decodes of the other encoders at offset 1 and 3 of 2,521 of LAME and Helix
+    Self {
+      min_pairs: 200,
+      min_region_pairs: 30,
+      two_finer: 18.913,
+      two_coarser: -46.687,
+      same: [-10.995, 14.846, 24.374],
+      finer: [-2.863, 37.678, 15.258],
+      low_log: -2.315,
+      high_log: 1.054,
+      low_share: -1.271,
+      high_share: -6.886,
+      over: 26.001,
+    }
+  }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
@@ -361,6 +425,7 @@ impl Default for ReadingThresholds {
       // of frames under 20 ms they reach one in the stretches and one in the windows
       opus_short_frames: 3,
       opus_short_uncut_frames: 3,
+      fraunhofer_steps: FraunhoferSteps::default(),
       // the pilot files that were never Opus reach nine pairs of steps at this share, and a
       // share of 0.04 with this many pairs
       opus_hybrid_steps: 30,

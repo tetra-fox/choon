@@ -95,5 +95,7 @@ pub use flags::Flag;
 pub use limitation::Limitation;
 pub use opus::{OpusBandwidth, OpusMode, OpusUse};
 pub use reading::{EncoderGuess, Reading, Verdict};
-pub use thresholds::{EncoderProfile, MeasureThresholds, RateEdge, ReadingThresholds};
+pub use thresholds::{
+  EncoderProfile, FraunhoferSteps, MeasureThresholds, RateEdge, ReadingThresholds,
+};
 pub use window::{Step, Window};
