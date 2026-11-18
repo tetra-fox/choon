@@ -17,6 +17,7 @@ command-line tool and a Rust library.
 - Spots lossless files decoded from Opus by the band energies its encoder quantizes, at 48 kHz
   and after a conversion to 44.1 kHz, tuned on libopus at 16 to 256 kbps
 - Reads Opus files, with the coding mode and audio bandwidth their packets state
+- Reads WavPack, Monkey's Audio and DSD files, and HE-AAC with the band its decoder rebuilds
 - Reads the encoder's cutoff in the spectrum, which alone raises a doubt
 - Guesses the encoder setting behind a transcode, such as `mp3 ~128 kbps`
 - Flags upsampled audio, bit-padded samples and two channels holding the same audio
@@ -42,6 +43,10 @@ In a file that claims a lossless format, four stretches of the samples are also 
 frame grid of an MP3 or AAC encoder. The encoder transforms its input in frames on a fixed grid
 and zeroes many transform values. Running its transform again on the decoded samples, with frames
 where the encoder put them, finds those values back at the level of the samples' rounding noise.
+
+AAC gives a long block one of two windows, and the zeroed values come back only under the one
+the encoder used. The scan runs under both: the Kaiser-Bessel-derived window of ffmpeg, fdk-aac
+and Nero, and the sine window of Apple and FAAC.
 
 The scan counts the values above that noise at every offset of each codec's grid. A grid is one
 offset that counts far fewer than the rest; an MP3 grid also needs at least three stretches
@@ -78,13 +83,35 @@ A reading also holds:
 
 ## Supported formats
 
-| Codecs                                             | Containers                                   |
-| -------------------------------------------------- | -------------------------------------------- |
-| FLAC, ALAC, WAV, AIFF, CAF, MP3, AAC, Vorbis, Opus | their own files, MP4/M4A, Ogg, Matroska/WebM |
+| Codecs                                          | Containers                                   |
+| ----------------------------------------------- | -------------------------------------------- |
+| FLAC, ALAC, WAV, AIFF, CAF, MP3, Vorbis, Opus   | their own files, MP4/M4A, Ogg, Matroska/WebM |
+| AAC-LC, HE-AAC, HE-AAC v2                       | MP4/M4A, ADTS (`.aac`)                       |
+| WavPack                                         | `.wv`                                        |
+| Monkey's Audio                                  | `.ape`                                       |
+| DSD at 64 to 512 times 44.1 or 48 kHz           | DSF (`.dsf`), DSDIFF (`.dff`)                |
 
-Decoding is done by [symphonia](https://github.com/pdeljanov/Symphonia), and Opus by
-[symphonia-opus](https://github.com/jiztastamablastamarang/symphonia-opus).
+| Decoder                                                                          | Codecs         |
+| -------------------------------------------------------------------------------- | -------------- |
+| [symphonia](https://github.com/pdeljanov/Symphonia)                              | all but these  |
+| [symphonia-opus](https://github.com/jiztastamablastamarang/symphonia-opus)       | Opus           |
+| [rusty_aac](https://crates.io/crates/rusty_aac)                                  | AAC            |
+| [wavicle](https://crates.io/crates/wavicle)                                      | WavPack        |
+| [ape-decoder](https://crates.io/crates/ape-decoder)                              | Monkey's Audio |
 
+- HE-AAC is decoded at its output rate, with spectral band replication and parametric stereo.
+  The band above the core is the decoder's reconstruction, so its reading names no encoder
+- WavPack is read as mono or stereo at 16, 24 or 32 bits or as float. A hybrid file is lossy
+  without its correction file and is refused by name, as are 8-bit samples, more than two
+  channels and streams older than WavPack 4
+- Monkey's Audio is read at 8, 16 or 24 bits from version 3.99 on. Older files, float samples
+  and 32-bit samples are refused by name
+- DSD is measured as PCM at a sixteenth of its rate and at most 352.8 or 384 kHz: 176.4 kHz
+  for DSD64. The filter passes 0.45 of that rate and removes what would fold onto it by 115 dB
+- A DSD reading says where the band stops, which shows a source limited like 44.1 or 48 kHz
+  PCM or cut by a lossy encoder. It cannot tell a DSD recording from PCM converted up, and the
+  noise above the audio band reads as content
+- DST-compressed DSDIFF is refused by name
 - Opus is read in Ogg (`.opus`, `.ogg`), Matroska/WebM (`.mka`, `.webm`) and MP4
 - An Opus file starts after its pre-skip and has its header's output gain applied
 - Matroska does not say where the last Opus packet's audio ends, so up to 20 ms of padding is
@@ -158,7 +185,8 @@ music/honest.flac: consistent, confidence 0.73
 - A walk skips hidden files and directories; `choon check --help` lists the extensions it reads
 - `--jobs` defaults to the number of cores; a file's grid scan runs on the same threads
 - A JSON line holds the claimed format, the length, the windows read, the grid scan, an Opus
-  file's modes and bandwidths, and every reading
+  file's modes and bandwidths, an HE-AAC file's core rate, a DSD file's one-bit rate, and every
+  reading
 - A profile is `{"measure": {...}, "reading": {...}}`; keys left out keep their default and
   unknown keys are refused
 - Repeating `--profile` reads each file with several profiles; those with the same `measure`
@@ -203,6 +231,9 @@ fn main() -> Result<(), choon::Error> {
 - Measuring is slow and reading is quick: measure once, read under many thresholds
 - `picture` holds each window's spectrogram and waveform data
 - Logs through `tracing`
+- ape-decoder 0.3.2 can panic on a damaged Monkey's Audio file in a build with overflow checks.
+  The panic is caught, logged at `warn` and the frame skipped; a build with `panic = "abort"`
+  aborts
 
 | Setting    | Description                                    |
 | ---------- | ---------------------------------------------- |
@@ -220,6 +251,29 @@ fn main() -> Result<(), choon::Error> {
 - `cli` turns `serde` on
 - `testing` builds LAME and libopus, which need a C compiler, `make` and CMake
 
+## Encoders
+
+Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
+
+| Codec  | Encoder                                           | Decodes found, of 40 |
+| ------ | ------------------------------------------------- | -------------------- |
+| MP3    | LAME 3.90.3, 3.93.1, 3.97, 3.98.4, 3.99.5, 3.100  | 38 to 40             |
+| MP3    | Helix, Shine, BladeEnc, GOGO                      | 39 to 40             |
+| AAC-LC | ffmpeg, fdk-aac                                   | 40                   |
+| AAC-LC | Nero, Apple (CBR, constrained VBR, true VBR)      | 39 to 40             |
+| AAC-LC | FAAC at 128 kbps and at quality 100               | 30 and 36            |
+| AAC-LC | FAAC at 256 kbps                                  | 5                    |
+| HE-AAC | Apple, fdk-aac, Nero at 48 and 64 kbps            | 4 to 21              |
+| HE-AAC | Apple, fdk-aac, Nero, v2 at 32 kbps               | 0 to 3               |
+| Vorbis | libvorbis 1.1.2 to 1.3.7, aoTuV, at q3 and q6     | 34 to 36             |
+| Vorbis | libvorbis 1.2.0 and 1.3.7, aoTuV, at q9           | 18 to 23             |
+| Opus   | libopus 1.1, 1.3.1, 1.5.2, 1.6.1 at 64 to 256     | 39                   |
+
+- FAAC at 256 kbps codes nearly every frame as short blocks, which the scan does not analyse
+- An HE-AAC decode's core was coded at half the sample rate under the decoder's filterbank
+- A Vorbis decode is found by the AAC scan, whose windows are not Vorbis's
+- The MP3 encoders of Apple and Fraunhofer were not tested
+
 ## Limitations
 
 - A lossless master filtered sharply where an encoder cuts (16 or 19 kHz) reads as possibly lossy
@@ -232,8 +286,8 @@ fn main() -> Result<(), choon::Error> {
 - A gain change after an Opus decode moves the energies off the lattice
 - Opus is looked for at 44.1 and 48 kHz only
 - Clipping hides the grid frame by frame, so a decode made louder until it clips can lose it
-- The grid thresholds were tuned on LAME's MP3 and ffmpeg's AAC only; other AAC encoders use
-  their own windows
+- The grid thresholds were tuned on LAME's MP3 and ffmpeg's AAC; [Encoders](#encoders) lists
+  what the scan finds of others
 - A grid shows that the samples were decoded from MP3 or AAC at some point, as in a master built
   from such material
 - A cutoff near 20 kHz, where MP3 320 and AAC cut and many recordings are filtered anyway, reads
