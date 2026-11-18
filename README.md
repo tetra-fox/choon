@@ -15,7 +15,8 @@ command-line tool and a Rust library.
 - Spots lossless files decoded from MP3 or AAC by the frame grid the encoder leaves, tuned on
   LAME at 96 to 320 kbps and V0 to V9 and on ffmpeg's AAC at 96 to 256 kbps
 - Spots lossless files decoded from Opus by the band energies its encoder quantizes, at 48 kHz
-  and after a conversion to 44.1 kHz, tuned on libopus at 16 to 256 kbps
+  and after a conversion to 44.1 kHz, with or without a gain after the decode, tuned on libopus
+  at 16 to 256 kbps
 - Reads Opus files, with the coding mode and audio bandwidth their packets state
 - Reads WavPack, Monkey's Audio and DSD files, and HE-AAC with the band its decoder rebuilds
 - Reads the encoder's cutoff in the spectrum, which alone raises a doubt
@@ -60,6 +61,11 @@ counts the frames whose bands do, at every offset of the grid in the four stretc
 to 60 of the windows on the one grid a decode has when nothing was cut from its start. Samples
 at 44.1 kHz are brought back to the 48 kHz Opus runs at first. It does not depend on the
 bitrate.
+
+A gain after the decode moves every step by the same amount, half the gain, so the lattice is
+still there, moved. The scan takes the move that the most frames of a channel name and counts
+the frames on the lattice once it is taken off. Moves 9.6 dB of gain apart fit most frames
+alike, so the count shows a decode and does not tell what the gain was.
 
 | Verdict          | Description                                                                 |
 | ---------------- | --------------------------------------------------------------------------- |
@@ -284,7 +290,8 @@ Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
 - Opus is found in 20 ms frames (and the 40 and 60 ms packets made of them) coded as long
   blocks with the pitch post-filter off; a decode made mostly of other frames, one of 2.5, 5 or
   10 ms frames, and one in SILK or hybrid voice mode read as possibly lossy at most
-- A gain change after an Opus decode moves the energies off the lattice
+- A level that changes over time after an Opus decode, as under a fade or a limiter, hides the
+  lattice where it changes
 - Opus is looked for at 44.1 and 48 kHz only
 - Clipping hides the grid frame by frame, so a decode made louder until it clips can lose it
 - The grid thresholds were tuned on LAME's MP3 and ffmpeg's AAC; [Encoders](#encoders) lists
