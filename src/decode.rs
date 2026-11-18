@@ -1049,6 +1049,34 @@ mod tests {
   }
 
   #[test]
+  fn a_wavpack_file_whose_blocks_stop_before_its_stated_length_says_so() {
+    let audio = fixtures::music_for(5, 3, 44_100, fixtures::pink);
+    let whole = fixtures::wavpack(&audio, 16);
+    let blocks: Vec<usize> = whole
+      .windows(4)
+      .enumerate()
+      .filter_map(|(at, id)| (id == b"wvpk").then_some(at))
+      .collect();
+    let middle = blocks[blocks.len() / 2];
+    // bytes that are not a block where one should start, and a file cut between two blocks
+    let mut damaged = whole.clone();
+    damaged[middle] = b'x';
+    for (name, bytes) in [("damaged", damaged), ("cut", whole[..middle].to_vec())] {
+      let source = Box::new(std::io::Cursor::new(bytes));
+      let mut decoder = Decoder::from_source(source, &Hint::new()).unwrap();
+      let mut window = vec![Vec::new(); 2];
+      while decoder.fill(&mut window, 44_100) == Filled::Full {}
+      let stopped = decoder
+        .stopped
+        .unwrap_or_else(|| panic!("{name}: no reason"));
+      assert!(
+        stopped.contains("stop before the length"),
+        "{name}: {stopped}"
+      );
+    }
+  }
+
+  #[test]
   fn ape_from_the_reference_encoder_decodes_to_the_samples_it_was_made_from() {
     let (frames, _) = fixtures::CLIP_PCM.as_chunks::<4>();
     for (level, bytes) in [

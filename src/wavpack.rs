@@ -13,7 +13,9 @@ use symphonia::core::codecs::audio::{
 };
 use symphonia::core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
 use symphonia::core::codecs::{CodecInfo, CodecParameters};
-use symphonia::core::errors::{Error, Result, SeekErrorKind, seek_error, unsupported_error};
+use symphonia::core::errors::{
+  Error, Result, SeekErrorKind, decode_error, seek_error, unsupported_error,
+};
 use symphonia::core::formats::probe::{
   ProbeDataMatchSpec, ProbeFormatData, ProbeableFormat, Score, Scoreable,
 };
@@ -121,6 +123,10 @@ pub(crate) struct WavPackReader<'s> {
   first: u64,
   /// where the block last handed out or sought to starts, and its first sample frame
   last: Option<(u64, u64)>,
+  /// the sample frames of the file, when its first block states them
+  total: Option<u64>,
+  /// the sample frame after the last one handed out
+  read_to: u64,
 }
 
 impl<'s> WavPackReader<'s> {
@@ -185,6 +191,8 @@ impl<'s> WavPackReader<'s> {
       metadata: MetadataLog::default(),
       first,
       last: None,
+      total: header.total,
+      read_to: 0,
     })
   }
 }
@@ -281,6 +289,11 @@ impl FormatReader for WavPackReader<'_> {
     loop {
       let at = self.reader.pos();
       let Some(header) = next_header(&mut self.reader)? else {
+        // tags follow the last block. bytes that are not a block before the length the file
+        // states are damage, or the file was cut between two blocks
+        if self.total.is_some_and(|total| self.read_to < total) {
+          return decode_error("wavpack: the blocks stop before the length the file states");
+        }
         return Ok(None);
       };
       self.reader.seek(SeekFrom::Start(at))?;
@@ -289,6 +302,7 @@ impl FormatReader for WavPackReader<'_> {
         continue;
       }
       self.last = Some((at, header.index));
+      self.read_to = header.index + u64::from(header.frames);
       return Ok(Some(Packet::new(
         0,
         // a block's index is 40 bits
