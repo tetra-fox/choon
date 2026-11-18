@@ -583,6 +583,10 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
   // samples was laid after it and is named first
   let converted = || {
     let other = scan.other_rate.as_ref()?;
+    let aac = |scan| {
+      let (codec, scan, _, agreeing) = aac(scan);
+      (codec, scan, thresholds.other_rate_aac_z, agreeing)
+    };
     let (codec, scan) = clearest([
       Some(aac(&other.aac)),
       Some(aac(&other.aac_sine)),
@@ -1752,6 +1756,17 @@ mod tests {
       at_other.evidence,
       Evidence::CountAt { rate: 44_100, .. }
     ));
+    // AAC at the other rate asks for more than at the file's own
+    let faint = Scan {
+      other_rate: Some(OtherRate {
+        rate: 44_100,
+        aac: codec_scan(12.0, 4),
+        aac_sine: codec_scan(12.0, 4),
+        mp3: codec_scan(2.0, 0),
+      }),
+      ..scan((2.0, 0), (2.0, 0))
+    };
+    assert_eq!(codec(&faint), None);
     let opus = OpusScan {
       offset: OPUS_UNCUT_OFFSET,
       frames: 40,

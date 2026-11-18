@@ -194,6 +194,13 @@ pub struct ReadingThresholds {
   ///
   /// [`CodecScan::segments_agreeing`]: crate::grid::CodecScan::segments_agreeing
   pub mp3_grid_segments_agreeing: usize,
+  /// Robust z over which the AAC scan at the other rate finds a frame grid.
+  ///
+  /// It is compared with the z of [`OtherRate::aac`](crate::grid::OtherRate::aac) and of
+  /// [`OtherRate::aac_sine`](crate::grid::OtherRate::aac_sine), with the agreement
+  /// `aac_grid_segments_agreeing` asks for. Decodes of other codecs dip further at the other
+  /// rate than lossless files do at their own, so it stands over `aac_grid_z`.
+  pub other_rate_aac_z: f64,
   /// Fewest scalefactor bands on whole quantizer steps in a segment that shows an MP3 grid.
   ///
   /// It is compared with each of
@@ -328,8 +335,11 @@ impl Default for ReadingThresholds {
       aac_grid_segments_agreeing: 0,
       mp3_grid_z: 12.0,
       mp3_grid_segments_agreeing: 3,
-      // three stretches of the tuning's pilot files that were never MP3 reach five whole steps
-      mp3_whole_steps: 10,
+      // the tuning's files with no AAC behind a conversion reach 9.63 there, and its converted
+      // AAC decodes that show a grid start at 16.7
+      other_rate_aac_z: 13.0,
+      // three stretches of the tuning's files that were never MP3 reach seven whole steps
+      mp3_whole_steps: 20,
       // the tuning's files that were never Opus reach one frame in the stretches and one in
       // the windows
       opus_grid_frames: 3,
