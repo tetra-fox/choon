@@ -73,6 +73,7 @@ mod limitation;
 mod opus;
 pub mod picture;
 mod reading;
+mod resample;
 mod thresholds;
 mod totals;
 mod wavpack;

@@ -467,7 +467,8 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
     settings,
     // a file with segments states its length, so its count of windows is finite
     windows_share: if segments.is_some() {
-      windows / (windows + grid::jobs(opus_rate.is_some()) as f64 * SCAN_JOB_WINDOWS)
+      let jobs = grid::jobs(opus_rate.is_some(), settings.thresholds.scan_other_rate);
+      windows / (windows + jobs as f64 * SCAN_JOB_WINDOWS)
     } else {
       1.0
     },
@@ -536,6 +537,7 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
         rate,
         bits,
         uncut: uncut.counted(),
+        other_rate: settings.thresholds.scan_other_rate,
       });
     measured.grid = scan_grid(segments, opus, &run, &mut measured)?;
   }
@@ -628,9 +630,13 @@ fn scan_grid(
     return Ok(None);
   }
   let ended = AtomicUsize::new(0);
-  let jobs = grid::jobs(opus.is_some());
+  let jobs = grid::jobs(
+    opus.is_some(),
+    opus.as_ref().is_some_and(|opus| opus.other_rate),
+  );
   let scan = grid::scan(
     segments,
+    measured.claimed.sample_rate,
     opus,
     || !is_canceled(settings.canceled.as_ref()) && !is_past(settings.deadline),
     || {

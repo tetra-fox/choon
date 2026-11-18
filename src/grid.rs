@@ -8,6 +8,11 @@
 //!
 //! The scan reads four stretches of 40960 samples, at 20, 40, 60 and 80% of the file.
 //!
+//! A file at 44.1 or 48 kHz is scanned for MP3 and AAC a second time with its stretches brought
+//! to the other of the two rates, by a long filter that keeps the sample times the rates share.
+//! A decode converted between them carries its grid at the rate it was decoded at, and the
+//! conversion back leaves the quantized values close enough to count ([`OtherRate`]).
+//!
 //! # MP3 and AAC
 //!
 //! Both zero many transform values, and on the grid every zeroed value comes out at the level
@@ -23,6 +28,10 @@
 //! 512-tap polyphase filterbank, an 18-line MDCT per subband and the alias-reduction
 //! butterflies, at a hop of 576. Short blocks are not analyzed.
 //!
+//! The values an MP3 encoder kept are whole numbers to the power 4/3 times their scalefactor
+//! band's step. With the granules at the count's offset, the bands whose values sit on one
+//! step are counted too ([`Mp3Steps`]), which shows a grid whose count stands out too little.
+//!
 //! # Opus
 //!
 //! Opus's CELT layer codes the energy of each of its 21 bands, in each frame, as a step from a
@@ -35,20 +44,28 @@
 //!
 //! The analysis is of 20 ms frames at 48 kHz, the rate Opus runs at: a 1920-point MDCT at a
 //! hop of 960 with CELT's low-overlap window, after the encoder's pre-emphasis. Samples at
-//! 44.1 kHz are brought back to 48 kHz first; other rates are not scanned. Only a frame coded
-//! as one long block with the pitch post-filter off, after another such frame, counts. The
-//! windows the file is measured at are read too, on the one grid a decode has when nothing was
-//! cut from its start.
+//! 44.1 kHz are brought back to 48 kHz first; other rates are not scanned. The windows the
+//! file is measured at are read too, on the one grid a decode has when nothing was cut from
+//! its start.
+//!
+//! A frame is read as one long block after another, with the pitch post-filter off in both.
+//! Where one frame at least sits on the lattice that way, the frames that sit on it read
+//! another way are counted with it: as the eight short blocks of a transient frame, after such
+//! a frame, or coded without the frame before them. Frames of the hybrid mode, which codes only
+//! the bands from 8 kHz up this way, are counted apart ([`OpusHybrid`]).
 //!
 //! # Limits
 //!
 //! A grid is evidence that the samples were decoded from that codec, at some point.
 //!
-//! - Resampling after decoding removes an MP3 or AAC grid. Opus's energies are still found
-//!   after a conversion from 48 to 44.1 kHz.
+//! - Resampling after decoding moves an MP3 or AAC grid off the samples. It is looked for
+//!   again in a file at 44.1 or 48 kHz brought to the other of the two rates; after any other
+//!   conversion it is not found. Opus's energies are still found after a conversion from 48 to
+//!   44.1 kHz.
 //! - Clipping hides a grid frame by frame.
 //! - Vorbis's grid shows through the AAC scan, so a Vorbis decode reads as AAC.
-//! - Opus frames of 2.5, 5 and 10 ms, and its SILK and hybrid modes, are not found.
+//! - Opus frames of 2.5, 5 and 10 ms, frames the pitch post-filter ran over, and its SILK
+//!   mode are not found.
 //! - A gain after an Opus decode moves the lattice, and the scan searches for one move a
 //!   channel ([`OpusShifted`]). A level that changes over time, as under a fade or a limiter,
 //!   hides the lattice where it changes.
@@ -57,6 +74,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use crate::lattice;
+use crate::resample::Resampler;
 use crate::thresholds::ReadingThresholds;
 use rayon::prelude::*;
 use rustfft::num_complex::Complex;
@@ -160,6 +178,59 @@ pub struct OpusScan {
   /// `None` in measures kept by a version of the analyzer that did not search for one.
   #[cfg_attr(feature = "serde", serde(default))]
   pub shifted: Option<OpusShifted>,
+  /// Frames counted as Opus's hybrid mode codes them.
+  ///
+  /// `None` in measures kept by a version of the analyzer that did not count them.
+  #[cfg_attr(feature = "serde", serde(default))]
+  pub hybrid: Option<OpusHybrid>,
+}
+
+/// How many frames of a file carry the band energies of Opus's hybrid mode.
+///
+/// The hybrid mode codes audio under 8 kHz with a voice coder and the four bands above with
+/// CELT. A frame is tested on the two bands from 9.6 to 15.6 kHz: the voice coder's output
+/// reaches into the band under them, and the band over them comes back inexact from a file
+/// at 44.1 kHz. It counts when both bands' steps from their predictions sit on the lattice,
+/// in every channel where both stand over the samples' rounding noise.
+///
+/// Two bands land on the lattice by chance in a few frames of a hundred, so a count is read
+/// as a share of the frames tested. A decode coded by CELT alone shows some such frames too.
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct OpusHybrid {
+  /// Offset of the grid that counts the most such frames in the segments, in samples.
+  ///
+  /// It is where frames start at 48 kHz, modulo the 960 samples of a 20 ms frame, counted
+  /// from the file's first sample. Where no offset counts a frame it is the uncut decode's.
+  pub offset: usize,
+  /// Number of frames counted at `offset`, over the four segments.
+  pub frames: usize,
+  /// Number of frames at `offset` whose two bands could be tested.
+  pub tested: usize,
+  /// Number of different pairs of steps the frames counted at `offset` sit on.
+  ///
+  /// The frames of a steady tone land on the same pair over and over, a decode's on many.
+  pub steps: usize,
+  /// Number of frames counted in the windows measured, on the grid of an uncut decode.
+  pub uncut_frames: usize,
+  /// Number of frames in the windows measured whose two bands could be tested.
+  pub uncut_tested: usize,
+  /// Number of different pairs of steps the frames counted in the windows sit on.
+  pub uncut_steps: usize,
+}
+
+impl OpusHybrid {
+  /// Returns the offset, the frames counted and the frames tested of the larger count.
+  ///
+  /// The segments are counted at [`OpusHybrid::offset`], the windows at [`OPUS_UNCUT_OFFSET`].
+  pub fn most(&self) -> (usize, usize, usize) {
+    if self.uncut_frames > self.frames {
+      (OPUS_UNCUT_OFFSET, self.uncut_frames, self.uncut_tested)
+    } else {
+      (self.offset, self.frames, self.tested)
+    }
+  }
 }
 
 /// How many frames carry Opus's band energies at another level than the decoder's.
@@ -227,9 +298,67 @@ pub struct Scan {
   pub aac_sine: Option<CodecScan>,
   /// MP3's grid.
   pub mp3: CodecScan,
+  /// MP3's quantizer steps on that grid.
+  ///
+  /// `None` at a sample rate other than 32, 44.1 and 48 kHz, and in measures kept by a version
+  /// of the analyzer that did not look for them.
+  #[cfg_attr(feature = "serde", serde(default))]
+  pub mp3_steps: Option<Mp3Steps>,
   /// Opus's frames, `None` at a sample rate other than 44.1 and 48 kHz.
   #[cfg_attr(feature = "serde", serde(default))]
   pub opus: Option<OpusScan>,
+  /// MP3's and AAC's grids in the samples brought to the other of 44.1 and 48 kHz.
+  ///
+  /// `None` at any other sample rate, and in measures kept by a version of the analyzer that
+  /// did not scan at the other rate.
+  #[cfg_attr(feature = "serde", serde(default))]
+  pub other_rate: Option<OtherRate>,
+}
+
+/// How many scalefactor bands of a file hold values on MP3's quantizer.
+///
+/// An MP3 encoder keeps each value of a scalefactor band as a whole number to the power 4/3
+/// times the band's step, and a step is a whole power of the fourth root of two. With the
+/// granules at the MP3 scan's [`CodecScan::offset`], a long block's kept values come back on
+/// that lattice. The count takes each granule as left and right or as mid and side, whichever
+/// puts more bands on whole steps.
+///
+/// A band is tested when three of its values at least stand over the rounding noise of 16-bit
+/// samples and its smallest stands far enough over it for a lattice to show. A step finer
+/// than that noise leaves nothing to find, as the highest bitrates' steps are.
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct Mp3Steps {
+  /// Number of bands tested, over the four segments.
+  pub tested: usize,
+  /// Number of bands whose values all sit on the lattice of one step.
+  pub stepped: usize,
+  /// Number of those whose step is a whole power of the fourth root of two.
+  ///
+  /// A gain after the decode moves every step by the same amount off the whole powers.
+  pub whole: usize,
+  /// Each segment's share of `whole`, in file order.
+  pub segment_whole: [usize; SEGMENTS],
+}
+
+/// Scan for MP3 and AAC of a file's samples brought to the other of 44.1 and 48 kHz.
+///
+/// Offsets are where frames start at `rate`, counted from the file's first sample. A stretch
+/// brought from 48 to 44.1 kHz holds fewer samples, so it counts fewer frames than one at the
+/// file's own rate.
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct OtherRate {
+  /// Rate in Hz the samples were brought to.
+  pub rate: u32,
+  /// AAC's grid, with the Kaiser-Bessel-derived window.
+  pub aac: CodecScan,
+  /// AAC's grid, with the sine window.
+  pub aac_sine: CodecScan,
+  /// MP3's grid.
+  pub mp3: CodecScan,
 }
 
 /// What shows a codec's frame grid.
@@ -239,12 +368,32 @@ pub struct Scan {
 pub enum Evidence {
   /// Offset whose transform values count far fewer than the others, for MP3 and AAC.
   Count(CodecScan),
+  /// Such an offset in the samples brought to another rate, for a decode converted afterwards.
+  CountAt {
+    /// Rate in Hz the samples were brought to.
+    rate: u32,
+    /// Offset and how far its count stands out, at that rate.
+    #[cfg_attr(feature = "serde", serde(flatten))]
+    scan: CodecScan,
+  },
+  /// Scalefactor bands whose values sit on the quantizer's steps, for MP3.
+  Steps {
+    /// Offset of the granules the bands were read at, in samples.
+    offset: usize,
+    /// Counts of the bands.
+    steps: Mp3Steps,
+  },
   /// Frames whose band energies sit on the quantizer's lattice, for Opus.
   Lattice(OpusScan),
   /// Frames whose band energies sit on that lattice once a change of level is taken off.
   Shifted {
     /// Counts of the frames.
     shifted: OpusShifted,
+  },
+  /// Frames whose top bands sit on that lattice as Opus's hybrid mode codes them.
+  Hybrid {
+    /// Counts of the frames.
+    hybrid: OpusHybrid,
   },
 }
 
@@ -254,10 +403,83 @@ impl Evidence {
   /// For Opus it is the offset of the larger count, as [`OpusScan::most`] gives it.
   pub fn offset(&self) -> usize {
     match self {
-      Self::Count(scan) => scan.offset,
+      Self::Count(scan) | Self::CountAt { scan, .. } => scan.offset,
+      Self::Steps { offset, .. } => *offset,
       Self::Lattice(scan) => scan.most().0,
       Self::Shifted { shifted } => shifted.most().0,
+      Self::Hybrid { hybrid } => hybrid.most().0,
     }
+  }
+}
+
+/// Encoder family whose delay and window a grid is consistent with.
+///
+/// An encoder delays its input by a fixed number of samples, which puts the grid of its decode
+/// at a fixed offset, and an AAC encoder keeps to one of the two windows for its long blocks.
+/// The guess holds for a decode whose start was not cut, made by a decoder that cuts the delay
+/// the file states, as ffmpeg does. A cut start or another decoder moves the offset, and
+/// encoders that share a delay and a window read alike.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+pub enum Family {
+  /// LAME, whose tag states its delay of 576 samples.
+  Lame,
+  /// Helix, with a delay of 1680 samples.
+  Helix,
+  /// MP3 encoder that states no delay for a decoder to cut: Shine, BladeEnc, GOGO.
+  ///
+  /// A LAME file reads the same from a decoder that cuts no delay.
+  Untagged,
+  /// Apple's AAC encoder: the sine window and a delay of 2112 samples.
+  Apple,
+  /// FAAC: the sine window, its delay cut whole.
+  Faac,
+  /// Nero's AAC encoder: the Kaiser-Bessel-derived window and a delay of 2624 samples.
+  ///
+  /// A Vorbis decode reads as AAC, and at this offset about one time in thirteen.
+  Nero,
+  /// ffmpeg's AAC encoder or fdk-aac: the Kaiser-Bessel-derived window, their delay cut whole.
+  FfmpegOrFdk,
+  /// libopus, every version of which delays by 312 samples.
+  Libopus,
+}
+
+impl Family {
+  /// the family of an MP3 grid at `offset`
+  fn of_mp3(offset: usize) -> Option<Self> {
+    match offset {
+      48 => Some(Self::Lame),
+      96 => Some(Self::Helix),
+      1 => Some(Self::Untagged),
+      _ => None,
+    }
+  }
+
+  /// the family of an AAC grid at `offset`, found under the sine window when `sine`
+  fn of_aac(offset: usize, sine: bool) -> Option<Self> {
+    match (sine, offset) {
+      (true, 960) => Some(Self::Apple),
+      (true, 0) => Some(Self::Faac),
+      (false, 448) => Some(Self::Nero),
+      (false, 0) => Some(Self::FfmpegOrFdk),
+      _ => None,
+    }
+  }
+}
+
+impl fmt::Display for Family {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.write_str(match self {
+      Self::Lame => "LAME",
+      Self::Helix => "Helix",
+      Self::Untagged => "an MP3 encoder that states no delay",
+      Self::Apple => "Apple's AAC encoder",
+      Self::Faac => "FAAC",
+      Self::Nero => "Nero's AAC encoder",
+      Self::FfmpegOrFdk => "ffmpeg's AAC encoder or fdk-aac",
+      Self::Libopus => "libopus",
+    })
   }
 }
 
@@ -267,18 +489,51 @@ impl Evidence {
 pub struct Found {
   /// Codec whose grid it is.
   pub codec: Codec,
+  /// Encoder family the grid's offset is consistent with, where it is one's.
+  pub family: Option<Family>,
   /// What shows the grid.
   #[cfg_attr(feature = "serde", serde(flatten))]
   pub evidence: Evidence,
 }
 
-/// the grid `scan` shows under `thresholds`: MP3 or AAC over its z threshold with as many
-/// segments agreeing as its own threshold asks, the one furthest over its z threshold when
-/// several are. AAC is read under each of its windows. without either, Opus with enough frames
-/// on its lattice in the segments or in the windows, at the decoder's level or at another: the
-/// codec decoded last leaves the grid that counts, and Opus's energies can show through an MP3
-/// made from its decode
+/// the grid `scan` shows under `thresholds`, with the encoder family its offset fits
 pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found> {
+  let (codec, evidence) = shown(scan, thresholds)?;
+  // which of AAC's windows a count was taken under
+  let sine = |count: &CodecScan| {
+    scan.aac_sine.as_ref() == Some(count)
+      || scan
+        .other_rate
+        .as_ref()
+        .is_some_and(|other| &other.aac_sine == count)
+  };
+  let family = match (&evidence, codec) {
+    (Evidence::Count(count) | Evidence::CountAt { scan: count, .. }, Codec::Aac) => {
+      Family::of_aac(count.offset, sine(count))
+    }
+    (_, Codec::Aac) => None,
+    (_, Codec::Mp3) => Family::of_mp3(evidence.offset()),
+    (_, Codec::Opus) => (evidence.offset() == OPUS_UNCUT_OFFSET).then_some(Family::Libopus),
+  };
+  Some(Found {
+    codec,
+    family,
+    evidence,
+  })
+}
+
+/// the codec whose grid `scan` shows under `thresholds`, and what shows it. in turn:
+///
+/// - MP3 or AAC over its z threshold with as many segments agreeing as its own threshold asks,
+///   the one furthest over its z threshold when several are. AAC is read under each window
+/// - MP3 by its quantizer's steps in enough segments
+/// - Opus with enough frames on its lattice in the segments or in the windows: at the
+///   decoder's level, at another, or as the hybrid mode codes them
+/// - MP3 or AAC at the other rate
+///
+/// the codec decoded last leaves the grid that counts, and Opus's energies can show through
+/// an MP3 made from its decode
+fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence)> {
   let aac = |scan| {
     (
       Codec::Aac,
@@ -287,48 +542,90 @@ pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found
       thresholds.aac_grid_segments_agreeing,
     )
   };
-  let mp3 = (
-    Codec::Mp3,
-    &scan.mp3,
-    thresholds.mp3_grid_z,
-    thresholds.mp3_grid_segments_agreeing,
-  );
-  let counted = [
+  let mp3 = |scan| {
+    (
+      Codec::Mp3,
+      scan,
+      thresholds.mp3_grid_z,
+      thresholds.mp3_grid_segments_agreeing,
+    )
+  };
+  let clearest = |scans: [Option<(Codec, &CodecScan, f64, usize)>; 3]| {
+    scans
+      .into_iter()
+      .flatten()
+      .filter(|(_, scan, z, agreeing)| scan.z > *z && scan.segments_agreeing >= *agreeing)
+      .max_by(|(_, a, za, _), (_, b, zb, _)| (a.z / za).total_cmp(&(b.z / zb)))
+      .map(|(codec, scan, _, _)| (codec, scan.clone()))
+  };
+  let own = clearest([
     Some(aac(&scan.aac)),
     scan.aac_sine.as_ref().map(aac),
-    Some(mp3),
-  ]
-  .into_iter()
-  .flatten()
-  .filter(|(_, scan, z, agreeing)| scan.z > *z && scan.segments_agreeing >= *agreeing)
-  .max_by(|(_, a, za, _), (_, b, zb, _)| (a.z / za).total_cmp(&(b.z / zb)))
-  .map(|(codec, scan, _, _)| Found {
-    codec,
-    evidence: Evidence::Count(scan.clone()),
-  });
-  counted.or_else(|| {
+    Some(mp3(&scan.mp3)),
+  ])
+  .map(|(codec, scan)| (codec, Evidence::Count(scan)));
+  // the quantizer's steps show a grid whose count stands out too little
+  let stepped = || {
+    let steps = scan.mp3_steps.as_ref()?;
+    let segments = steps.segment_whole.iter();
+    let showing = segments
+      .filter(|whole| **whole >= thresholds.mp3_whole_steps)
+      .count();
+    (showing >= thresholds.mp3_grid_segments_agreeing.max(1)).then(|| {
+      let evidence = Evidence::Steps {
+        offset: scan.mp3.offset,
+        steps: steps.clone(),
+      };
+      (Codec::Mp3, evidence)
+    })
+  };
+  // a grid at the other rate was laid before the conversion, so one on the file's own
+  // samples was laid after it and is named first
+  let converted = || {
+    let other = scan.other_rate.as_ref()?;
+    let (codec, scan) = clearest([
+      Some(aac(&other.aac)),
+      Some(aac(&other.aac_sine)),
+      Some(mp3(&other.mp3)),
+    ])?;
+    let evidence = Evidence::CountAt {
+      rate: other.rate,
+      scan,
+    };
+    Some((codec, evidence))
+  };
+  let opus = || {
     let opus = scan.opus.as_ref()?;
     let evidence = if opus.frames >= thresholds.opus_grid_frames
       || opus.uncut_frames >= thresholds.opus_uncut_frames
     {
       Evidence::Lattice(opus.clone())
-    } else {
+    } else if let Some(shifted) = opus.shifted.as_ref().filter(|shifted| {
+      shifted.frames >= thresholds.opus_shifted_frames
+        || shifted.uncut_frames >= thresholds.opus_shifted_uncut_frames
+    }) {
       // the lattice at the decoder's own level names the decode more closely, so it comes first
-      let shifted = opus.shifted.as_ref()?;
-      if shifted.frames < thresholds.opus_shifted_frames
-        && shifted.uncut_frames < thresholds.opus_shifted_uncut_frames
-      {
-        return None;
-      }
       Evidence::Shifted {
         shifted: shifted.clone(),
       }
+    } else {
+      let hybrid = opus.hybrid.as_ref()?;
+      let enough = |frames: usize, tested: usize, steps: usize| {
+        steps >= thresholds.opus_hybrid_steps
+          && frames as f64 >= thresholds.opus_hybrid_share * tested as f64
+      };
+      if !enough(hybrid.frames, hybrid.tested, hybrid.steps)
+        && !enough(hybrid.uncut_frames, hybrid.uncut_tested, hybrid.uncut_steps)
+      {
+        return None;
+      }
+      Evidence::Hybrid {
+        hybrid: hybrid.clone(),
+      }
     };
-    Some(Found {
-      codec: Codec::Opus,
-      evidence,
-    })
-  })
+    Some((Codec::Opus, evidence))
+  };
+  own.or_else(stepped).or_else(opus).or_else(converted)
 }
 
 /// one stretch of the file the grid is scanned in, filled as its samples are decoded
@@ -347,6 +644,16 @@ impl Segment {
 
   fn full(&self) -> bool {
     self.left.len() == SEGMENT
+  }
+
+  /// the segment at the other of 44.1 and 48 kHz, cut to the length of one at the file's rate.
+  /// its start is a frame of the file at that rate. `None` when nothing is left of it
+  fn brought(&self, resampler: &Resampler) -> Option<Self> {
+    let (channels, start) = resampler.brought(&[&self.left, &self.right], self.start)?;
+    let [mut left, mut right] = <[Vec<f64>; 2]>::try_from(channels).ok()?;
+    left.truncate(SEGMENT);
+    right.truncate(SEGMENT);
+    Some(Self { start, left, right })
   }
 
   /// how many of `available` frames from `first` on the segment takes, and from which
@@ -447,12 +754,15 @@ pub(crate) struct Opus {
   pub(crate) bits: u32,
   /// what the frames in the windows measured count, on the grid of an uncut decode
   pub(crate) uncut: lattice::Counted,
+  /// whether MP3 and AAC are scanned for at the other rate too
+  pub(crate) other_rate: bool,
 }
 
-/// the jobs of one scan: MP3 and AAC under each of its windows in each segment, and Opus where
-/// `opus`
-pub(crate) fn jobs(opus: bool) -> usize {
-  (3 + usize::from(opus)) * SEGMENTS
+/// the jobs of one scan: MP3 and AAC under each of its windows in each segment. at a rate
+/// Opus is looked for at, `opus`, as many for Opus as there are segments, and with
+/// `other_rate` MP3 and AAC again in each segment at the other rate
+pub(crate) fn jobs(opus: bool, other_rate: bool) -> usize {
+  (3 + usize::from(opus) + 3 * usize::from(opus && other_rate)) * SEGMENTS
 }
 /// the tasks a job's offsets are split into at most, so that one file's scan can fill the pool
 const TASKS: usize = 32;
@@ -463,6 +773,7 @@ const TASKS: usize = 32;
 /// panics when a segment is not full.
 pub(crate) fn scan(
   segments: &Segments,
+  rate: u32,
   opus: Option<Opus>,
   go_on: impl Fn() -> bool + Sync,
   ended: impl Fn() + Sync,
@@ -476,18 +787,38 @@ pub(crate) fn scan(
       .collect();
     lattice::Stretches::of(&stretches, opus.rate, opus.bits)
   });
+  // the segments at the other rate, each brought there as a task on the pool
+  let other = opus.as_ref().filter(|opus| opus.other_rate).map(|opus| {
+    let (rate, resampler) = match opus.rate {
+      lattice::Rate::Native => (44_100, Resampler::to_44100()),
+      lattice::Rate::From44100 => (48_000, Resampler::to_48000()),
+    };
+    let segments: Vec<Option<Segment>> = segments
+      .0
+      .par_iter()
+      .map(|segment| segment.brought(resampler))
+      .collect();
+    (rate, segments)
+  });
   // Opus's offsets are split into as many jobs as there are segments, each over every segment
   let part = lattice::FRAME / SEGMENTS;
+  let counts = |segment, rate| {
+    [
+      Job::Aac(Window::Kbd, segment, rate),
+      Job::Aac(Window::Sine, segment, rate),
+      Job::Mp3(segment, rate),
+    ]
+  };
   let jobs: Vec<Job> = segments
     .0
     .iter()
-    .flat_map(|segment| {
-      [
-        Job::Aac(Window::Kbd, segment),
-        Job::Aac(Window::Sine, segment),
-        Job::Mp3(segment),
-      ]
-    })
+    .flat_map(|segment| counts(segment, Rate::Own))
+    .chain(
+      other
+        .iter()
+        .flat_map(|(_, segments)| segments.iter().flatten())
+        .flat_map(|segment| counts(segment, Rate::Other)),
+    )
     .chain(
       stretches
         .iter()
@@ -499,10 +830,14 @@ pub(crate) fn scan(
     .map(|job| {
       go_on().then(|| {
         let curve = match job {
-          Job::Aac(window, segment) => {
-            Curve::Aac(window, in_file(&Aac::curve(segment, window), segment.start))
+          Job::Aac(window, segment, rate) => Curve::Aac(
+            window,
+            rate,
+            in_file(&Aac::curve(segment, window), segment.start),
+          ),
+          Job::Mp3(segment, rate) => {
+            Curve::Mp3(rate, in_file(&Mp3::new().curve(segment), segment.start))
           }
-          Job::Mp3(segment) => Curve::Mp3(in_file(&Mp3::new().curve(segment), segment.start)),
           // the counts come in the file's offsets
           Job::Opus(stretches, from) => Curve::Opus(stretches.counted(from..from + part)),
         };
@@ -511,38 +846,80 @@ pub(crate) fn scan(
       })
     })
     .collect::<Option<_>>()?;
-  let (mut aac, mut sine, mut mp3, mut frames) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+  // each codec's curves at the file's rate and at the other
+  let (mut aac, mut sine, mut mp3) = <[[Vec<Vec<f64>>; 2]; 3]>::default().into();
+  let mut frames = Vec::new();
   for curve in curves {
     match curve {
-      Curve::Aac(Window::Kbd, curve) => aac.push(curve),
-      Curve::Aac(Window::Sine, curve) => sine.push(curve),
-      Curve::Mp3(curve) => mp3.push(curve),
+      Curve::Aac(Window::Kbd, rate, curve) => aac[rate as usize].push(curve),
+      Curve::Aac(Window::Sine, rate, curve) => sine[rate as usize].push(curve),
+      Curve::Mp3(rate, curve) => mp3[rate as usize].push(curve),
       // the jobs come back in the order of their offsets
       Curve::Opus(counted) => frames.extend(counted),
     }
   }
+  let [aac, other_aac] = aac;
+  let [sine, other_sine] = sine;
+  let [mp3, other_mp3] = mp3;
+  // a segment nothing is left of at the other rate leaves that rate unscanned
+  let other_rate = other
+    .filter(|_| other_mp3.len() == SEGMENTS)
+    .map(|(rate, _)| OtherRate {
+      rate,
+      aac: codec_scan(&other_aac),
+      aac_sine: codec_scan(&other_sine),
+      mp3: codec_scan(&other_mp3),
+    });
+  let mp3 = codec_scan(&mp3);
+  let mp3_steps = mp3_bands(rate).map(|bands| {
+    let analysis = Mp3::new();
+    let mut steps = Mp3Steps {
+      tested: 0,
+      stepped: 0,
+      whole: 0,
+      segment_whole: [0; SEGMENTS],
+    };
+    for (segment, whole) in segments.0.iter().zip(0..) {
+      // below the hop, so it fits
+      let start = (segment.start % MP3_HOP as u64) as usize;
+      let offset = (mp3.offset + MP3_HOP - start) % MP3_HOP;
+      let before = steps.whole;
+      analysis.steps(segment, offset, bands, &mut steps);
+      steps.segment_whole[whole] = steps.whole - before;
+    }
+    steps
+  });
   Some(Scan {
+    other_rate,
     aac: codec_scan(&aac),
     aac_sine: Some(codec_scan(&sine)),
-    mp3: codec_scan(&mp3),
+    mp3,
+    mp3_steps,
     opus: opus.map(|opus| opus_scan(&frames, &opus.uncut)),
   })
 }
 
-/// what one job of a scan looks for: MP3's or AAC's grid in one segment, or Opus's frames in
-/// every segment at the offsets from the one given
+/// the rate a segment is scanned at: the file's own, or the other of 44.1 and 48 kHz
+#[derive(Clone, Copy)]
+enum Rate {
+  Own,
+  Other,
+}
+
+/// what one job of a scan looks for: MP3's or AAC's grid in one segment at one rate, or Opus's
+/// frames in every segment at the offsets from the one given
 #[derive(Clone, Copy)]
 enum Job<'a> {
-  Aac(Window, &'a Segment),
-  Mp3(&'a Segment),
+  Aac(Window, &'a Segment, Rate),
+  Mp3(&'a Segment, Rate),
   Opus(&'a lattice::Stretches, usize),
 }
 
 /// what a job found: MP3's and AAC's counts of transform values on a log scale at each offset
-/// of the file's grid, Opus's counts of frames at each of the job's offsets
+/// of the file's grid at the job's rate, Opus's counts of frames at each of the job's offsets
 enum Curve {
-  Aac(Window, Vec<f64>),
-  Mp3(Vec<f64>),
+  Aac(Window, Rate, Vec<f64>),
+  Mp3(Rate, Vec<f64>),
   Opus(Vec<lattice::Counted>),
 }
 
@@ -561,6 +938,7 @@ fn most(counts: impl Iterator<Item = usize>) -> (usize, usize) {
 fn opus_scan(counted: &[lattice::Counted], uncut: &lattice::Counted) -> OpusScan {
   let (offset, frames) = most(counted.iter().map(|c| c.frames.iter().sum()));
   let (shifted_offset, shifted_frames) = most(counted.iter().map(|c| c.shifted));
+  let (hybrid_offset, hybrid_frames) = most(counted.iter().map(|c| c.hybrid));
   OpusScan {
     offset,
     frames,
@@ -570,6 +948,15 @@ fn opus_scan(counted: &[lattice::Counted], uncut: &lattice::Counted) -> OpusScan
       offset: shifted_offset,
       frames: shifted_frames,
       uncut_frames: uncut.shifted,
+    }),
+    hybrid: Some(OpusHybrid {
+      offset: hybrid_offset,
+      frames: hybrid_frames,
+      tested: counted[hybrid_offset].hybrid_tested,
+      steps: counted[hybrid_offset].hybrid_points,
+      uncut_frames: uncut.hybrid,
+      uncut_tested: uncut.hybrid_tested,
+      uncut_steps: uncut.hybrid_points,
     }),
   }
 }
@@ -730,7 +1117,8 @@ impl Aac {
 
   /// the active count summed over the long frames of `left` and `right` on the grid at `offset`
   fn count(&mut self, left: &[f32], right: &[f32], offset: usize) -> f64 {
-    let frames = (SEGMENT - 2 * AAC_HOP) / AAC_HOP;
+    // the frames every offset holds
+    let frames = (left.len() + 1 - 2 * AAC_HOP) / AAC_HOP;
     let t2 = (NOISE16 as f32).powi(2);
     let half = std::f32::consts::FRAC_1_SQRT_2;
     (0..frames)
@@ -1045,7 +1433,7 @@ impl Mp3 {
   /// the counts of the offsets `phase` + 32 g, for g in 0..18: the granules that start at
   /// subband sample g of the filterbank run from input sample `phase`
   fn phase(&self, segment: &Segment, phase: usize) -> [f64; LINES] {
-    let granules = (SEGMENT - MP3_HOP - 512 - SUBBAND_SAMPLES * 32) / MP3_HOP;
+    let granules = (segment.left.len() - MP3_HOP - 512 - SUBBAND_SAMPLES * 32) / MP3_HOP;
     let t2 = (NOISE16 * MP3_NOISE_GAIN).powi(2) as f32;
     let half = std::f64::consts::FRAC_1_SQRT_2;
     let (mut l, mut r) = ([0.0; MP3_HOP], [0.0; MP3_HOP]);
@@ -1075,6 +1463,128 @@ impl Mp3 {
   }
 }
 
+/// the value of a line quantized to 1 at a step of one, with samples from -1 to 1
+const MP3_UNIT: f64 = 9.0;
+/// a value stands over the rounding noise from this many of its standard deviations, and sits
+/// on a lattice point within this many
+const OVER_NOISE: f64 = 6.0;
+const ON_POINT: f64 = 4.0;
+/// the fewest values over the noise a tested band has
+const MIN_VALUES: usize = 3;
+/// how far over the noise a step stands for its lattice to show, in standard deviations
+const MIN_STEP: f64 = 24.0;
+/// the whole numbers a band's smallest value is tried as
+const SMALLEST: std::ops::RangeInclusive<u32> = 1..=8;
+/// how near a whole power of the fourth root of two a step is one, in fourths of an octave
+const WHOLE_STEP: f64 = 0.05;
+
+/// the edges of a long block's scalefactor bands in lines at `rate`, for the rates MPEG-1
+/// layer III codes
+fn mp3_bands(rate: u32) -> Option<&'static [usize; 23]> {
+  match rate {
+    44_100 => Some(&[
+      0, 4, 8, 12, 16, 20, 24, 30, 36, 44, 52, 62, 74, 90, 110, 134, 162, 196, 238, 288, 342, 418,
+      576,
+    ]),
+    48_000 => Some(&[
+      0, 4, 8, 12, 16, 20, 24, 30, 36, 42, 50, 60, 72, 88, 106, 128, 156, 190, 230, 276, 330, 384,
+      576,
+    ]),
+    32_000 => Some(&[
+      0, 4, 8, 12, 16, 20, 24, 30, 36, 44, 54, 66, 82, 102, 126, 156, 194, 240, 296, 364, 448, 550,
+      576,
+    ]),
+    _ => None,
+  }
+}
+
+/// the step of a band whose lines are `lines`: `None` when the band is not tested, `Some(None)`
+/// when no step puts every value over the noise on its lattice. the smallest such value is
+/// taken as 1, 2 and so on times the step in turn
+fn band_step(lines: &[f64]) -> Option<Option<f64>> {
+  let sigma = NOISE16 * MP3_NOISE_GAIN;
+  let values: Vec<f64> = lines
+    .iter()
+    .map(|line| line.abs())
+    .filter(|value| *value > OVER_NOISE * sigma)
+    .collect();
+  if values.len() < MIN_VALUES {
+    return None;
+  }
+  let smallest = values.iter().copied().fold(f64::INFINITY, f64::min);
+  let mut tested = false;
+  for whole in SMALLEST {
+    let step = smallest / f64::from(whole).powf(4.0 / 3.0);
+    if step < MIN_STEP * sigma {
+      break;
+    }
+    tested = true;
+    // each value's whole number to the power 4/3, and the step that fits them all best
+    let points: Vec<f64> = values
+      .iter()
+      .map(|value| (value / step).powf(0.75).round().max(1.0).powf(4.0 / 3.0))
+      .collect();
+    let squares: f64 = points.iter().map(|point| point * point).sum();
+    let step = values.iter().zip(&points).map(|(v, p)| v * p).sum::<f64>() / squares;
+    // a value's own noise, and what the noise of the others leaves of the step's
+    let near = |point: f64| ON_POINT * sigma * (1.0 + point / squares.sqrt());
+    if values
+      .iter()
+      .zip(&points)
+      .all(|(value, point)| (value - point * step).abs() < near(*point))
+    {
+      return Some(Some(step));
+    }
+  }
+  tested.then_some(None)
+}
+
+impl Mp3 {
+  /// adds to `steps` the bands of `segment`'s granules on the grid at `offset` from its first
+  /// sample, each granule as left and right or as mid and side, whichever has more bands on
+  /// whole steps
+  fn steps(&self, segment: &Segment, offset: usize, bands: &[usize; 23], steps: &mut Mp3Steps) {
+    let granules = (segment.left.len() - MP3_HOP - 512 - SUBBAND_SAMPLES * 32) / MP3_HOP;
+    let (phase, from) = (offset % 32, offset / 32);
+    let left = self.polyphase(&segment.left[phase..]);
+    let right = self.polyphase(&segment.right[phase..]);
+    let half = std::f64::consts::FRAC_1_SQRT_2;
+    let (mut l, mut r) = ([0.0; MP3_HOP], [0.0; MP3_HOP]);
+    let (mut m, mut s) = ([0.0; MP3_HOP], [0.0; MP3_HOP]);
+    for granule in 0..granules {
+      let at = from + LINES * granule;
+      self.hybrid(&left[at..at + SUBBAND_SAMPLES], &mut l);
+      self.hybrid(&right[at..at + SUBBAND_SAMPLES], &mut r);
+      for k in 0..MP3_HOP {
+        m[k] = (l[k] + r[k]) * half;
+        s[k] = (l[k] - r[k]) * half;
+      }
+      let count = |pair: [&[f64; MP3_HOP]; 2]| {
+        let (mut tested, mut stepped, mut whole) = (0, 0, 0);
+        for lines in pair {
+          for band in bands.windows(2) {
+            let Some(step) = band_step(&lines[band[0]..band[1]]) else {
+              continue;
+            };
+            tested += 1;
+            if let Some(step) = step {
+              stepped += 1;
+              let fourths = 4.0 * (step / MP3_UNIT).log2();
+              whole += usize::from((fourths - fourths.round()).abs() < WHOLE_STEP);
+            }
+          }
+        }
+        (tested, stepped, whole)
+      };
+      let (apart, joint) = (count([&l, &r]), count([&m, &s]));
+      let (tested, stepped, whole) = if joint.2 > apart.2 { joint } else { apart };
+      steps.tested += tested;
+      steps.stepped += stepped;
+      steps.whole += whole;
+    }
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -1088,6 +1598,7 @@ mod tests {
       segment_frames: [0, 1, 0, 0],
       uncut_frames: 40,
       shifted: None,
+      hybrid: None,
     };
     assert_eq!(scan.most(), (OPUS_UNCUT_OFFSET, 40));
     assert_eq!(Evidence::Lattice(scan.clone()).offset(), OPUS_UNCUT_OFFSET);
@@ -1207,6 +1718,8 @@ mod tests {
       aac_sine: None,
       mp3: codec_scan(mp3.0, mp3.1),
       opus: None,
+      other_rate: None,
+      mp3_steps: None,
     };
     let codec = |scan: &Scan| found(scan, &thresholds).map(|f| f.codec);
     // an MP3 dip in one segment is no grid, an AAC dip the segments place differently is one
@@ -1215,6 +1728,45 @@ mod tests {
     assert_eq!(codec(&scan((9.0, 4), (12.0, 4))), None);
     // both over: 30 / 9 against 36 / 12
     assert_eq!(codec(&scan((30.0, 4), (36.0, 3))), Some(Codec::Aac));
+    // an encoder's delay and window name its family: the tag LAME writes leaves its grid at 48
+    let lame = found(&scan((2.0, 0), (50.0, 3)), &thresholds).expect("the grid is over");
+    assert_eq!(lame.family, None, "offset 0 is no MP3 encoder's");
+    assert_eq!(Family::of_mp3(48), Some(Family::Lame));
+    assert_eq!(Family::of_mp3(1), Some(Family::Untagged));
+    assert_eq!(Family::of_aac(960, true), Some(Family::Apple));
+    assert_eq!(Family::of_aac(960, false), None);
+    let ffmpeg = found(&scan((19.0, 1), (2.0, 0)), &thresholds).expect("the grid is over");
+    assert_eq!(ffmpeg.family, Some(Family::FfmpegOrFdk));
+    // a grid at the other rate is named where nothing sits on the file's own samples
+    let converted = Scan {
+      other_rate: Some(OtherRate {
+        rate: 44_100,
+        aac: codec_scan(2.0, 0),
+        aac_sine: codec_scan(2.0, 0),
+        mp3: codec_scan(50.0, 4),
+      }),
+      ..scan((2.0, 0), (2.0, 0))
+    };
+    let at_other = found(&converted, &thresholds).expect("the other rate's grid is over");
+    assert!(matches!(
+      at_other.evidence,
+      Evidence::CountAt { rate: 44_100, .. }
+    ));
+    let opus = OpusScan {
+      offset: OPUS_UNCUT_OFFSET,
+      frames: 40,
+      segment_frames: [10; SEGMENTS],
+      uncut_frames: 400,
+      shifted: None,
+      hybrid: None,
+    };
+    let after = Scan {
+      opus: Some(opus.clone()),
+      ..converted
+    };
+    let last = found(&after, &thresholds).expect("the lattice is over");
+    assert_eq!(last.evidence, Evidence::Lattice(opus));
+    assert_eq!(last.family, Some(Family::Libopus));
     // a grid only the sine window shows is AAC's, with that window's evidence
     let sine = Scan {
       aac_sine: Some(codec_scan(40.0, 4)),
@@ -1223,6 +1775,7 @@ mod tests {
     let shown = found(&sine, &thresholds).expect("the sine scan is over the threshold");
     assert_eq!(shown.codec, Codec::Aac);
     assert_eq!(shown.evidence, Evidence::Count(codec_scan(40.0, 4)));
+    assert_eq!(shown.family, Some(Family::Faac));
   }
 
   #[test]

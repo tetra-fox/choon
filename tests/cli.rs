@@ -170,9 +170,10 @@ fn json_is_a_line_per_file_with_a_reading_per_profile() {
   assert_eq!(readings[0]["cutoffVerdict"], "inconclusive");
   assert_eq!(readings[0]["verdict"], "likely_transcode");
 
-  // a grid threshold no scan reaches leaves the cutoff, which alone only doubts
+  // grid thresholds no scan reaches leave the cutoff, which alone only doubts
   let blind = path(&dir.path().join("blind.json"));
-  std::fs::write(&blind, r#"{"reading": {"mp3GridZ": 1e9}}"#).unwrap();
+  let unreachable = r#"{"reading": {"mp3GridZ": 1e9, "mp3WholeSteps": 1000000}}"#;
+  std::fs::write(&blind, unreachable).unwrap();
   let output = choon(&["--json", "--profile", &blind, &fake]);
   assert_eq!(status(&output), 0, "{output:?}");
   let line: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();

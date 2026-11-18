@@ -46,6 +46,12 @@ pub struct MeasureThresholds {
   pub holes_to_hz: f64,
   /// Depth in dB under its neighbors at which a bin is a gap.
   pub hole_depth_db: f64,
+  /// Whether a file at 44.1 or 48 kHz is scanned for MP3 and AAC at the other rate too.
+  ///
+  /// The scan at the other rate finds a decode that was converted between the two rates
+  /// ([`OtherRate`](crate::grid::OtherRate)). It takes about as long as the scan for MP3 and
+  /// AAC at the file's own rate.
+  pub scan_other_rate: bool,
 }
 
 impl Default for MeasureThresholds {
@@ -61,6 +67,7 @@ impl Default for MeasureThresholds {
       holes_from_hz: 16_000.0,
       holes_to_hz: 20_000.0,
       hole_depth_db: 20.0,
+      scan_other_rate: true,
     }
   }
 }
@@ -187,6 +194,14 @@ pub struct ReadingThresholds {
   ///
   /// [`CodecScan::segments_agreeing`]: crate::grid::CodecScan::segments_agreeing
   pub mp3_grid_segments_agreeing: usize,
+  /// Fewest scalefactor bands on whole quantizer steps in a segment that shows an MP3 grid.
+  ///
+  /// It is compared with each of
+  /// [`Mp3Steps::segment_whole`](crate::grid::Mp3Steps::segment_whole), where no count stands
+  /// out enough for a grid: as many segments as `mp3_grid_segments_agreeing` must reach it,
+  /// one at least. A band of lossless audio lands on a whole step by chance a few times in a
+  /// file.
+  pub mp3_whole_steps: usize,
   /// Fewest frames on Opus's lattice at one offset of the four segments, for an Opus grid.
   ///
   /// It is compared with [`OpusScan::frames`](crate::grid::OpusScan::frames). A frame of
@@ -210,6 +225,17 @@ pub struct ReadingThresholds {
   /// [`OpusShifted::uncut_frames`](crate::grid::OpusShifted::uncut_frames), as
   /// `opus_shifted_frames` is with its count.
   pub opus_shifted_uncut_frames: usize,
+  /// Fewest different pairs of steps among Opus's hybrid frames, for an Opus grid.
+  ///
+  /// It is compared with [`OpusHybrid::steps`](crate::grid::OpusHybrid::steps) and with
+  /// [`OpusHybrid::uncut_steps`](crate::grid::OpusHybrid::uncut_steps), where no other count
+  /// makes an Opus grid. The frames counted must meet `opus_hybrid_share` too.
+  pub opus_hybrid_steps: usize,
+  /// Fewest hybrid frames as a share of the frames tested, from 0 to 1.
+  ///
+  /// The two bands a hybrid frame is tested on land on the lattice by chance in a few frames
+  /// of a hundred, which in a long file is more pairs of steps than `opus_hybrid_steps`.
+  pub opus_hybrid_share: f64,
 }
 
 /// Band top of a rate some old equipment recorded at.
@@ -302,6 +328,8 @@ impl Default for ReadingThresholds {
       aac_grid_segments_agreeing: 0,
       mp3_grid_z: 12.0,
       mp3_grid_segments_agreeing: 3,
+      // three stretches of the tuning's pilot files that were never MP3 reach five whole steps
+      mp3_whole_steps: 10,
       // the tuning's files that were never Opus reach one frame in the stretches and one in
       // the windows
       opus_grid_frames: 3,
@@ -310,6 +338,10 @@ impl Default for ReadingThresholds {
       // windows, apart from one master that carries such frames on an uncut decode's grid
       opus_shifted_frames: 6,
       opus_shifted_uncut_frames: 4,
+      // the pilot files that were never Opus reach nine pairs of steps at this share, and a
+      // share of 0.04 with this many pairs
+      opus_hybrid_steps: 30,
+      opus_hybrid_share: 0.1,
     }
   }
 }

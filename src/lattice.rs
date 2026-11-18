@@ -7,13 +7,19 @@
 //! run again with frames where the encoder put them, each band's energy comes back, and taking
 //! the prediction off it leaves a number on the quantizer's lattice.
 //!
-//! only a frame coded as one long block with the pitch post-filter off, after another such
-//! frame, comes back exactly. the analysis is of 20 ms frames at 48 kHz; samples at 44.1 kHz
-//! are brought back to 48 kHz first.
+//! a frame comes back exactly when the pitch post-filter was off in it and in the frame before.
+//! one coded as eight short blocks holds, in each band, the values of eight transforms side by
+//! side, so its band's energy is the sum over the eight. one coded without the frame before it
+//! predicts from its own lower bands alone. the hybrid mode codes only the top four bands this
+//! way, over a voice coder's output that reaches into the lowest of them.
+//!
+//! the analysis is of 20 ms frames at 48 kHz; samples at 44.1 kHz are brought back to 48 kHz
+//! first.
 
 use rayon::prelude::*;
 
-use crate::grid::{DctIv, bessel_i0, fold};
+use crate::grid::{DctIv, fold};
+use crate::resample::Resampler;
 
 /// a 20 ms frame at 48 kHz
 pub(crate) const FRAME: usize = 960;
@@ -40,6 +46,18 @@ const SCALE: f64 = 10.546_554_702_195_74;
 /// kept out of the sum over the lower bands, for 20 ms frames
 const ALPHA: f64 = 0.5;
 const BETA: f64 = 6554.0 / 32768.0;
+/// how much of each coarse step is kept out of the sum over the lower bands in a frame coded
+/// without the frame before it, which predicts from that sum alone
+const BETA_INTRA: f64 = 4915.0 / 32768.0;
+/// the short blocks of a transient frame, and the samples each brings
+const BLOCKS: usize = 8;
+const BLOCK: usize = FRAME / BLOCKS;
+/// the first band the hybrid mode codes with CELT, from 8 kHz. the voice coder's output
+/// reaches into it, so its energy only serves to predict the bands above it
+const HYBRID_FROM: usize = 17;
+/// the bands a hybrid frame is tested on, from 9.6 to 15.6 kHz. the band above them comes back
+/// short of exact from a file at 44.1 kHz, whose conversion rolled its top off
+const HYBRID_TESTED: [usize; 2] = [18, 19];
 /// the lowest energy a frame earlier that predicts, in units of 6 dB
 const LOWEST_PREDICTING: f64 = -9.0;
 /// the lattice a step is tested against: 1/32 of 6 dB holds a coarse step with up to three
@@ -77,13 +95,6 @@ const SHIFT_LIMIT: f64 = 18.0 / (2.0 * DB);
 pub(crate) const UNCUT_OFFSET: usize = (2 * FRAME - 312 - 420) % FRAME;
 /// the most windows the pass at that offset reads
 const UNCUT_WINDOWS: usize = 60;
-
-/// input samples on each side of an output sample that the resampling filter reads
-const HALF: usize = 64;
-/// the Kaiser window's beta of the resampling filter
-const KAISER_BETA: f64 = 12.0;
-/// the output samples at each end of a resampled stretch that lack input the filter reads
-const EDGE: usize = 70;
 
 /// a sample rate the analysis reads
 #[derive(Clone, Copy)]
@@ -134,7 +145,8 @@ fn pre_emphasized(samples: impl Iterator<Item = f64>) -> Vec<f32> {
     .collect()
 }
 
-/// the CELT analysis of long frames: the low-overlap window and an orthonormal MDCT
+/// the CELT analysis of a frame, as one long block or as eight short ones: the low-overlap
+/// window and an orthonormal MDCT
 struct Celt {
   /// the window's rise over the overlap
   rise: Vec<f32>,
@@ -142,7 +154,19 @@ struct Celt {
   frame: Vec<f32>,
   folded: Vec<f32>,
   values: Vec<f32>,
+  /// the transform of a short block, its windowed samples and their fold
+  short: DctIv,
+  block: Vec<f32>,
+  block_folded: Vec<f32>,
+  block_values: Vec<f32>,
   noise: [f64; BANDS],
+}
+
+/// how a frame is read: as the one long block or as the eight short ones it was coded in
+#[derive(Clone, Copy, PartialEq)]
+enum Blocks {
+  Long,
+  Short,
 }
 
 /// one frame's bands in one channel: each band's energy in units of 6 dB as the codec counts it,
@@ -167,8 +191,60 @@ impl Celt {
       frame: vec![0.0; 2 * FRAME],
       folded: vec![0.0; FRAME],
       values: vec![0.0; FRAME],
+      short: DctIv::new(BLOCK),
+      block: vec![0.0; 2 * BLOCK],
+      block_folded: vec![0.0; BLOCK],
+      block_values: vec![0.0; BLOCK],
       noise: noise(bits),
     }
+  }
+
+  /// the bands of the frame whose 1920 pre-emphasized samples are `samples`, read as `blocks`
+  fn read(&mut self, samples: &[f32], blocks: Blocks) -> Bands {
+    match blocks {
+      Blocks::Long => self.bands(samples),
+      Blocks::Short => self.short_bands(samples),
+    }
+  }
+
+  /// the bands of a frame read as eight short blocks: each block is 240 samples under the
+  /// window's rise and fall, 120 after the one before, and a band's energy is the sum of its
+  /// values in all eight
+  fn short_bands(&mut self, samples: &[f32]) -> Bands {
+    let flat = (FRAME - OVERLAP) / 2;
+    let mut squares = [0.0f64; BANDS];
+    for block in 0..BLOCKS {
+      let from = flat + block * BLOCK;
+      let (rising, falling) = self.block.split_at_mut(BLOCK);
+      for ((out, x), w) in rising.iter_mut().zip(&samples[from..]).zip(&self.rise) {
+        *out = x * w;
+      }
+      let fall = self.rise.iter().rev();
+      for ((out, x), w) in falling.iter_mut().zip(&samples[from + BLOCK..]).zip(fall) {
+        *out = x * w;
+      }
+      fold(&self.block, &mut self.block_folded);
+      self
+        .short
+        .process(&self.block_folded, &mut self.block_values);
+      for (band, squares) in squares.iter_mut().enumerate() {
+        *squares += self.block_values[EDGES[band] / BLOCKS..EDGES[band + 1] / BLOCKS]
+          .iter()
+          .map(|v| f64::from(*v).powi(2))
+          .sum::<f64>();
+      }
+    }
+    let mut bands = Bands {
+      energy: [0.0; BANDS],
+      loud: [false; BANDS],
+    };
+    // an inverse transform of a short block gains sqrt(60) where a long one's gains sqrt(480)
+    let scale = SCALE + 0.5 * (BLOCKS as f64).log2();
+    for band in 0..BANDS {
+      bands.energy[band] = 0.5 * (squares[band] + 1e-300).log2() - MEANS[band] + scale;
+      bands.loud[band] = squares[band].sqrt() >= LOUD * self.noise[band];
+    }
+    bands
   }
 
   /// the bands of the frame whose 1920 pre-emphasized samples are `samples`
@@ -229,20 +305,64 @@ fn steps(before: &Bands, bands: &Bands, shift: f64) -> [f64; BANDS] {
   steps
 }
 
-/// how many bands of a frame, after the frame `before`, could be tested, and how many of their
-/// steps from the prediction sit on the lattice once `shift` is taken off them
-fn on_lattice(before: &Bands, bands: &Bands, shift: f64) -> (usize, usize) {
+/// each band's step in a frame coded without the frame before it, with the gain that `shift`
+/// is half of taken off the energies: such a step moves by the whole of it
+fn steps_alone(bands: &Bands, shift: f64) -> [f64; BANDS] {
+  let level = 2.0 * shift;
+  let mut steps = [0.0; BANDS];
+  let mut lower = 0.0;
+  for band in 0..BANDS {
+    let step = bands.energy[band] - level - lower;
+    lower += (1.0 - BETA_INTRA) * nearest(step);
+    steps[band] = step;
+  }
+  steps
+}
+
+/// whether a step sits on the lattice
+fn on_point(step: f64) -> bool {
+  let scaled = step * LATTICE;
+  (scaled - nearest(scaled)).abs() / LATTICE < NEAR
+}
+
+/// how many bands of a frame could be tested, and how many of their steps from the prediction
+/// sit on the lattice once `shift` is taken off them: after the frame `before`, or coded without
+/// it when there is `None`
+fn on_lattice(before: Option<&Bands>, bands: &Bands, shift: f64) -> (usize, usize) {
+  let steps = match before {
+    Some(before) => steps(before, bands, shift),
+    None => steps_alone(bands, shift),
+  };
   let (mut tested, mut hits) = (0, 0);
-  for (band, step) in steps(before, bands, shift).into_iter().enumerate() {
-    if bands.loud[band] && before.loud[band] {
+  for (band, step) in steps.into_iter().enumerate() {
+    if bands.loud[band] && before.is_none_or(|before| before.loud[band]) {
       tested += 1;
-      let scaled = step * LATTICE;
-      if (scaled - nearest(scaled)).abs() / LATTICE < NEAR {
-        hits += 1;
-      }
+      hits += usize::from(on_point(step));
     }
   }
   (tested, hits)
+}
+
+/// the lattice points a frame after the frame `before` sits on in the bands of
+/// [`HYBRID_TESTED`], as the hybrid mode codes them: the sum over the lower bands starts at
+/// [`HYBRID_FROM`]. `None` when one of the bands is not loud in both frames, `Some(None)` when
+/// one is off the lattice
+fn hybrid(before: &Bands, bands: &Bands) -> Option<Option<[i32; 2]>> {
+  let loud = |band: &usize| bands.loud[*band] && before.loud[*band];
+  if !HYBRID_TESTED.iter().all(loud) {
+    return None;
+  }
+  let mut lower = 0.0;
+  let mut steps = [0.0; BANDS];
+  for band in HYBRID_FROM..=HYBRID_TESTED[HYBRID_TESTED.len() - 1] {
+    let predicted = ALPHA * before.energy[band].max(LOWEST_PREDICTING) + lower;
+    steps[band] = bands.energy[band] - predicted;
+    lower += (1.0 - BETA) * nearest(steps[band]);
+  }
+  let tested = HYBRID_TESTED.map(|band| steps[band]);
+  // a step is within a few thousand lattice points of none, so its point fits
+  let points = tested.map(|step| nearest(step * LATTICE) as i32);
+  Some(tested.iter().all(|step| on_point(*step)).then_some(points))
 }
 
 /// whether a channel with `tested` bands, `hits` of them on the lattice, is judged, and whether
@@ -350,67 +470,120 @@ pub(crate) struct Counted {
   pub(crate) frames: Vec<usize>,
   /// the frames on the lattice once each channel's shift is taken off
   pub(crate) shifted: usize,
+  /// the frames whose top bands could be tested as the hybrid mode codes them
+  pub(crate) hybrid_tested: usize,
+  /// the ones of them on the lattice
+  pub(crate) hybrid: usize,
+  /// the different pairs of lattice points those sit on, in the first channel tested
+  pub(crate) hybrid_points: usize,
 }
 
-/// counts the frames on the lattice in `runs` of consecutive frames of `channels` channels,
-/// each run that many frames long. `bands(run, channel, frame)` gives a frame's bands, and is
-/// asked for a channel's only in the frames that the channels before it leave open.
-///
-/// a frame after the first of its run counts when every channel with enough tested bands has
-/// its share of them on the lattice, and one channel at least has enough. the shifted count
-/// takes a shift off each channel first: the one at the place the most of its frames name
-fn counted(
+/// the ways a frame is read: as a long block or as short ones, after the frame before it read
+/// either way or coded without it. the first is the one that says whether a grid is there
+const WAYS: [(Blocks, Option<Blocks>); 6] = [
+  (Blocks::Long, Some(Blocks::Long)),
+  (Blocks::Long, Some(Blocks::Short)),
+  (Blocks::Short, Some(Blocks::Long)),
+  (Blocks::Short, Some(Blocks::Short)),
+  (Blocks::Long, None),
+  (Blocks::Short, None),
+];
+
+/// whether a frame sits on the lattice read `way`, with each channel's shift taken off: every
+/// channel with enough tested bands has its share of them on the lattice, and one at least has
+/// enough. a channel is asked for only when the channels before it leave the frame open
+fn sits(
+  (run, frame): (usize, usize),
+  (now, before): (Blocks, Option<Blocks>),
+  shifts: &[f64],
+  bands: &mut impl FnMut(usize, usize, usize, Blocks) -> Bands,
+) -> bool {
+  let mut any = false;
+  for (channel, shift) in shifts.iter().enumerate() {
+    let read = bands(run, channel, frame, now);
+    let before = before.map(|blocks| bands(run, channel, frame - 1, blocks));
+    let (tested, hits) = on_lattice(before.as_ref(), &read, *shift);
+    match judged(tested, hits) {
+      Some(true) => any = true,
+      Some(false) => return false,
+      None => {}
+    }
+  }
+  any
+}
+
+/// how many frames of each of `runs` sit on the lattice read one of `ways`, with each
+/// channel's shift taken off
+fn sitting(
   runs: &[usize],
-  channels: usize,
-  mut bands: impl FnMut(usize, usize, usize) -> Bands,
-) -> Counted {
-  let frames = runs
+  ways: &[(Blocks, Option<Blocks>)],
+  shifts: &[f64],
+  bands: &mut impl FnMut(usize, usize, usize, Blocks) -> Bands,
+) -> Vec<usize> {
+  runs
     .iter()
     .enumerate()
     .map(|(run, frames)| {
       (1..*frames)
         .filter(|frame| {
-          let mut any = false;
-          for channel in 0..channels {
-            let (before, now) = (bands(run, channel, frame - 1), bands(run, channel, *frame));
-            let (tested, hits) = on_lattice(&before, &now, 0.0);
-            match judged(tested, hits) {
-              Some(true) => any = true,
-              Some(false) => return false,
-              None => {}
-            }
-          }
-          any
+          ways
+            .iter()
+            .any(|way| sits((run, *frame), *way, shifts, bands))
         })
         .count()
     })
-    .collect();
+    .collect()
+}
+
+/// counts the frames on the lattice in `runs` of consecutive frames of `channels` channels,
+/// each run that many frames long. `bands(run, channel, frame, blocks)` gives a frame's bands
+/// read as `blocks`, and is asked for a channel's only in the frames that the channels before
+/// it leave open.
+///
+/// a frame after the first of its run counts when it sits on the lattice read as a long block
+/// after a long block. the shifted count takes a shift off each channel first: the one at the
+/// place the most of its frames name. where either count finds a frame, the frames that sit on
+/// the lattice read another way are counted with it
+fn counted(
+  runs: &[usize],
+  channels: usize,
+  mut bands: impl FnMut(usize, usize, usize, Blocks) -> Bands,
+) -> Counted {
+  let unshifted = vec![0.0; channels];
+  let mut frames = sitting(runs, &WAYS[..1], &unshifted, &mut bands);
+  if frames.iter().sum::<usize>() > 0 {
+    frames = sitting(runs, &WAYS, &unshifted, &mut bands);
+  }
+  let pairs = || {
+    runs
+      .iter()
+      .enumerate()
+      .flat_map(|(run, frames)| (1..*frames).map(move |frame| (run, frame)))
+  };
   // the frames still open, and whether a channel so far was judged in each
-  let mut open: Vec<(usize, usize, bool)> = runs
-    .iter()
-    .enumerate()
-    .flat_map(|(run, frames)| (1..*frames).map(move |frame| (run, frame, false)))
-    .collect();
+  let mut open: Vec<(usize, usize, bool)> =
+    pairs().map(|(run, frame)| (run, frame, false)).collect();
+  let mut shifts = Vec::with_capacity(channels);
   for channel in 0..channels {
-    let pairs: Vec<(Bands, Bands)> = open
+    let read: Vec<(Bands, Bands)> = open
       .iter()
       .map(|(run, frame, _)| {
         (
-          bands(*run, channel, frame - 1),
-          bands(*run, channel, *frame),
+          bands(*run, channel, frame - 1, Blocks::Long),
+          bands(*run, channel, *frame, Blocks::Long),
         )
       })
       .collect();
-    let named: Vec<f64> = pairs
+    let named: Vec<f64> = read
       .iter()
       .filter_map(|(before, now)| named(before, now))
       .collect();
     let shift = place(&named).map_or(0.0, |place| {
       shift_at(place, |shift| {
-        pairs
+        read
           .iter()
           .filter(|(before, now)| {
-            let (tested, hits) = on_lattice(before, now, shift);
+            let (tested, hits) = on_lattice(Some(before), now, shift);
             judged(tested, hits) == Some(true)
           })
           .count()
@@ -418,9 +591,9 @@ fn counted(
     });
     open = open
       .into_iter()
-      .zip(&pairs)
+      .zip(&read)
       .filter_map(|((run, frame, any), (before, now))| {
-        let (tested, hits) = on_lattice(before, now, shift);
+        let (tested, hits) = on_lattice(Some(before), now, shift);
         match judged(tested, hits) {
           Some(true) => Some((run, frame, true)),
           Some(false) => None,
@@ -428,10 +601,40 @@ fn counted(
         }
       })
       .collect();
+    shifts.push(shift);
+  }
+  let mut shifted = open.iter().filter(|(_, _, any)| *any).count();
+  if shifted > 0 {
+    shifted = sitting(runs, &WAYS, &shifts, &mut bands).iter().sum();
+  }
+  let (mut hybrid_tested, mut hybrid_frames) = (0, 0);
+  let mut points = std::collections::HashSet::new();
+  for (run, frame) in pairs() {
+    // the first tested channel's points, while every tested channel sits on the lattice
+    let mut sits = None;
+    for channel in 0..channels {
+      let before = bands(run, channel, frame - 1, Blocks::Long);
+      match hybrid(&before, &bands(run, channel, frame, Blocks::Long)) {
+        Some(Some(on)) => sits = sits.or(Some(Some(on))),
+        Some(None) => {
+          sits = Some(None);
+          break;
+        }
+        None => {}
+      }
+    }
+    hybrid_tested += usize::from(sits.is_some());
+    if let Some(Some(on)) = sits {
+      hybrid_frames += 1;
+      points.insert(on);
+    }
   }
   Counted {
     frames,
-    shifted: open.iter().filter(|(_, _, any)| *any).count(),
+    shifted,
+    hybrid_tested,
+    hybrid: hybrid_frames,
+    hybrid_points: points.len(),
   }
 }
 
@@ -461,25 +664,15 @@ impl Stretch {
           start: first,
         });
       }
-      Rate::From44100 => Resampler::from_44100(),
+      Rate::From44100 => Resampler::to_48000(),
     };
-    // start on a sample that is also one of the 48 kHz lattice
-    let down = resampler.down as u64;
-    let skip = ((down - first % down) % down) as usize;
-    let resampled: Vec<Vec<f64>> = channels
-      .iter()
-      .map(|c| resampler.run(c.get(skip..).unwrap_or(&[])))
-      .collect();
-    let length = resampled.first()?.len();
-    if length <= 2 * EDGE {
-      return None;
-    }
+    let (resampled, start) = resampler.brought(channels, first)?;
     Some(Self {
       channels: resampled
         .iter()
-        .map(|c| pre_emphasized(c[EDGE..length - EDGE].iter().copied()))
+        .map(|c| pre_emphasized(c.iter().copied()))
         .collect(),
-      start: (first + skip as u64) / down * resampler.up as u64 + EDGE as u64,
+      start,
     })
   }
 }
@@ -520,20 +713,21 @@ impl Stretches {
         || {
           (
             Celt::new(self.bits),
-            vec![None; self.stretches.len() * 2 * most],
+            vec![None; self.stretches.len() * 4 * most],
           )
         },
         |(celt, kept), offset| {
           kept.fill(None);
-          counted(&runs, 2, |run, channel, frame| {
+          counted(&runs, 2, |run, channel, frame, blocks| {
             let stretch = self.stretches[run]
               .as_ref()
               .expect("a stretch with frames has samples");
             // below the frame, so it fits
             let shift = (stretch.start % FRAME as u64) as usize;
             let start = (offset + FRAME - shift) % FRAME + frame * FRAME;
-            *kept[(run * 2 + channel) * most + frame].get_or_insert_with(|| {
-              celt.bands(&stretch.channels[channel][start..start + 2 * FRAME])
+            let short = usize::from(blocks == Blocks::Short);
+            *kept[((run * 2 + channel) * 2 + short) * most + frame].get_or_insert_with(|| {
+              celt.read(&stretch.channels[channel][start..start + 2 * FRAME], blocks)
             })
           })
         },
@@ -547,8 +741,9 @@ impl Stretches {
 pub(crate) struct Uncut {
   celt: Celt,
   rate: Rate,
-  /// each window's frames on that grid, by channel
-  windows: Vec<Vec<Vec<Bands>>>,
+  /// each window's frames on that grid, by channel: a frame read as a long block and as short
+  /// ones
+  windows: Vec<Vec<Vec<[Bands; 2]>>>,
 }
 
 impl Uncut {
@@ -587,8 +782,8 @@ impl Uncut {
       .map(|channel| {
         (0..frames)
           .map(|frame| {
-            let start = offset + frame * FRAME;
-            self.celt.bands(&channel[start..start + 2 * FRAME])
+            let samples = &channel[offset + frame * FRAME..][..2 * FRAME];
+            [Blocks::Long, Blocks::Short].map(|blocks| self.celt.read(samples, blocks))
           })
           .collect()
       })
@@ -604,103 +799,10 @@ impl Uncut {
       .map(|window| window.first().map_or(0, Vec::len))
       .collect();
     let channels = self.windows.iter().map(Vec::len).max().unwrap_or(0);
-    counted(&runs, channels, |run, channel, frame| {
-      self.windows[run][channel][frame]
+    counted(&runs, channels, |run, channel, frame, blocks| {
+      self.windows[run][channel][frame][usize::from(blocks == Blocks::Short)]
     })
   }
-}
-
-/// a polyphase windowed-sinc filter from a lower rate to 48 kHz. output sample j sits at input
-/// time j * down / up from the input's first sample, so a lattice the two rates share stays
-/// shared
-struct Resampler {
-  up: usize,
-  down: usize,
-  /// for each of the `up` phases, the taps that meet the input from the oldest sample read to
-  /// the newest, 2 * HALF + 1 of them
-  phases: Vec<Vec<f64>>,
-}
-
-impl Resampler {
-  /// the filter from 44.1 kHz, made once
-  fn from_44100() -> &'static Self {
-    static FROM_44100: std::sync::LazyLock<Resampler> =
-      std::sync::LazyLock::new(|| Resampler::new(44_100));
-    &FROM_44100
-  }
-
-  fn new(rate: u32) -> Self {
-    let common = gcd(rate as usize, RATE as usize);
-    let (up, down) = (RATE as usize / common, rate as usize / common);
-    // the filter at the rate both share: a sinc cut at the lower rate's band edge under a
-    // Kaiser window, 2 * HALF * up + 1 taps
-    let count = 2 * HALF * up + 1;
-    let middle = (count - 1) as f64 / 2.0;
-    let cutoff = 1.0 / up as f64;
-    let taps: Vec<f64> = (0..count)
-      .map(|n| {
-        let m = n as f64 - middle;
-        let x = std::f64::consts::PI * cutoff * m;
-        let sinc = if m == 0.0 { 1.0 } else { x.sin() / x };
-        let r = m / middle;
-        let kaiser =
-          bessel_i0(KAISER_BETA * (1.0 - r * r).max(0.0).sqrt()) / bessel_i0(KAISER_BETA);
-        cutoff * sinc * kaiser
-      })
-      .collect();
-    // unity gain for the `up` phases together
-    let gain = up as f64 / taps.iter().sum::<f64>();
-    // y_j is the sum over i of x_i h[j down + HALF up - i up]: tap `phase + k up` meets the
-    // sample k before the newest
-    let phases = (0..up)
-      .map(|phase| {
-        let mut taps: Vec<f64> = (0..=2 * HALF)
-          .map(|k| taps.get(phase + k * up).map_or(0.0, |tap| tap * gain))
-          .collect();
-        taps.reverse();
-        taps
-      })
-      .collect();
-    Self { up, down, phases }
-  }
-
-  /// `input` at 48 kHz: floor(len * up / down) samples, with silence past both ends
-  fn run(&self, input: &[f64]) -> Vec<f64> {
-    let (up, down) = (self.up, self.down);
-    // silence on both sides, so every output reads 2 * HALF + 1 samples
-    let mut padded = vec![0.0; input.len() + 4 * HALF];
-    padded[2 * HALF..2 * HALF + input.len()].copy_from_slice(input);
-    (0..input.len() * up / down)
-      .map(|j| {
-        let at = j * down + HALF * up;
-        let (newest, phase) = (at / up, at % up);
-        // the newest sample read is `newest` of the input, 2 * HALF further in `padded`
-        dot(&self.phases[phase], &padded[newest..=newest + 2 * HALF])
-      })
-      .collect()
-  }
-}
-
-/// the products `dot` adds up side by side
-const SIDE_BY_SIDE: usize = 8;
-
-/// the sum of the products of `a` and `b`, added up in several running totals so that the
-/// additions do not wait on each other
-fn dot(a: &[f64], b: &[f64]) -> f64 {
-  let (a_runs, a_rest) = a.as_chunks::<SIDE_BY_SIDE>();
-  let (b_runs, b_rest) = b.as_chunks::<SIDE_BY_SIDE>();
-  let mut totals = [0.0; SIDE_BY_SIDE];
-  for (a, b) in a_runs.iter().zip(b_runs) {
-    for ((total, a), b) in totals.iter_mut().zip(a).zip(b) {
-      *total += a * b;
-    }
-  }
-  let rest: f64 = a_rest.iter().zip(b_rest).map(|(a, b)| a * b).sum();
-  totals.iter().sum::<f64>() + rest
-}
-
-fn gcd(a: usize, b: usize) -> usize {
-  if b == 0 { a } else { gcd(b, a % b) }
 }
 
 #[cfg(test)]
@@ -723,18 +825,21 @@ mod tests {
       bands.energy[band] = ALPHA * quiet.energy[band] + lower + coarse + fine;
       lower += (1.0 - BETA) * coarse;
     }
-    assert_eq!(on_lattice(&quiet, &bands, 0.0), (BANDS, BANDS));
+    assert_eq!(on_lattice(Some(&quiet), &bands, 0.0), (BANDS, BANDS));
     // a frame 1.3 dB louder than the codec made it has every step off the lattice
     let mut louder = bands;
     for energy in &mut louder.energy {
       *energy += 0.21;
     }
-    assert_eq!(on_lattice(&quiet, &louder, 0.0), (BANDS, 0));
+    assert_eq!(on_lattice(Some(&quiet), &louder, 0.0), (BANDS, 0));
     // bands under the noise in either frame are not tested
     let mut faint = bands;
     faint.loud[3] = false;
     faint.loud[7] = false;
-    assert_eq!(on_lattice(&quiet, &faint, 0.0), (BANDS - 2, BANDS - 2));
+    assert_eq!(
+      on_lattice(Some(&quiet), &faint, 0.0),
+      (BANDS - 2, BANDS - 2)
+    );
   }
 
   /// a frame after `before`: each band a coarse step of its own, refined by a quarter or an
@@ -780,20 +885,23 @@ mod tests {
     let run = run_at(level, 9);
     let place_of = |shift: f64| shift.rem_euclid(PERIOD);
     for pair in run.windows(2) {
-      assert_eq!(on_lattice(&pair[0], &pair[1], 0.0), (BANDS, 0));
-      assert_eq!(on_lattice(&pair[0], &pair[1], level / 2.0), (BANDS, BANDS));
+      assert_eq!(on_lattice(Some(&pair[0]), &pair[1], 0.0), (BANDS, 0));
+      assert_eq!(
+        on_lattice(Some(&pair[0]), &pair[1], level / 2.0),
+        (BANDS, BANDS)
+      );
       let named = named(&pair[0], &pair[1]).expect("every band gathers");
       assert!(
         (place_of(named) - place_of(level / 2.0)).abs() < 1e-9,
         "{named}"
       );
     }
-    let moved = counted(&[run.len()], 1, |_, _, frame| run[frame]);
+    let moved = counted(&[run.len()], 1, |_, _, frame, _| run[frame]);
     assert_eq!(moved.frames, [0]);
     assert_eq!(moved.shifted, run.len() - 1);
     // frames at the decoder's own level count either way
     let run = run_at(0.0, 9);
-    let unmoved = counted(&[run.len()], 1, |_, _, frame| run[frame]);
+    let unmoved = counted(&[run.len()], 1, |_, _, frame, _| run[frame]);
     assert_eq!(unmoved.frames, [run.len() - 1]);
     assert_eq!(unmoved.shifted, run.len() - 1);
   }
@@ -801,7 +909,9 @@ mod tests {
   #[test]
   fn each_channel_has_a_level_of_its_own() {
     let (left, right) = (run_at(-1.0 / DB, 6), run_at(-2.5 / DB, 6));
-    let both = counted(&[6], 2, |_, channel, frame| [&left, &right][channel][frame]);
+    let both = counted(&[6], 2, |_, channel, frame, _| {
+      [&left, &right][channel][frame]
+    });
     assert_eq!((both.frames, both.shifted), (vec![0], 5));
     // a channel no shift fits closes the frames the other left open
     let mut noise = run_at(0.0, 6);
@@ -810,15 +920,148 @@ mod tests {
         *energy += ((frame * 7 + band * 13) % 17) as f64 * 0.0531;
       }
     }
-    let one = counted(&[6], 2, |_, channel, frame| [&left, &noise][channel][frame]);
+    let one = counted(&[6], 2, |_, channel, frame, _| {
+      [&left, &noise][channel][frame]
+    });
     assert_eq!(one.shifted, 0);
   }
 
   #[test]
   fn a_shift_one_alias_further_loses_only_the_lowest_band() {
     let run = run_at(0.0, 2);
-    let (tested, hits) = on_lattice(&run[0], &run[1], ALIAS);
+    let (tested, hits) = on_lattice(Some(&run[0]), &run[1], ALIAS);
     assert_eq!((tested, hits), (BANDS, BANDS - 1));
+  }
+
+  /// a frame coded without the frame before it: each band a coarse step of its own, refined
+  /// by a quarter or an eighth, predicted from the lower bands alone
+  fn coded_alone() -> Bands {
+    let mut bands = Bands {
+      energy: [0.0; BANDS],
+      loud: [true; BANDS],
+    };
+    let mut lower = 0.0;
+    for (band, energy) in bands.energy.iter_mut().enumerate() {
+      let coarse = (band % 5) as f64 - 2.0;
+      let fine = if band.is_multiple_of(2) { 0.25 } else { -0.125 };
+      *energy = lower + coarse + fine;
+      lower += (1.0 - BETA_INTRA) * coarse;
+    }
+    bands
+  }
+
+  #[test]
+  fn a_frame_coded_without_the_one_before_sits_on_the_lattice_alone() {
+    let alone = coded_alone();
+    let before = run_at(0.0, 2)[1];
+    assert_eq!(on_lattice(None, &alone, 0.0), (BANDS, BANDS));
+    assert!(on_lattice(Some(&before), &alone, 0.0).1 < BANDS / 2);
+    // the whole gain comes off such a frame's steps, where half of it comes off the others'
+    let mut louder = alone;
+    for energy in &mut louder.energy {
+      *energy += 0.3;
+    }
+    assert_eq!(on_lattice(None, &louder, 0.0), (BANDS, 0));
+    assert_eq!(on_lattice(None, &louder, 0.15), (BANDS, BANDS));
+  }
+
+  #[test]
+  fn frames_read_another_way_count_only_where_a_frame_sits_as_long_blocks() {
+    // four frames coded as long blocks, the third as short ones: read as a long block it is
+    // noise, and read as short ones the others are
+    let run = run_at(0.0, 5);
+    let noise = |frame: usize| {
+      let mut bands = run[frame];
+      for (band, energy) in bands.energy.iter_mut().enumerate() {
+        *energy += ((frame * 7 + band * 13) % 17) as f64 * 0.0531;
+      }
+      bands
+    };
+    let transient = |_, _, frame: usize, blocks: Blocks| {
+      if (frame == 2) == (blocks == Blocks::Short) {
+        run[frame]
+      } else {
+        noise(frame)
+      }
+    };
+    // frame 1 after 0 and frame 4 after 3 sit as long blocks; 2 as short ones after a long
+    // one, 3 as a long one after short ones
+    assert_eq!(counted(&[5], 1, transient).frames, [4]);
+    // with every frame short, none sits as long blocks, and none is counted
+    let short = |_, _, frame: usize, blocks: Blocks| match blocks {
+      Blocks::Short => run[frame],
+      Blocks::Long => noise(frame),
+    };
+    assert_eq!(counted(&[5], 1, short).frames, [0]);
+  }
+
+  #[test]
+  fn a_hybrid_frame_is_tested_on_the_two_bands_under_15_6_khz() {
+    let before = Bands {
+      energy: [-2.0; BANDS],
+      loud: [true; BANDS],
+    };
+    // bands 17 to 20 coded as the hybrid mode does, the sum over the lower bands from 17
+    let mut bands = before;
+    let mut lower = 0.0;
+    for band in HYBRID_FROM..BANDS {
+      let coarse = (band % 3) as f64 - 1.0;
+      bands.energy[band] = ALPHA * before.energy[band] + lower + coarse + 0.25;
+      lower += (1.0 - BETA) * coarse;
+    }
+    assert!(matches!(hybrid(&before, &bands), Some(Some(_))));
+    // the voice coder's output in band 17 moves its energy a little, and nothing else
+    let mut reached = bands;
+    reached.energy[HYBRID_FROM] += 0.1;
+    assert_eq!(hybrid(&before, &reached), hybrid(&before, &bands));
+    let mut off = bands;
+    off.energy[19] += 0.01;
+    assert_eq!(hybrid(&before, &off), Some(None));
+    let mut faint = bands;
+    faint.loud[18] = false;
+    assert_eq!(hybrid(&before, &faint), None);
+    // frames that land on the same points over and over, as a steady tone's do, are one pair
+    let run = [before, bands, before, bands, before, bands];
+    let counted = counted(&[6], 1, |_, _, frame, _| run[frame]);
+    assert_eq!(
+      (counted.hybrid_tested, counted.hybrid, counted.hybrid_points),
+      (5, 3, 1)
+    );
+  }
+
+  #[test]
+  fn short_blocks_give_a_band_the_energy_of_its_eight_transforms() {
+    let samples: Vec<f32> = (0..2 * FRAME)
+      .map(|i| ((i * i) as f32 * 0.000_37).sin() * 0.5)
+      .collect();
+    let mut celt = Celt::new(16);
+    let bands = celt.read(&samples, Blocks::Short);
+    let flat = (FRAME - OVERLAP) / 2;
+    let pi = std::f64::consts::PI;
+    let length = BLOCK as f64;
+    for band in [0, 7, 12, 20] {
+      let mut squares = 0.0;
+      for block in 0..BLOCKS {
+        for k in EDGES[band] / BLOCKS..EDGES[band + 1] / BLOCKS {
+          let value: f64 = (0..2 * BLOCK)
+            .map(|n| {
+              let window = f64::from(celt.rise[if n < BLOCK { n } else { 2 * BLOCK - 1 - n }]);
+              let angle = pi / length * (n as f64 + 0.5 + length / 2.0) * (k as f64 + 0.5);
+              window * f64::from(samples[flat + block * BLOCK + n]) * angle.cos()
+            })
+            .sum::<f64>()
+            * (2.0 / length).sqrt();
+          squares += value * value;
+        }
+      }
+      let energy = 0.5 * squares.log2() - MEANS[band] + SCALE + 1.5;
+      // the chirp leaves the top band little, which the single-precision transform rounds
+      assert!(
+        (bands.energy[band] - energy).abs() < 1e-3,
+        "{band}: {} {energy}",
+        bands.energy[band]
+      );
+    }
   }
 
   #[test]
@@ -846,18 +1089,6 @@ mod tests {
       -77.49,
     ] {
       assert_eq!(nearest(x), f64::round_ties_even(x), "{x}");
-    }
-  }
-
-  #[test]
-  fn resampling_keeps_a_tone_and_its_place_in_time() {
-    // 1 kHz at 44.1 kHz, read at 48 kHz: sample j is the tone at j / 48000 s
-    let tone = |n: usize, rate: f64| (2.0 * std::f64::consts::PI * 1000.0 * n as f64 / rate).sin();
-    let input: Vec<f64> = (0..4410).map(|n| tone(n, 44_100.0)).collect();
-    let output = Resampler::from_44100().run(&input);
-    assert_eq!(output.len(), 4800);
-    for (j, sample) in output.iter().enumerate().take(4800 - EDGE).skip(EDGE) {
-      assert!((sample - tone(j, 48_000.0)).abs() < 1e-5, "{j}: {sample}");
     }
   }
 

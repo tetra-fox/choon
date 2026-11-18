@@ -155,6 +155,67 @@ fn an_mp3_decode_carries_the_mp3_grid_and_its_source_none() {
 }
 
 #[test]
+fn a_decode_converted_between_44_1_and_48_khz_carries_its_grid_at_the_rate_it_was_made_at() {
+  let dir = tempfile::tempdir().unwrap();
+  let thresholds = ReadingThresholds::default();
+  let through = fixtures::through_mp3(&music(1, 44_100, pink), Bitrate::Kbps128, dir.path());
+  let coded = fixtures::through_transform(&music(2, 48_000, pink), LongWindow::KaiserBessel, 64);
+  for (name, audio, codec, rate) in [
+    (
+      "mp3-to-48000.flac",
+      through.resampled(48_000),
+      Codec::Mp3,
+      44_100,
+    ),
+    (
+      "coded-to-44100.flac",
+      coded.resampled(44_100),
+      Codec::Aac,
+      48_000,
+    ),
+  ] {
+    let measured = measure(flac(dir.path(), name, &audio, 16), &settings()).unwrap();
+    let scan = measured.grid.as_ref().expect("a lossless file is scanned");
+    let other = scan.other_rate.as_ref().expect("the other rate is scanned");
+    assert_eq!(other.rate, rate, "{name}");
+    // nothing at the file's own rate
+    let sine = scan.aac_sine.as_ref().expect("the sine window is scanned");
+    assert!(
+      scan.mp3.z < thresholds.mp3_grid_z
+        && scan.aac.z < thresholds.aac_grid_z
+        && sine.z < thresholds.aac_grid_z,
+      "{name}: {scan:?}"
+    );
+    let own = match codec {
+      Codec::Mp3 => &other.mp3,
+      _ => &other.aac,
+    };
+    let reading = read(&measured);
+    assert_eq!(reading.verdict, Verdict::LikelyTranscode, "{reading:#?}");
+    let found = reading.grid.expect("the grid at the other rate is one");
+    assert_eq!(found.codec, codec, "{name}: {scan:?}");
+    let evidence = Evidence::CountAt {
+      rate,
+      scan: own.clone(),
+    };
+    assert_eq!(found.evidence, evidence, "{name}");
+    let brought = format!("Brought to {} kHz", f64::from(rate) / 1000.0);
+    assert!(reading.summary.starts_with(&brought), "{}", reading.summary);
+  }
+  // honest audio converted the same way carries none
+  let honest = music(1, 44_100, pink).resampled(48_000);
+  let measured = measure(flac(dir.path(), "honest.flac", &honest, 16), &settings()).unwrap();
+  let scan = measured.grid.as_ref().expect("a lossless file is scanned");
+  assert_eq!(grid::found(scan, &thresholds), None, "{scan:?}");
+  let other = scan.other_rate.as_ref().expect("the other rate is scanned");
+  assert!(other.mp3.z < 5.0 && other.aac.z < 5.0, "{scan:?}");
+  // and a rate that is neither is scanned at its own alone
+  let high = flac(dir.path(), "at-96000.flac", &music(1, 96_000, pink), 24);
+  let scan = measure(high, &settings()).unwrap().grid;
+  assert_eq!(scan.expect("scanned for MP3 and AAC").other_rate, None);
+}
+
+#[test]
 fn a_transform_decode_carries_the_aac_grid_under_the_window_it_was_coded_with() {
   let dir = tempfile::tempdir().unwrap();
   let source = music(1, 44_100, pink);
@@ -295,6 +356,52 @@ fn an_opus_decode_at_another_level_carries_opus_frames_once_the_level_is_taken_o
 }
 
 #[test]
+fn a_decode_of_opus_in_its_hybrid_mode_carries_hybrid_frames() {
+  let dir = tempfile::tempdir().unwrap();
+  let thresholds = ReadingThresholds::default();
+  // voice at 16 kbit/s over the full band is coded as a voice coder under CELT
+  let voice = fixtures::OpusSettings {
+    voice: true,
+    ..fixtures::OpusSettings::music(16)
+  };
+  let path = dir.path().join("voice.opus");
+  std::fs::write(&path, fixtures::opus(&music(1, 48_000, pink), voice).ogg()).unwrap();
+  let packets = measure(&path, &settings()).unwrap().opus;
+  let most = packets.first().expect("an Opus file's packets are counted");
+  assert_eq!(most.mode, crate::OpusMode::Hybrid, "{packets:?}");
+  let through = fixtures::decoded(&path);
+  for (name, audio) in [
+    ("decoded.flac", through.clone()),
+    ("at-44100.flac", through.resampled(44_100)),
+  ] {
+    let measured = measure(flac(dir.path(), name, &audio, 16), &settings()).unwrap();
+    let opus = measured.grid.as_ref().and_then(|scan| scan.opus.clone());
+    let opus = opus.expect("the rate is one Opus is looked for at");
+    let hybrid = opus.hybrid.clone().expect("hybrid frames are counted");
+    assert!(
+      opus.frames < thresholds.opus_grid_frames && opus.uncut_frames < thresholds.opus_uncut_frames,
+      "{name}: {opus:?}"
+    );
+    assert!(
+      hybrid.uncut_steps >= 2 * thresholds.opus_hybrid_steps
+        && hybrid.uncut_frames as f64
+          >= 2.0 * thresholds.opus_hybrid_share * hybrid.uncut_tested as f64,
+      "{name}: {opus:?}"
+    );
+    let reading = read(&measured);
+    assert_eq!(reading.verdict, Verdict::LikelyTranscode, "{reading:#?}");
+    let found = reading.grid.expect("the hybrid count makes a grid");
+    assert_eq!(found.codec, Codec::Opus);
+    assert_eq!(found.evidence, Evidence::Hybrid { hybrid });
+    assert!(
+      reading.summary.contains("hybrid mode"),
+      "{}",
+      reading.summary
+    );
+  }
+}
+
+#[test]
 fn audio_that_was_never_opus_carries_no_opus_frames() {
   let dir = tempfile::tempdir().unwrap();
   let source = music(1, 44_100, pink);
@@ -313,6 +420,12 @@ fn audio_that_was_never_opus_carries_no_opus_frames() {
     let shifted = opus.shifted.as_ref().expect("a level is searched for");
     assert!(
       shifted.frames <= 1 && shifted.uncut_frames <= 1,
+      "{name}: {opus:?}"
+    );
+    // two bands land on the lattice by chance in a few frames of a hundred
+    let hybrid = opus.hybrid.as_ref().expect("hybrid frames are counted");
+    assert!(
+      (hybrid.uncut_frames as f64) < 0.05 * hybrid.uncut_tested as f64,
       "{name}: {opus:?}"
     );
   }
@@ -752,9 +865,9 @@ fn progress_goes_on_through_the_grid_scan() {
   assert!(seen.is_sorted(), "{seen:?}");
   let jobs_ended = seen
     .windows(2)
-    .filter(|pair| pair[1] - pair[0] >= 50)
+    .filter(|pair| pair[1] - pair[0] >= 30)
     .count();
-  assert_eq!(jobs_ended, grid::jobs(true) - 1, "{seen:?}");
+  assert_eq!(jobs_ended, grid::jobs(true, true) - 1, "{seen:?}");
   assert_eq!(progress.load(std::sync::atomic::Ordering::Relaxed), 1000);
 }
 
@@ -802,6 +915,22 @@ fn a_sampled_window_holds_the_same_second_as_one_read_in_full() {
   }
 }
 
+/// the scan of a file's stretches: its grid scan without the counts of the windows measured,
+/// which a sampled read takes elsewhere than a read in full does
+fn of_stretches(measured: &Measured) -> Option<grid::Scan> {
+  let mut scan = measured.grid.clone()?;
+  if let Some(opus) = &mut scan.opus {
+    opus.uncut_frames = 0;
+    if let Some(shifted) = &mut opus.shifted {
+      shifted.uncut_frames = 0;
+    }
+    if let Some(hybrid) = &mut opus.hybrid {
+      (hybrid.uncut_frames, hybrid.uncut_tested, hybrid.uncut_steps) = (0, 0, 0);
+    }
+  }
+  Some(scan)
+}
+
 #[test]
 fn a_sampled_file_scans_the_same_samples_for_a_grid_as_one_read_in_full() {
   let dir = tempfile::tempdir().unwrap();
@@ -817,7 +946,7 @@ fn a_sampled_file_scans_the_same_samples_for_a_grid_as_one_read_in_full() {
   let sampled = measure(&path, &sampled).unwrap();
   assert!(sampled.sampled);
   assert!(full.grid.is_some());
-  assert_eq!(sampled.grid, full.grid);
+  assert_eq!(of_stretches(&sampled), of_stretches(&full));
 }
 
 #[test]
@@ -836,7 +965,7 @@ fn a_grid_stretch_starting_where_a_packet_ends_is_read_from_the_next_packet() {
   assert!(sampled.sampled);
   let full = measure_bytes(fixtures::flac(&audio, 16, false), &settings()).unwrap();
   assert!(full.grid.is_some());
-  assert_eq!(sampled.grid, full.grid);
+  assert_eq!(of_stretches(&sampled), of_stretches(&full));
 }
 
 #[test]

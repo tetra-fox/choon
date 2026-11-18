@@ -390,6 +390,19 @@ fn grid(checked: &Checked, reading: &Reading) -> String {
         scan.segments_agreeing,
         scan.segment_z.len()
       ),
+      Evidence::CountAt { rate, scan } => format!(
+        "{} at offset {} once at {} kHz, z {:.0}, {} of {} stretches agree",
+        found.codec,
+        scan.offset,
+        f64::from(*rate) / 1000.0,
+        scan.z,
+        scan.segments_agreeing,
+        scan.segment_z.len()
+      ),
+      Evidence::Steps { offset, steps } => format!(
+        "{} at offset {offset}, {} of {} bands on whole quantizer steps",
+        found.codec, steps.whole, steps.tested
+      ),
       Evidence::Lattice(scan) => format!(
         "{} at offset {}, {} frames on its energy lattice in the stretches, {} in the windows",
         found.codec, scan.offset, scan.frames, scan.uncut_frames
@@ -398,6 +411,16 @@ fn grid(checked: &Checked, reading: &Reading) -> String {
         "{} at offset {}, {} frames on its energy lattice at another level in the stretches, \
          {} in the windows",
         found.codec, shifted.offset, shifted.frames, shifted.uncut_frames
+      ),
+      Evidence::Hybrid { hybrid } => format!(
+        "{} at offset {}, {} of {} hybrid frames on its energy lattice in the stretches, {} of \
+         {} in the windows",
+        found.codec,
+        hybrid.offset,
+        hybrid.frames,
+        hybrid.tested,
+        hybrid.uncut_frames,
+        hybrid.uncut_tested
       ),
     },
     (None, Some(scan)) => {

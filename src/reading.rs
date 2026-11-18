@@ -403,6 +403,20 @@ fn weighed(
         scan.segments_agreeing,
         grid::SEGMENTS,
       ),
+      Evidence::CountAt { rate, scan } => format!(
+        "Brought to {} kHz, the samples carry an {name} frame grid at offset {} (z {:.0}, {} of \
+         {} segments agreeing), as audio decoded from {name} at that rate and converted does.",
+        f64::from(*rate) / 1000.0,
+        scan.offset,
+        scan.z,
+        scan.segments_agreeing,
+        grid::SEGMENTS,
+      ),
+      Evidence::Steps { offset, steps } => format!(
+        "With granules at offset {offset}, the values of {} scalefactor bands sit on whole \
+         steps of MP3's quantizer, as in audio decoded from MP3.",
+        steps.whole,
+      ),
       // the frames of whichever count passed its threshold
       Evidence::Lattice(scan) if scan.frames >= thresholds.opus_grid_frames => format!(
         "The band energies of {} frames at offset {} sit on the lattice of Opus's quantizer, as \
@@ -422,11 +436,22 @@ fn weighed(
            from Opus and made louder or quieter."
         )
       }
+      Evidence::Hybrid { hybrid } => {
+        let (offset, frames, tested) = hybrid.most();
+        format!(
+          "The energies of the bands from 9.6 to 15.6 kHz sit on the lattice of Opus's quantizer in \
+           {frames} of {tested} frames at offset {offset}, as in audio decoded from Opus in its \
+           hybrid mode."
+        )
+      }
     };
+    let family = grid.family.map_or_else(String::new, |family| {
+      format!(" The offset is the one {family} leaves in a decode whose start was not cut.")
+    });
     return CutoffReading {
       verdict: Verdict::LikelyTranscode,
       confidence: thresholds.confidence_cap,
-      summary: format!("{evidence} {}", found.summary),
+      summary: format!("{evidence}{family} {}", found.summary),
       limitations,
       ..found
     };
