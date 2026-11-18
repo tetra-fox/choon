@@ -535,7 +535,7 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
       .map(|(rate, uncut)| grid::Opus {
         rate,
         bits,
-        uncut_frames: uncut.frames(),
+        uncut: uncut.counted(),
       });
     measured.grid = scan_grid(segments, opus, &run, &mut measured)?;
   }

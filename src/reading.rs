@@ -414,6 +414,14 @@ fn weighed(
          grid of an Opus decode whose start was not cut.",
         scan.uncut_frames,
       ),
+      Evidence::Shifted { shifted } => {
+        let (offset, frames) = shifted.most();
+        format!(
+          "The band energies of {frames} frames at offset {offset} sit on the lattice of \
+           Opus's quantizer once one change of level is taken off them, as in audio decoded \
+           from Opus and made louder or quieter."
+        )
+      }
     };
     return CutoffReading {
       verdict: Verdict::LikelyTranscode,

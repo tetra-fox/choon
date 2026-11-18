@@ -249,6 +249,52 @@ fn an_opus_decode_carries_opus_frames_at_48_khz_at_44_1_khz_and_with_its_start_c
 }
 
 #[test]
+fn an_opus_decode_at_another_level_carries_opus_frames_once_the_level_is_taken_off() {
+  let dir = tempfile::tempdir().unwrap();
+  let through = through_opus(&music(1, 48_000, pink), 128, dir.path());
+  let thresholds = ReadingThresholds::default();
+  // 7.3 dB quieter, and the channels 1 and 2.5 dB quieter
+  for (name, gains) in [
+    ("quieter.flac", [-7.3, -7.3]),
+    ("balance.flac", [-1.0, -2.5]),
+  ] {
+    let mut changed = through.clone();
+    for (channel, db) in changed.channels.iter_mut().zip(gains) {
+      let gain = 10f32.powf(db / 20.0);
+      for sample in channel {
+        *sample *= gain;
+      }
+    }
+    let measured = measure(flac(dir.path(), name, &changed, 16), &settings()).unwrap();
+    let opus = measured.grid.as_ref().and_then(|scan| scan.opus.clone());
+    let opus = opus.expect("the rate is one Opus is looked for at");
+    let shifted = opus.shifted.clone().expect("a level is searched for");
+    assert!(
+      opus.frames < thresholds.opus_grid_frames && opus.uncut_frames < thresholds.opus_uncut_frames,
+      "{name}: {opus:?}"
+    );
+    assert_eq!(shifted.offset, grid::OPUS_UNCUT_OFFSET, "{name}: {opus:?}");
+    assert!(
+      shifted.frames >= 4 * thresholds.opus_shifted_frames
+        && shifted.uncut_frames >= 4 * thresholds.opus_shifted_uncut_frames,
+      "{name}: {opus:?}"
+    );
+    let reading = read(&measured);
+    assert_eq!(reading.verdict, Verdict::LikelyTranscode, "{reading:#?}");
+    let found = reading.grid.expect("the shifted count makes a grid");
+    assert_eq!(found.codec, Codec::Opus);
+    assert_eq!(found.evidence, Evidence::Shifted { shifted });
+    assert!(
+      reading
+        .summary
+        .contains("once one change of level is taken off"),
+      "{}",
+      reading.summary
+    );
+  }
+}
+
+#[test]
 fn audio_that_was_never_opus_carries_no_opus_frames() {
   let dir = tempfile::tempdir().unwrap();
   let source = music(1, 44_100, pink);
@@ -262,6 +308,11 @@ fn audio_that_was_never_opus_carries_no_opus_frames() {
     let opus = measured.grid.unwrap().opus.expect("the rate is one read");
     assert!(
       opus.frames <= 1 && opus.uncut_frames == 0,
+      "{name}: {opus:?}"
+    );
+    let shifted = opus.shifted.as_ref().expect("a level is searched for");
+    assert!(
+      shifted.frames <= 1 && shifted.uncut_frames <= 1,
       "{name}: {opus:?}"
     );
   }

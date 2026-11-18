@@ -318,6 +318,50 @@ fn an_opus_file_and_a_flac_decoded_from_it_say_opus() {
   assert!(found["uncutFrames"].as_u64().unwrap() >= 100, "{found}");
 }
 
+#[test]
+fn a_flac_decoded_from_opus_and_made_quieter_says_opus_at_another_level() {
+  let dir = tempfile::tempdir().unwrap();
+  let opus = dir.path().join("music.opus");
+  let stream = fixtures::opus(&music(1, 48_000, pink), fixtures::OpusSettings::music(128));
+  std::fs::write(&opus, stream.ogg()).unwrap();
+  let mut quieter = fixtures::decoded(&opus);
+  // 7.3 dB down
+  for sample in quieter.channels.iter_mut().flatten() {
+    *sample *= 0.4315;
+  }
+  let fake = dir.path().join("quieter.flac");
+  fixtures::write_flac(&quieter, 16, false, &fake);
+  let fake = path(&fake);
+
+  let output = choon(&[&fake]);
+  assert_eq!(status(&output), 1, "{output:?}");
+  let line = String::from_utf8(output.stdout).unwrap();
+  assert!(
+    line.starts_with(&format!(
+      "{fake}: likely transcode: Opus grid at offset 228 ("
+    )),
+    "{line}"
+  );
+  assert!(
+    line.contains(" frames at another level), cut at 20."),
+    "{line}"
+  );
+
+  let output = choon(&["--json", &fake]);
+  let line: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+  let scan = &line["grid"]["opus"];
+  // nothing at the decoder's level
+  assert_eq!(scan["uncutFrames"], 0, "{scan}");
+  let found = &line["readings"][0]["grid"];
+  assert_eq!(found["codec"], "opus");
+  assert_eq!(found["shifted"], scan["shifted"]);
+  assert_eq!(found["shifted"]["offset"], 228);
+  assert!(
+    found["shifted"]["uncutFrames"].as_u64().unwrap() >= 100,
+    "{found}"
+  );
+}
+
 #[cfg(unix)]
 #[test]
 fn a_directory_is_read_through_for_its_audio_files() {

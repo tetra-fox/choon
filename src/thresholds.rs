@@ -198,6 +198,18 @@ pub struct ReadingThresholds {
   /// It is compared with [`OpusScan::uncut_frames`](crate::grid::OpusScan::uncut_frames), the
   /// count on the one grid a decode has when nothing was cut from its start.
   pub opus_uncut_frames: usize,
+  /// Fewest frames on Opus's lattice at another level, at one offset of the four segments.
+  ///
+  /// It is compared with [`OpusShifted::frames`](crate::grid::OpusShifted::frames), where
+  /// neither count at the decoder's own level makes an Opus grid. The search for the level
+  /// gives chance more frames than `opus_grid_frames` meets.
+  pub opus_shifted_frames: usize,
+  /// Fewest frames on Opus's lattice at another level in the windows measured.
+  ///
+  /// It is compared with
+  /// [`OpusShifted::uncut_frames`](crate::grid::OpusShifted::uncut_frames), as
+  /// `opus_shifted_frames` is with its count.
+  pub opus_shifted_uncut_frames: usize,
 }
 
 /// Band top of a rate some old equipment recorded at.
@@ -294,6 +306,10 @@ impl Default for ReadingThresholds {
       // the windows
       opus_grid_frames: 3,
       opus_uncut_frames: 3,
+      // with a level searched for they reach four frames in the stretches and one in the
+      // windows, apart from one master that carries such frames on an uncut decode's grid
+      opus_shifted_frames: 6,
+      opus_shifted_uncut_frames: 4,
     }
   }
 }

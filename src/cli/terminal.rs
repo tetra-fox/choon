@@ -394,6 +394,11 @@ fn grid(checked: &Checked, reading: &Reading) -> String {
         "{} at offset {}, {} frames on its energy lattice in the stretches, {} in the windows",
         found.codec, scan.offset, scan.frames, scan.uncut_frames
       ),
+      Evidence::Shifted { shifted } => format!(
+        "{} at offset {}, {} frames on its energy lattice at another level in the stretches, \
+         {} in the windows",
+        found.codec, shifted.offset, shifted.frames, shifted.uncut_frames
+      ),
     },
     (None, Some(scan)) => {
       let opus = scan.opus.as_ref().map_or_else(String::new, |opus| {

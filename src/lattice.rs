@@ -55,6 +55,22 @@ const MIN_TESTED: usize = 12;
 /// the share of a channel's tested bands that sit on the lattice in a frame that does
 const SHARE: f64 = 0.8;
 
+/// the lattice's period, in units of 6 dB
+const PERIOD: f64 = 1.0 / LATTICE;
+/// the dB of gain that move a band's energy by one unit of 6 dB: 20 log10(2)
+const DB: f64 = 6.020_599_913_279_624;
+/// a shift and one this much further put all but a frame's lowest bands on one lattice: a low
+/// band's coarse step rounds one further, and the sum over the lower bands takes that off the
+/// bands above. the search for a shift is this wide
+const ALIAS: f64 = 1.0 - BETA;
+/// the cells a shift is searched in. a step rounds as the decoder's did from anywhere in a cell
+/// this narrow, unless it is refined by more than three bits
+const CELLS: usize = 8;
+/// how near the places two frames name sit to be one place, in units of 6 dB
+const AGREE: f64 = 0.002;
+/// the largest shift taken for a channel, 18 dB of gain: a step moves by half the gain
+const SHIFT_LIMIT: f64 = 18.0 / (2.0 * DB);
+
 /// where the frames of a decode sit when nothing was cut from its start, from the file's first
 /// sample: libopus's encoders delay by 312 samples, and a frame's window reaches 420 samples back
 /// from where its rise starts
@@ -184,69 +200,239 @@ impl Celt {
     }
     bands
   }
-
-  /// how many frames of `channels`, pre-emphasized, sit on the lattice with the frame grid at
-  /// `offset` from their first sample: frames after the first in which every channel with
-  /// enough tested bands has its share of them on the lattice, and one channel at least has
-  /// enough. a channel is transformed only for a frame that the channels before it leave open
-  fn count(&mut self, channels: &[Vec<f32>], offset: usize, frames: usize) -> usize {
-    // each channel's bands in the frame before and in this one, where they were needed
-    let mut bands: Vec<[Option<Bands>; 2]> = vec![[None; 2]; channels.len()];
-    let mut count = 0;
-    for frame in 1..frames {
-      let mut judged = false;
-      let mut good = true;
-      for (channel, bands) in channels.iter().zip(&mut bands) {
-        let [before, this] = bands;
-        let at = |frame: usize| {
-          let start = offset + frame * FRAME;
-          &channel[start..start + 2 * FRAME]
-        };
-        let before = match *before {
-          Some(before) => before,
-          None => self.bands(at(frame - 1)),
-        };
-        let now = self.bands(at(frame));
-        *this = Some(now);
-        let (tested, hits) = on_lattice(&before, &now);
-        if tested >= MIN_TESTED {
-          judged = true;
-          good = hits as f64 >= SHARE * tested as f64;
-          if !good {
-            break;
-          }
-        }
-      }
-      if judged && good {
-        count += 1;
-      }
-      for [before, this] in &mut bands {
-        *before = this.take();
-      }
-    }
-    count
-  }
 }
 
-/// how many bands of a frame, after the frame `before`, could be tested, and how many of their
-/// steps from the prediction sit on the lattice
-fn on_lattice(before: &Bands, bands: &Bands) -> (usize, usize) {
-  let (mut tested, mut hits) = (0, 0);
+/// 1.5 x 2^52: adding it to a number under 2^51 leaves no bits below one, so the sum is rounded
+/// to a whole number, ties to even, and taking it off again leaves that whole number
+const ROUNDS: f64 = 6_755_399_441_055_744.0;
+
+/// `x` rounded to the nearest whole number, ties to even, for an `x` under 2^51. the same
+/// number `f64::round_ties_even` gives, without the call it compiles to on a target that has no
+/// rounding instruction
+fn nearest(x: f64) -> f64 {
+  (x + ROUNDS) - ROUNDS
+}
+
+/// each band's step from its prediction in a frame after the frame `before`, with `shift` taken
+/// off every step: a gain on the samples moves every energy by twice the shift
+fn steps(before: &Bands, bands: &Bands, shift: f64) -> [f64; BANDS] {
+  let level = 2.0 * shift;
+  let mut steps = [0.0; BANDS];
   // the sum over the lower bands of what their coarse steps leave
   let mut lower = 0.0;
   for band in 0..BANDS {
-    let predicted = ALPHA * before.energy[band].max(LOWEST_PREDICTING) + lower;
-    let step = bands.energy[band] - predicted;
-    lower += (1.0 - BETA) * step.round_ties_even();
+    let predicted = ALPHA * (before.energy[band] - level).max(LOWEST_PREDICTING) + lower;
+    let step = bands.energy[band] - level - predicted;
+    lower += (1.0 - BETA) * nearest(step);
+    steps[band] = step;
+  }
+  steps
+}
+
+/// how many bands of a frame, after the frame `before`, could be tested, and how many of their
+/// steps from the prediction sit on the lattice once `shift` is taken off them
+fn on_lattice(before: &Bands, bands: &Bands, shift: f64) -> (usize, usize) {
+  let (mut tested, mut hits) = (0, 0);
+  for (band, step) in steps(before, bands, shift).into_iter().enumerate() {
     if bands.loud[band] && before.loud[band] {
       tested += 1;
       let scaled = step * LATTICE;
-      if (scaled - scaled.round_ties_even()).abs() / LATTICE < NEAR {
+      if (scaled - nearest(scaled)).abs() / LATTICE < NEAR {
         hits += 1;
       }
     }
   }
   (tested, hits)
+}
+
+/// whether a channel with `tested` bands, `hits` of them on the lattice, is judged, and whether
+/// it then sits on the lattice
+fn judged(tested: usize, hits: usize) -> Option<bool> {
+  (tested >= MIN_TESTED).then_some(hits as f64 >= SHARE * tested as f64)
+}
+
+/// the most of `sorted` that sit less than `width` above one of them, around a circle of
+/// `period`: how many, and their mean with the ones past the circle's end counted on from it
+fn gathered(sorted: &[f64], width: f64, period: f64) -> (usize, f64) {
+  let count = sorted.len();
+  let at = |i: usize| {
+    if i < count {
+      sorted[i]
+    } else {
+      sorted[i - count] + period
+    }
+  };
+  let (mut most, mut mean) = (0, 0.0);
+  let mut end = 0;
+  for (start, first) in sorted.iter().enumerate() {
+    while end < start + count && at(end) - first < width {
+      end += 1;
+    }
+    if end - start > most {
+      most = end - start;
+      mean = (start..end).map(at).sum::<f64>() / most as f64;
+    }
+  }
+  (most, mean)
+}
+
+/// the shift a frame after the frame `before` names in one channel: in the cell where the most
+/// of its tested bands gather at one place in the lattice's period, the cell's middle plus that
+/// place. `None` when the channel is not judged or its share of bands gathers in no cell
+fn named(before: &Bands, bands: &Bands) -> Option<f64> {
+  let tested = (0..BANDS).filter(|band| bands.loud[*band] && before.loud[*band]);
+  let count = tested.clone().count();
+  if count < MIN_TESTED {
+    return None;
+  }
+  let mut most: Option<(usize, f64)> = None;
+  for cell in 0..CELLS {
+    let middle = ((cell as f64 + 0.5) / CELLS as f64 - 0.5) * ALIAS;
+    let steps = steps(before, bands, middle);
+    // where each tested band's step sits in the lattice's period, from -0.5 to 0.5
+    let mut places = [0.0; BANDS];
+    for (place, band) in places.iter_mut().zip(tested.clone()) {
+      let scaled = steps[band] * LATTICE;
+      *place = scaled - nearest(scaled);
+    }
+    let places = &mut places[..count];
+    // bands that gather within less than a quarter of the period sit in three eighths of it
+    // in a row, which is cheaper to rule out than the gathering itself
+    let mut eighths = [0; 8];
+    for place in places.iter() {
+      eighths[((place + 0.5) * 8.0) as usize % 8] += 1;
+    }
+    let most_in_three = (0..8)
+      .map(|i| eighths[i] + eighths[(i + 1) % 8] + eighths[(i + 2) % 8])
+      .max()
+      .unwrap_or(0);
+    if f64::from(most_in_three) < SHARE * count as f64 {
+      continue;
+    }
+    places.sort_by(f64::total_cmp);
+    let (members, mean) = gathered(places, 2.0 * NEAR * LATTICE, 1.0);
+    if members as f64 >= SHARE * count as f64 && most.is_none_or(|(most, _)| members > most) {
+      most = Some((members, middle + (mean - nearest(mean)) * PERIOD));
+    }
+  }
+  most.map(|(_, shift)| shift)
+}
+
+/// the place in the lattice's period that the most of `shifts` name, within [`AGREE`] of each
+/// other: frames of audio that was never Opus name places at random, a decode's name one
+fn place(shifts: &[f64]) -> Option<f64> {
+  let mut places: Vec<f64> = shifts.iter().map(|s| s.rem_euclid(PERIOD)).collect();
+  places.sort_by(f64::total_cmp);
+  let (agreeing, mean) = gathered(&places, 2.0 * AGREE, PERIOD);
+  (agreeing > 0).then(|| mean.rem_euclid(PERIOD))
+}
+
+/// of the shifts at `place`, a lattice step apart up to [`SHIFT_LIMIT`], the one `passing`
+/// counts the most frames at, the nearest to none of those that count alike. neighbouring
+/// shifts differ only in the frames whose steps round another way
+fn shift_at(place: f64, mut passing: impl FnMut(f64) -> usize) -> f64 {
+  let first = ((-SHIFT_LIMIT - place) / PERIOD).ceil() as i32;
+  let last = ((SHIFT_LIMIT - place) / PERIOD).floor() as i32;
+  let (mut most, mut best) = (0, 0.0);
+  for step in first..=last {
+    let shift = place + f64::from(step) * PERIOD;
+    let count = passing(shift);
+    if count > most || (count == most && shift.abs() < f64::abs(best)) {
+      (most, best) = (count, shift);
+    }
+  }
+  best
+}
+
+/// what the frames of one frame grid count
+pub(crate) struct Counted {
+  /// the frames on the lattice, by run
+  pub(crate) frames: Vec<usize>,
+  /// the frames on the lattice once each channel's shift is taken off
+  pub(crate) shifted: usize,
+}
+
+/// counts the frames on the lattice in `runs` of consecutive frames of `channels` channels,
+/// each run that many frames long. `bands(run, channel, frame)` gives a frame's bands, and is
+/// asked for a channel's only in the frames that the channels before it leave open.
+///
+/// a frame after the first of its run counts when every channel with enough tested bands has
+/// its share of them on the lattice, and one channel at least has enough. the shifted count
+/// takes a shift off each channel first: the one at the place the most of its frames name
+fn counted(
+  runs: &[usize],
+  channels: usize,
+  mut bands: impl FnMut(usize, usize, usize) -> Bands,
+) -> Counted {
+  let frames = runs
+    .iter()
+    .enumerate()
+    .map(|(run, frames)| {
+      (1..*frames)
+        .filter(|frame| {
+          let mut any = false;
+          for channel in 0..channels {
+            let (before, now) = (bands(run, channel, frame - 1), bands(run, channel, *frame));
+            let (tested, hits) = on_lattice(&before, &now, 0.0);
+            match judged(tested, hits) {
+              Some(true) => any = true,
+              Some(false) => return false,
+              None => {}
+            }
+          }
+          any
+        })
+        .count()
+    })
+    .collect();
+  // the frames still open, and whether a channel so far was judged in each
+  let mut open: Vec<(usize, usize, bool)> = runs
+    .iter()
+    .enumerate()
+    .flat_map(|(run, frames)| (1..*frames).map(move |frame| (run, frame, false)))
+    .collect();
+  for channel in 0..channels {
+    let pairs: Vec<(Bands, Bands)> = open
+      .iter()
+      .map(|(run, frame, _)| {
+        (
+          bands(*run, channel, frame - 1),
+          bands(*run, channel, *frame),
+        )
+      })
+      .collect();
+    let named: Vec<f64> = pairs
+      .iter()
+      .filter_map(|(before, now)| named(before, now))
+      .collect();
+    let shift = place(&named).map_or(0.0, |place| {
+      shift_at(place, |shift| {
+        pairs
+          .iter()
+          .filter(|(before, now)| {
+            let (tested, hits) = on_lattice(before, now, shift);
+            judged(tested, hits) == Some(true)
+          })
+          .count()
+      })
+    });
+    open = open
+      .into_iter()
+      .zip(&pairs)
+      .filter_map(|((run, frame, any), (before, now))| {
+        let (tested, hits) = on_lattice(before, now, shift);
+        match judged(tested, hits) {
+          Some(true) => Some((run, frame, true)),
+          Some(false) => None,
+          None => Some((run, frame, any)),
+        }
+      })
+      .collect();
+  }
+  Counted {
+    frames,
+    shifted: open.iter().filter(|(_, _, any)| *any).count(),
+  }
 }
 
 /// the frames a stretch of `length` samples holds at every offset
@@ -296,33 +482,63 @@ impl Stretch {
       start: (first + skip as u64) / down * resampler.up as u64 + EDGE as u64,
     })
   }
+}
 
-  /// for each offset of the file's frame grid, how many of the stretch's frames sit on the
-  /// lattice. runs of offsets are tasks on rayon's thread pool
-  fn curve(&self, bits: u32) -> Vec<usize> {
-    let frames = frames_in(self.channels[0].len());
-    let own: Vec<usize> = (0..FRAME)
+/// the stretches of a file the scan reads, at 48 kHz
+pub(crate) struct Stretches {
+  /// `None` for a stretch nothing is left of at 48 kHz
+  stretches: Vec<Option<Stretch>>,
+  bits: u32,
+}
+
+impl Stretches {
+  /// the stretches of `bits`-bit samples at `rate`, each its two channels and the frame of the
+  /// file its first sample is
+  pub(crate) fn of(stretches: &[([&[f64]; 2], u64)], rate: Rate, bits: u32) -> Self {
+    Self {
+      stretches: stretches
+        .iter()
+        .map(|(channels, first)| Stretch::of(channels, *first, rate))
+        .collect(),
+      bits,
+    }
+  }
+
+  /// what the stretches' frames count at each of `offsets` of the file's frame grid, a run of
+  /// frames to a stretch. runs of offsets are tasks on rayon's thread pool
+  pub(crate) fn counted(&self, offsets: std::ops::Range<usize>) -> Vec<Counted> {
+    let runs: Vec<usize> = self
+      .stretches
+      .iter()
+      .map(|s| s.as_ref().map_or(0, |s| frames_in(s.channels[0].len())))
+      .collect();
+    let most = runs.iter().copied().max().unwrap_or(0);
+    offsets
       .into_par_iter()
       .with_min_len(FRAME / 32)
       .map_init(
-        || Celt::new(bits),
-        |celt, offset| celt.count(&self.channels, offset, frames),
+        || {
+          (
+            Celt::new(self.bits),
+            vec![None; self.stretches.len() * 2 * most],
+          )
+        },
+        |(celt, kept), offset| {
+          kept.fill(None);
+          counted(&runs, 2, |run, channel, frame| {
+            let stretch = self.stretches[run]
+              .as_ref()
+              .expect("a stretch with frames has samples");
+            // below the frame, so it fits
+            let shift = (stretch.start % FRAME as u64) as usize;
+            let start = (offset + FRAME - shift) % FRAME + frame * FRAME;
+            *kept[(run * 2 + channel) * most + frame].get_or_insert_with(|| {
+              celt.bands(&stretch.channels[channel][start..start + 2 * FRAME])
+            })
+          })
+        },
       )
-      .collect();
-    // below the frame, so it fits
-    let shift = (self.start % FRAME as u64) as usize;
-    (0..FRAME)
-      .map(|o| own[(o + FRAME - shift) % FRAME])
       .collect()
-  }
-}
-
-/// for each offset of the file's frame grid at 48 kHz, how many frames of the stretch of
-/// `channels` at `rate`, whose first sample is frame `first` of the file, sit on the lattice
-pub(crate) fn curve(channels: &[&[f64]], first: u64, rate: Rate, bits: u32) -> Vec<usize> {
-  match Stretch::of(channels, first, rate) {
-    Some(stretch) => stretch.curve(bits),
-    None => vec![0; FRAME],
   }
 }
 
@@ -331,8 +547,8 @@ pub(crate) fn curve(channels: &[&[f64]], first: u64, rate: Rate, bits: u32) -> V
 pub(crate) struct Uncut {
   celt: Celt,
   rate: Rate,
-  windows: usize,
-  frames: usize,
+  /// each window's frames on that grid, by channel
+  windows: Vec<Vec<Vec<Bands>>>,
 }
 
 impl Uncut {
@@ -340,24 +556,23 @@ impl Uncut {
     Self {
       celt: Celt::new(bits),
       rate,
-      windows: 0,
-      frames: 0,
+      windows: Vec::new(),
     }
   }
 
-  /// counts the frames of `window`, one vector per analyzed channel, whose first sample is
+  /// takes the frames of `window`, one vector per analyzed channel, whose first sample is
   /// frame `first` of the file. windows past the most it reads are left out
   pub(crate) fn take(&mut self, first: u64, window: &[Vec<f32>]) {
-    if self.windows >= UNCUT_WINDOWS {
+    if self.windows.len() >= UNCUT_WINDOWS {
       return;
     }
-    self.windows += 1;
     let doubled: Vec<Vec<f64>> = window
       .iter()
       .map(|c| c.iter().map(|s| f64::from(*s)).collect())
       .collect();
     let channels: Vec<&[f64]> = doubled.iter().map(Vec::as_slice).collect();
     let Some(stretch) = Stretch::of(&channels, first, self.rate) else {
+      self.windows.push(Vec::new());
       return;
     };
     let length = stretch.channels[0].len();
@@ -366,12 +581,32 @@ impl Uncut {
     let frame = FRAME as u64;
     let offset = ((grid + frame - stretch.start % frame) % frame) as usize;
     let frames = (length.saturating_sub(offset) / FRAME).saturating_sub(1);
-    self.frames += self.celt.count(&stretch.channels, offset, frames);
+    let bands = stretch
+      .channels
+      .iter()
+      .map(|channel| {
+        (0..frames)
+          .map(|frame| {
+            let start = offset + frame * FRAME;
+            self.celt.bands(&channel[start..start + 2 * FRAME])
+          })
+          .collect()
+      })
+      .collect();
+    self.windows.push(bands);
   }
 
-  /// the frames counted on the lattice
-  pub(crate) fn frames(&self) -> usize {
-    self.frames
+  /// what the frames taken count, a run of frames to a window
+  pub(crate) fn counted(&self) -> Counted {
+    let runs: Vec<usize> = self
+      .windows
+      .iter()
+      .map(|window| window.first().map_or(0, Vec::len))
+      .collect();
+    let channels = self.windows.iter().map(Vec::len).max().unwrap_or(0);
+    counted(&runs, channels, |run, channel, frame| {
+      self.windows[run][channel][frame]
+    })
   }
 }
 
@@ -488,18 +723,130 @@ mod tests {
       bands.energy[band] = ALPHA * quiet.energy[band] + lower + coarse + fine;
       lower += (1.0 - BETA) * coarse;
     }
-    assert_eq!(on_lattice(&quiet, &bands), (BANDS, BANDS));
+    assert_eq!(on_lattice(&quiet, &bands, 0.0), (BANDS, BANDS));
     // a frame 1.3 dB louder than the codec made it has every step off the lattice
     let mut louder = bands;
     for energy in &mut louder.energy {
       *energy += 0.21;
     }
-    assert_eq!(on_lattice(&quiet, &louder), (BANDS, 0));
+    assert_eq!(on_lattice(&quiet, &louder, 0.0), (BANDS, 0));
     // bands under the noise in either frame are not tested
     let mut faint = bands;
     faint.loud[3] = false;
     faint.loud[7] = false;
-    assert_eq!(on_lattice(&quiet, &faint), (BANDS - 2, BANDS - 2));
+    assert_eq!(on_lattice(&quiet, &faint, 0.0), (BANDS - 2, BANDS - 2));
+  }
+
+  /// a frame after `before`: each band a coarse step of its own, refined by a quarter or an
+  /// eighth, built as the decoder builds it
+  fn coded_after(before: &Bands, turn: usize) -> Bands {
+    let mut bands = *before;
+    let mut lower = 0.0;
+    for band in 0..BANDS {
+      let coarse = ((band + turn) % 5) as f64 - 2.0;
+      let fine = if (band + turn).is_multiple_of(2) {
+        0.25
+      } else {
+        -0.125
+      };
+      bands.energy[band] = ALPHA * before.energy[band] + lower + coarse + fine;
+      lower += (1.0 - BETA) * coarse;
+    }
+    bands
+  }
+
+  /// a run of coded frames, every band's energy then raised by `level` units of 6 dB
+  fn run_at(level: f64, frames: usize) -> Vec<Bands> {
+    let mut run = vec![Bands {
+      energy: [-2.0; BANDS],
+      loud: [true; BANDS],
+    }];
+    for turn in 1..frames {
+      let next = coded_after(&run[turn - 1], turn);
+      run.push(next);
+    }
+    for bands in &mut run {
+      for energy in &mut bands.energy {
+        *energy += level;
+      }
+    }
+    run
+  }
+
+  #[test]
+  fn frames_at_another_level_name_one_place_and_count_once_it_is_taken_off() {
+    // 2.7 dB louder moves every energy by 0.4485 and every step by half of that
+    let level = 2.7 / DB;
+    let run = run_at(level, 9);
+    let place_of = |shift: f64| shift.rem_euclid(PERIOD);
+    for pair in run.windows(2) {
+      assert_eq!(on_lattice(&pair[0], &pair[1], 0.0), (BANDS, 0));
+      assert_eq!(on_lattice(&pair[0], &pair[1], level / 2.0), (BANDS, BANDS));
+      let named = named(&pair[0], &pair[1]).expect("every band gathers");
+      assert!(
+        (place_of(named) - place_of(level / 2.0)).abs() < 1e-9,
+        "{named}"
+      );
+    }
+    let moved = counted(&[run.len()], 1, |_, _, frame| run[frame]);
+    assert_eq!(moved.frames, [0]);
+    assert_eq!(moved.shifted, run.len() - 1);
+    // frames at the decoder's own level count either way
+    let run = run_at(0.0, 9);
+    let unmoved = counted(&[run.len()], 1, |_, _, frame| run[frame]);
+    assert_eq!(unmoved.frames, [run.len() - 1]);
+    assert_eq!(unmoved.shifted, run.len() - 1);
+  }
+
+  #[test]
+  fn each_channel_has_a_level_of_its_own() {
+    let (left, right) = (run_at(-1.0 / DB, 6), run_at(-2.5 / DB, 6));
+    let both = counted(&[6], 2, |_, channel, frame| [&left, &right][channel][frame]);
+    assert_eq!((both.frames, both.shifted), (vec![0], 5));
+    // a channel no shift fits closes the frames the other left open
+    let mut noise = run_at(0.0, 6);
+    for (frame, bands) in noise.iter_mut().enumerate() {
+      for (band, energy) in bands.energy.iter_mut().enumerate() {
+        *energy += ((frame * 7 + band * 13) % 17) as f64 * 0.0531;
+      }
+    }
+    let one = counted(&[6], 2, |_, channel, frame| [&left, &noise][channel][frame]);
+    assert_eq!(one.shifted, 0);
+  }
+
+  #[test]
+  fn a_shift_one_alias_further_loses_only_the_lowest_band() {
+    let run = run_at(0.0, 2);
+    let (tested, hits) = on_lattice(&run[0], &run[1], ALIAS);
+    assert_eq!((tested, hits), (BANDS, BANDS - 1));
+  }
+
+  #[test]
+  fn values_gather_around_the_end_of_the_circle() {
+    // 0.97, 0.99 and 0.01 sit within 0.05 of each other around a circle of 1
+    let (most, mean) = gathered(&[0.01, 0.4, 0.97, 0.99], 0.05, 1.0);
+    assert_eq!(most, 3);
+    assert!((mean - 0.99).abs() < 1e-12, "{mean}");
+    assert_eq!(gathered(&[], 0.05, 1.0).0, 0);
+  }
+
+  #[test]
+  fn rounding_by_the_sum_is_rounding_to_even() {
+    for x in [
+      -2.5,
+      -1.5,
+      -0.5,
+      -0.3,
+      0.0,
+      0.3,
+      0.5,
+      1.5,
+      2.5,
+      1e6 + 0.5,
+      -77.49,
+    ] {
+      assert_eq!(nearest(x), f64::round_ties_even(x), "{x}");
+    }
   }
 
   #[test]

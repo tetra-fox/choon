@@ -715,6 +715,7 @@ fn words(reading: &Reading) -> (&'static str, String) {
     let how = match &grid.evidence {
       Evidence::Count(scan) => format!("z {:.0}", scan.z),
       Evidence::Lattice(scan) => format!("{} frames", scan.most().1),
+      Evidence::Shifted { shifted } => format!("{} frames at another level", shifted.most().1),
     };
     let rest = format!(
       ": {} grid at offset {} ({how}), {cut}{at}",

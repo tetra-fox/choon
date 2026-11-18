@@ -49,7 +49,9 @@
 //! - Clipping hides a grid frame by frame.
 //! - Vorbis's grid shows through the AAC scan, so a Vorbis decode reads as AAC.
 //! - Opus frames of 2.5, 5 and 10 ms, and its SILK and hybrid modes, are not found.
-//! - A gain change after an Opus decode moves the energies off the lattice.
+//! - A gain after an Opus decode moves the lattice, and the scan searches for one move a
+//!   channel ([`OpusShifted`]). A level that changes over time, as under a fade or a limiter,
+//!   hides the lattice where it changes.
 
 use std::fmt;
 use std::sync::Arc;
@@ -153,12 +155,55 @@ pub struct OpusScan {
   /// The grid is the one a decode has when nothing was cut from its start: libopus's encoders
   /// all delay their input by the same 312 samples. Up to 60 windows are read.
   pub uncut_frames: usize,
+  /// Frames counted with a change of level after the decode searched for.
+  ///
+  /// `None` in measures kept by a version of the analyzer that did not search for one.
+  #[cfg_attr(feature = "serde", serde(default))]
+  pub shifted: Option<OpusShifted>,
+}
+
+/// How many frames carry Opus's band energies at another level than the decoder's.
+///
+/// A gain on every sample of a channel moves each band's step off the lattice by the same
+/// amount, half the gain, so the lattice is still there, moved. The scan takes, for each
+/// channel, the move that the most frames name, and counts the frames on the lattice once it
+/// is taken off.
+///
+/// The counts cannot tell what the gain was. Moves 0.8 of 6 dB apart put all but a frame's
+/// lowest bands on one lattice, and so do moves a lattice step apart in most frames.
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct OpusShifted {
+  /// Offset of the grid that counts the most such frames in the segments, in samples.
+  ///
+  /// It is where frames start at 48 kHz, modulo the 960 samples of a 20 ms frame, counted
+  /// from the file's first sample. Where no offset counts a frame it is the uncut decode's.
+  pub offset: usize,
+  /// Number of frames counted at `offset`, over the four segments.
+  pub frames: usize,
+  /// Number of frames counted in the windows measured, on the grid of an uncut decode.
+  pub uncut_frames: usize,
 }
 
 impl OpusScan {
   /// Returns the offset and the number of frames of the larger of the two counts.
   ///
   /// The segments are counted at [`OpusScan::offset`], the windows at [`OPUS_UNCUT_OFFSET`].
+  pub fn most(&self) -> (usize, usize) {
+    if self.uncut_frames > self.frames {
+      (OPUS_UNCUT_OFFSET, self.uncut_frames)
+    } else {
+      (self.offset, self.frames)
+    }
+  }
+}
+
+impl OpusShifted {
+  /// Returns the offset and the number of frames of the larger of the two counts.
+  ///
+  /// The segments are counted at [`OpusShifted::offset`], the windows at
+  /// [`OPUS_UNCUT_OFFSET`].
   pub fn most(&self) -> (usize, usize) {
     if self.uncut_frames > self.frames {
       (OPUS_UNCUT_OFFSET, self.uncut_frames)
@@ -196,6 +241,11 @@ pub enum Evidence {
   Count(CodecScan),
   /// Frames whose band energies sit on the quantizer's lattice, for Opus.
   Lattice(OpusScan),
+  /// Frames whose band energies sit on that lattice once a change of level is taken off.
+  Shifted {
+    /// Counts of the frames.
+    shifted: OpusShifted,
+  },
 }
 
 impl Evidence {
@@ -206,6 +256,7 @@ impl Evidence {
     match self {
       Self::Count(scan) => scan.offset,
       Self::Lattice(scan) => scan.most().0,
+      Self::Shifted { shifted } => shifted.most().0,
     }
   }
 }
@@ -224,8 +275,9 @@ pub struct Found {
 /// the grid `scan` shows under `thresholds`: MP3 or AAC over its z threshold with as many
 /// segments agreeing as its own threshold asks, the one furthest over its z threshold when
 /// several are. AAC is read under each of its windows. without either, Opus with enough frames
-/// on its lattice in the segments or in the windows: the codec decoded last leaves the grid
-/// that counts, and Opus's energies can show through an MP3 made from its decode
+/// on its lattice in the segments or in the windows, at the decoder's level or at another: the
+/// codec decoded last leaves the grid that counts, and Opus's energies can show through an MP3
+/// made from its decode
 pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found> {
   let aac = |scan| {
     (
@@ -256,12 +308,26 @@ pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found
   });
   counted.or_else(|| {
     let opus = scan.opus.as_ref()?;
-    (opus.frames >= thresholds.opus_grid_frames
-      || opus.uncut_frames >= thresholds.opus_uncut_frames)
-      .then(|| Found {
-        codec: Codec::Opus,
-        evidence: Evidence::Lattice(opus.clone()),
-      })
+    let evidence = if opus.frames >= thresholds.opus_grid_frames
+      || opus.uncut_frames >= thresholds.opus_uncut_frames
+    {
+      Evidence::Lattice(opus.clone())
+    } else {
+      // the lattice at the decoder's own level names the decode more closely, so it comes first
+      let shifted = opus.shifted.as_ref()?;
+      if shifted.frames < thresholds.opus_shifted_frames
+        && shifted.uncut_frames < thresholds.opus_shifted_uncut_frames
+      {
+        return None;
+      }
+      Evidence::Shifted {
+        shifted: shifted.clone(),
+      }
+    };
+    Some(Found {
+      codec: Codec::Opus,
+      evidence,
+    })
   })
 }
 
@@ -374,14 +440,13 @@ impl Segments {
 }
 
 /// what the scan for Opus's frames needs beside the segments
-#[derive(Clone, Copy)]
 pub(crate) struct Opus {
   /// the file's sample rate
   pub(crate) rate: lattice::Rate,
   /// the bits of its samples, whose rounding noise a band must stand over
   pub(crate) bits: u32,
-  /// the frames counted in the windows measured, on the grid of an uncut decode
-  pub(crate) uncut_frames: usize,
+  /// what the frames in the windows measured count, on the grid of an uncut decode
+  pub(crate) uncut: lattice::Counted,
 }
 
 /// the jobs of one scan: MP3 and AAC under each of its windows in each segment, and Opus where
@@ -403,36 +468,43 @@ pub(crate) fn scan(
   ended: impl Fn() + Sync,
 ) -> Option<Scan> {
   assert!(segments.complete(), "every segment is full before a scan");
-  let kinds = [
-    Some(Job::Aac(Window::Kbd)),
-    Some(Job::Aac(Window::Sine)),
-    Some(Job::Mp3),
-    opus.map(Job::Opus),
-  ];
-  let jobs: Vec<(Job, &Segment)> = segments
+  let stretches = opus.as_ref().map(|opus| {
+    let stretches: Vec<_> = segments
+      .0
+      .iter()
+      .map(|segment| ([&segment.left[..], &segment.right[..]], segment.start))
+      .collect();
+    lattice::Stretches::of(&stretches, opus.rate, opus.bits)
+  });
+  // Opus's offsets are split into as many jobs as there are segments, each over every segment
+  let part = lattice::FRAME / SEGMENTS;
+  let jobs: Vec<Job> = segments
     .0
     .iter()
-    .flat_map(|segment| kinds.into_iter().flatten().map(move |job| (job, segment)))
+    .flat_map(|segment| {
+      [
+        Job::Aac(Window::Kbd, segment),
+        Job::Aac(Window::Sine, segment),
+        Job::Mp3(segment),
+      ]
+    })
+    .chain(
+      stretches
+        .iter()
+        .flat_map(|stretches| (0..SEGMENTS).map(move |i| Job::Opus(stretches, i * part))),
+    )
     .collect();
   let curves: Vec<Curve> = jobs
     .into_par_iter()
-    .map(|(job, segment)| {
+    .map(|job| {
       go_on().then(|| {
         let curve = match job {
-          Job::Aac(window) => {
+          Job::Aac(window, segment) => {
             Curve::Aac(window, in_file(&Aac::curve(segment, window), segment.start))
           }
-          Job::Mp3 => Curve::Mp3(in_file(&Mp3::new().curve(segment), segment.start)),
+          Job::Mp3(segment) => Curve::Mp3(in_file(&Mp3::new().curve(segment), segment.start)),
           // the counts come in the file's offsets
-          Job::Opus(opus) => {
-            let channels = [&segment.left[..], &segment.right[..]];
-            Curve::Opus(lattice::curve(
-              &channels,
-              segment.start,
-              opus.rate,
-              opus.bits,
-            ))
-          }
+          Job::Opus(stretches, from) => Curve::Opus(stretches.counted(from..from + part)),
         };
         ended();
         curve
@@ -445,47 +517,60 @@ pub(crate) fn scan(
       Curve::Aac(Window::Kbd, curve) => aac.push(curve),
       Curve::Aac(Window::Sine, curve) => sine.push(curve),
       Curve::Mp3(curve) => mp3.push(curve),
-      Curve::Opus(curve) => frames.push(curve),
+      // the jobs come back in the order of their offsets
+      Curve::Opus(counted) => frames.extend(counted),
     }
   }
   Some(Scan {
     aac: codec_scan(&aac),
     aac_sine: Some(codec_scan(&sine)),
     mp3: codec_scan(&mp3),
-    opus: opus.map(|opus| opus_scan(&frames, opus.uncut_frames)),
+    opus: opus.map(|opus| opus_scan(&frames, &opus.uncut)),
   })
 }
 
-/// what one job of a scan looks for in its segment
+/// what one job of a scan looks for: MP3's or AAC's grid in one segment, or Opus's frames in
+/// every segment at the offsets from the one given
 #[derive(Clone, Copy)]
-enum Job {
-  Aac(Window),
-  Mp3,
-  Opus(Opus),
+enum Job<'a> {
+  Aac(Window, &'a Segment),
+  Mp3(&'a Segment),
+  Opus(&'a lattice::Stretches, usize),
 }
 
-/// what a job found at each offset of the file's grid: MP3's and AAC's counts of transform
-/// values on a log scale, Opus's counts of frames
+/// what a job found: MP3's and AAC's counts of transform values on a log scale at each offset
+/// of the file's grid, Opus's counts of frames at each of the job's offsets
 enum Curve {
   Aac(Window, Vec<f64>),
   Mp3(Vec<f64>),
-  Opus(Vec<usize>),
+  Opus(Vec<lattice::Counted>),
 }
 
-/// the scan for Opus from its segments' counts in the file's offsets: the first offset with the
-/// most frames over the segments, the uncut decode's when none has any
-fn opus_scan(curves: &[Vec<usize>], uncut_frames: usize) -> OpusScan {
-  let (offset, frames) = (0..lattice::FRAME)
-    .map(|o| curves.iter().map(|c| c[o]).sum::<usize>())
+/// the first of `counts` with the most, and its index; the uncut decode's offset when none
+/// counts any
+fn most(counts: impl Iterator<Item = usize>) -> (usize, usize) {
+  counts
     .enumerate()
     .fold((OPUS_UNCUT_OFFSET, 0), |(at, most), (o, count)| {
       if count > most { (o, count) } else { (at, most) }
-    });
+    })
+}
+
+/// the scan for Opus from what the segments' frames count at each offset of the file's grid,
+/// and what the windows' count on the grid of an uncut decode
+fn opus_scan(counted: &[lattice::Counted], uncut: &lattice::Counted) -> OpusScan {
+  let (offset, frames) = most(counted.iter().map(|c| c.frames.iter().sum()));
+  let (shifted_offset, shifted_frames) = most(counted.iter().map(|c| c.shifted));
   OpusScan {
     offset,
     frames,
-    segment_frames: std::array::from_fn(|i| curves[i][offset]),
-    uncut_frames,
+    segment_frames: std::array::from_fn(|i| counted[offset].frames[i]),
+    uncut_frames: uncut.frames.iter().sum(),
+    shifted: Some(OpusShifted {
+      offset: shifted_offset,
+      frames: shifted_frames,
+      uncut_frames: uncut.shifted,
+    }),
   }
 }
 
@@ -1002,6 +1087,7 @@ mod tests {
       frames: 1,
       segment_frames: [0, 1, 0, 0],
       uncut_frames: 40,
+      shifted: None,
     };
     assert_eq!(scan.most(), (OPUS_UNCUT_OFFSET, 40));
     assert_eq!(Evidence::Lattice(scan.clone()).offset(), OPUS_UNCUT_OFFSET);
