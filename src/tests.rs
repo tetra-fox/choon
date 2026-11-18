@@ -953,6 +953,30 @@ fn he_aac_is_read_at_its_output_rate_however_its_band_replication_is_signalled()
   }
 }
 
+#[test]
+fn a_wave_header_that_states_thousands_of_channels_is_refused_without_a_panic() {
+  let mut wave = Vec::new();
+  wave.extend_from_slice(b"RIFF");
+  wave.extend_from_slice(&1036u32.to_le_bytes());
+  wave.extend_from_slice(b"WAVEfmt ");
+  wave.extend_from_slice(&16u32.to_le_bytes());
+  // PCM, 65535 channels of 16 bits at 44.1 kHz: the channels times the bytes a sample do not
+  // fit the 16 bits the reader multiplies them in
+  wave.extend_from_slice(&1u16.to_le_bytes());
+  wave.extend_from_slice(&u16::MAX.to_le_bytes());
+  wave.extend_from_slice(&44_100u32.to_le_bytes());
+  wave.extend_from_slice(&88_200u32.to_le_bytes());
+  wave.extend_from_slice(&2u16.to_le_bytes());
+  wave.extend_from_slice(&16u16.to_le_bytes());
+  wave.extend_from_slice(b"data");
+  wave.extend_from_slice(&1000u32.to_le_bytes());
+  wave.extend_from_slice(&[0; 1000]);
+  assert!(matches!(
+    measure_bytes(wave, &settings()),
+    Err(Error::NotAudio(_) | Error::Unsupported(_))
+  ));
+}
+
 proptest::proptest! {
   #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
 

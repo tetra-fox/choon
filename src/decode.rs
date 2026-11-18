@@ -3,6 +3,7 @@
 
 use std::fmt;
 use std::ops::Range;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 use std::sync::LazyLock;
 
@@ -24,7 +25,7 @@ use symphonia::core::io::{MediaSource, MediaSourceStream};
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::units::{TimeBase, Timestamp};
 use symphonia_common::apple::audio::alac::MagicCookie;
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 use crate::aac;
 use crate::ape;
@@ -239,13 +240,23 @@ impl Decoder {
     let unsupported = |why: &str| engine::Error::Unsupported(why.to_string());
     let file_bytes = source.byte_len();
     let stream = MediaSourceStream::new(source, Default::default());
-    let format = probe()
-      .probe(
+    // symphonia-format-riff 0.6.1 multiplies a WAVE file's channel count by its bytes a sample
+    // in 16 bits (wave/chunks.rs, expected_block_align), which panics in a build with overflow
+    // checks on a header that states thousands of channels. panic = "abort" still aborts
+    // TODO: remove once a symphonia release checks that product
+    let probing = AssertUnwindSafe(|| {
+      probe().probe(
         hint,
         stream,
         FormatOptions::default(),
         MetadataOptions::default(),
       )
+    });
+    let format = catch_unwind(probing)
+      .map_err(|_| {
+        warn!("a panic in a container's reader was caught, the file not read");
+        not_audio("the container was not recognized: its reader failed on the header".to_string())
+      })?
       .map_err(|e| {
         let refused = match &e {
           Error::IoError(io) => io.get_ref().and_then(|inner| inner.downcast_ref()),
