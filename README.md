@@ -18,8 +18,8 @@ command-line tool and a Rust library.
 - Spots lossless files decoded from Opus by the band energies its encoder quantizes, at 48 kHz
   and after a conversion to 44.1 kHz, with or without a gain after the decode, in its CELT and
   hybrid modes and in frames of 2.5 to 60 ms, tuned on libopus at 16 to 256 kbps
-- Names the encoder family a grid's offset fits: LAME, Helix, Apple, FAAC, Nero, ffmpeg or
-  fdk-aac, libopus
+- Names the encoder family a grid's offset fits: LAME, Helix, Fraunhofer, Apple, FAAC, Nero,
+  ffmpeg or fdk-aac, libopus
 - Reads Opus files, with the coding mode and audio bandwidth their packets state
 - Reads WavPack, Monkey's Audio and DSD files, and HE-AAC with the band its decoder rebuilds
 - Reads the encoder's cutoff in the spectrum, which alone raises a doubt
@@ -100,7 +100,8 @@ for its long blocks, so a grid's offset and window fit an encoder family:
 | ----- | ------ | -------------- | --------------------------------- |
 | MP3   | 48     |                | LAME                              |
 | MP3   | 96     |                | Helix                             |
-| MP3   | 1      |                | no delay stated: Shine, BladeEnc, GOGO, Fraunhofer |
+| MP3   | 1      |                | no delay stated: Shine, BladeEnc, GOGO, Apple |
+| MP3   | 1      |                | Fraunhofer, where its steps show it |
 | AAC   | 960    | sine           | Apple                             |
 | AAC   | 0      | sine           | FAAC                              |
 | AAC   | 448    | Kaiser-Bessel  | Nero                              |
@@ -113,6 +114,11 @@ for its long blocks, so a grid's offset and window fit an encoder family:
 - Opus frames under 20 ms sit at 468 or 180 (10 ms), 108 or 60 (5 ms) and 48 or 0 (2.5 ms),
   by libopus's two delays
 - Versions of one encoder share its delay and read alike
+- The MP3 encoders that state no delay share offset 1. Fraunhofer's is told from the others by
+  how it moves the quantizer's step from one scalefactor band to the next: a weighted sum of
+  twelve shares of the neighbouring bands' steps over a threshold. The weights were fitted on
+  the codec Windows ships. They name 361 of 445 of its decodes, none of 468 decodes of the
+  other four, and 3 of 2,521 LAME and Helix decodes, which sit at their own offsets
 - About one Vorbis decode in thirteen reads as AAC at Nero's offset
 
 | Verdict          | Description                                                                 |
@@ -328,7 +334,7 @@ Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
 - An HE-AAC decode's core was coded at half the sample rate under the decoder's filterbank
 - A Vorbis decode is found by the AAC scan, whose windows are not Vorbis's
 - Fraunhofer's MP3 encoder, as the codec Windows ships, was checked on 44 other recordings at
-  96 to 320 kbps: every decode is found, at offset 1
+  96 to 320 kbps: every decode is found, at offset 1. Other versions of it were not tested
 
 ## Limitations
 
