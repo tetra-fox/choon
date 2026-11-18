@@ -259,6 +259,7 @@ Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
 | ------ | ------------------------------------------------- | -------------------- |
 | MP3    | LAME 3.90.3, 3.93.1, 3.97, 3.98.4, 3.99.5, 3.100  | 38 to 40             |
 | MP3    | Helix, Shine, BladeEnc, GOGO                      | 39 to 40             |
+| MP3    | Apple (Music) at 160, 320 and VBR                 | 39 to 40             |
 | AAC-LC | ffmpeg, fdk-aac                                   | 40                   |
 | AAC-LC | Nero, Apple (CBR, constrained VBR, true VBR)      | 39 to 40             |
 | AAC-LC | FAAC at 128 kbps and at quality 100               | 30 and 36            |
@@ -272,7 +273,7 @@ Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
 - FAAC at 256 kbps codes nearly every frame as short blocks, which the scan does not analyse
 - An HE-AAC decode's core was coded at half the sample rate under the decoder's filterbank
 - A Vorbis decode is found by the AAC scan, whose windows are not Vorbis's
-- The MP3 encoders of Apple and Fraunhofer were not tested
+- Fraunhofer's MP3 encoder was not tested
 
 ## Limitations
 
