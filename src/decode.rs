@@ -1181,6 +1181,30 @@ mod tests {
   }
 
   #[test]
+  fn a_dsd_file_cut_before_its_stated_length_says_so() {
+    let tones = fixtures::one_bit_tones(&[1000.0, 3000.0], 2);
+    // a DSF file cut after a whole block of each channel, and a DSDIFF file cut anywhere
+    let (dsf, dff) = (tones.dsf(), tones.dff());
+    let cuts = [
+      ("dsf", &dsf[..92 + 40 * 2 * 4096]),
+      ("dff", &dff[..dff.len() / 2]),
+    ];
+    for (name, bytes) in cuts {
+      let source = Box::new(std::io::Cursor::new(bytes.to_vec()));
+      let mut decoder = Decoder::from_source(source, &Hint::new()).unwrap();
+      let mut window = vec![Vec::new(); 2];
+      while decoder.fill(&mut window, 176_400) == Filled::Full {}
+      let stopped = decoder
+        .stopped
+        .unwrap_or_else(|| panic!("{name}: no reason"));
+      assert!(
+        stopped.contains("stop before the length"),
+        "{name}: {stopped}"
+      );
+    }
+  }
+
+  #[test]
   fn dst_compressed_dsd_is_refused_by_name() {
     // the sound data chunk of a DST file is named for it
     let mut bytes = fixtures::one_bit_tones(&[1000.0], 1).dff();

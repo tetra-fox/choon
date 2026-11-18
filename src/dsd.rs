@@ -84,8 +84,10 @@ struct Header {
   /// one-bit samples per second
   rate: u32,
   channels: u32,
-  /// one-bit samples per channel
+  /// one-bit samples per channel, no more than the file's bytes hold
   samples: u64,
+  /// whether the file states more samples than its bytes hold
+  short: bool,
   /// where the sample bytes start
   data_at: u64,
 }
@@ -183,16 +185,20 @@ fn dsf(file: &mut impl Read, length: u64) -> std::result::Result<Header, Unread>
     ));
   }
   let data_at = 92;
-  // the samples the file's bytes can hold bound what the header states
-  let held = length.saturating_sub(data_at) / u64::from(channels) * 8;
-  let stated = le64(&head[80..]).saturating_sub(12) / u64::from(channels) * 8;
+  // the samples the file's bytes can hold bound what the header states. the data chunk's size
+  // is any 64 bits, so it is bounded by the file's bytes before it is counted in samples
+  let held = length.saturating_sub(data_at);
+  let chunk = le64(&head[80..]).saturating_sub(12);
+  let in_bytes = |bytes: u64| bytes / u64::from(channels) * 8;
+  let stated = samples.min(in_bytes(chunk.min(held)));
   Ok(Header {
     layout: Layout::Dsf {
       lsb_first: bits == 1,
     },
     rate,
     channels,
-    samples: samples.min(held).min(stated),
+    samples: stated,
+    short: held < chunk && in_bytes(held) < samples,
     data_at,
   })
 }
@@ -271,6 +277,7 @@ fn dff(file: &mut (impl Read + Seek), length: u64) -> std::result::Result<Header
           rate,
           channels,
           samples: held / u64::from(channels) * 8,
+          short: held < size,
           data_at: body,
         });
       }
@@ -429,6 +436,9 @@ impl FormatReader for DsdReader<'_> {
       .checked_sub(before)
       .filter(|left| *left > 0)
     else {
+      if self.header.short {
+        return decode_error("dsd: the samples stop before the length the file states");
+      }
       return Ok(None);
     };
     // at most a block, so it fits

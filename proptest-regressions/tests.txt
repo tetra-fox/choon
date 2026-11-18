@@ -6,3 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc cdb647c2683f604866039abb0ef9b3771756ba5d9e7f3fb81ffc28e096ef93af # shrinks to damage = [(0.001953583228608173, 1)], kept = 0.2, file = 1
 cc f47a0e08c8966ecbdf050391a8ade208a85310126e8065b6e36a117d8657d99e # shrinks to damage = [], kept = 0.4985310675005712, file = 2
+cc d8b98df491b40ae4bc610e90f783ce2af3a4611642e13ef253b6e1723c7af063 # shrinks to damage = [(0.00012896116954192344, 64)], kept = 0.03772652994335871, dsf = true
