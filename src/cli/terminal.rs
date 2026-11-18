@@ -330,10 +330,10 @@ pub fn readout(path: &Path, checked: &Checked, profiled: bool, colour: bool, wid
     if let Some(coding) = OpusUse::describe(&checked.opus) {
       add("Opus packets", coding);
     }
-    if let Some(rate) = checked.dsd_rate {
+    if let Some((rate, multiple)) = checked.dsd_rate.zip(checked.dsd_multiple) {
       add(
         "DSD",
-        format!("DSD{}, one-bit samples at {rate} Hz", rate / 44_100),
+        format!("DSD{multiple}, one-bit samples at {rate} Hz"),
       );
     }
     if let Some(he_aac) = checked.he_aac {

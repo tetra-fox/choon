@@ -539,6 +539,10 @@ fn he_aac_wavpack_ape_and_dsd_files_are_read_and_name_what_they_are() {
   let tones = fixtures::one_bit_tones(&[1000.0, 3000.0], 2);
   let dsf = write("tones.dsf", &tones.dsf());
   let dff = write("tones.dff", &tones.dff());
+  // the same samples stated at 64 times 48 kHz; a DSF header's rate is its bytes 56 to 59
+  let mut at_48k = tones.dsf();
+  at_48k[56..60].copy_from_slice(&(64 * 48_000u32).to_le_bytes());
+  let at_48k = write("tones-48k.dsf", &at_48k);
 
   // a walk takes each by its extension, and each line ends with what a file is beside its codec
   let output = choon(&[&path(dir.path())]);
@@ -548,9 +552,9 @@ fn he_aac_wavpack_ape_and_dsd_files_are_read_and_name_what_they_are() {
     let found = lines.iter().find(|line| line.starts_with(file));
     found.unwrap_or_else(|| panic!("{file}: {lines:?}"))
   };
-  assert_eq!(lines.len(), 5, "{lines:?}");
+  assert_eq!(lines.len(), 6, "{lines:?}");
   assert!(line(&he_aac).ends_with("; HE-AAC v2"), "{lines:?}");
-  for file in [&dsf, &dff] {
+  for file in [&dsf, &dff, &at_48k] {
     assert!(line(file).ends_with("; DSD64"), "{lines:?}");
   }
   for file in [&wavpack, &ape] {

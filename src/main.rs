@@ -163,6 +163,8 @@ struct Checked {
   opus: Vec<OpusUse>,
   he_aac: Option<HeAac>,
   dsd_rate: Option<u32>,
+  /// the multiple of 44.1 or 48 kHz a DSD file's rate is named by, as DSD64
+  dsd_multiple: Option<u32>,
   readings: Vec<Read>,
 }
 
@@ -658,6 +660,7 @@ fn analyzed(
   // every profile reads the same windows of the file; what differs is what is made of them
   let (_, first, _) = measured.swap_remove(0);
   Ok(Checked {
+    dsd_multiple: first.dsd_multiple(),
     claimed: first.claimed,
     duration: first.duration,
     bitrate_kbps: first.bitrate_kbps,
@@ -690,12 +693,11 @@ fn said(checked: &Checked, colour: bool) -> String {
   match (
     OpusUse::describe(&checked.opus),
     checked.he_aac,
-    checked.dsd_rate,
+    checked.dsd_multiple,
   ) {
     (Some(coding), ..) => format!("{readings}; Opus {coding}"),
     (None, Some(he_aac), _) => format!("{readings}; {he_aac}"),
-    // a DSD rate is named by its multiple of 44.1 kHz, as DSD64
-    (None, None, Some(rate)) => format!("{readings}; DSD{}", rate / 44_100),
+    (None, None, Some(multiple)) => format!("{readings}; DSD{multiple}"),
     (None, None, None) => readings,
   }
 }

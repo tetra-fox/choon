@@ -16,6 +16,7 @@ use symphonia::core::io::MediaSource;
 use tracing::debug;
 
 use crate::decode::{self, Claimed, Decoder, Filled, HeAac};
+use crate::dsd;
 use crate::grid::{self, Scan, Segments};
 use crate::lattice::{self, Uncut};
 use crate::limitation::Limitation;
@@ -222,6 +223,13 @@ pub struct Measured {
   pub(crate) channels_left_out: u32,
   /// what made the analysis stop early or skip audio
   pub(crate) problems: Vec<Limitation>,
+}
+
+impl Measured {
+  /// Returns the multiple of 44.1 or 48 kHz a DSD file's one-bit rate is, 64 for DSD64.
+  pub fn dsd_multiple(&self) -> Option<u32> {
+    self.dsd_rate.map(dsd::multiple_of)
+  }
 }
 
 /// Error of an analysis that measured nothing.

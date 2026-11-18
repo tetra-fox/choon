@@ -369,8 +369,8 @@ impl Measured {
         .chain(self.he_aac.map(|he_aac| format!("The file is {he_aac}.")))
         .chain(
           self
-            .dsd_rate
-            .map(|rate| format!("The file is DSD{}.", crate::dsd::multiple_of(rate))),
+            .dsd_multiple()
+            .map(|multiple| format!("The file is DSD{multiple}.")),
         )
         .collect::<Vec<_>>()
         .join(" "),
