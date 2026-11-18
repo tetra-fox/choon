@@ -17,7 +17,7 @@ command-line tool and a Rust library.
   conversion between 44.1 and 48 kHz
 - Spots lossless files decoded from Opus by the band energies its encoder quantizes, at 48 kHz
   and after a conversion to 44.1 kHz, with or without a gain after the decode, in its CELT and
-  hybrid modes, tuned on libopus at 16 to 256 kbps
+  hybrid modes and in frames of 2.5 to 60 ms, tuned on libopus at 16 to 256 kbps
 - Names the encoder family a grid's offset fits: LAME, Helix, Apple, FAAC, Nero, ffmpeg or
   fdk-aac, libopus
 - Reads Opus files, with the coding mode and audio bandwidth their packets state
@@ -82,6 +82,12 @@ without the frame before them are counted with it. Opus's hybrid mode codes only
 8 kHz up with CELT, over a voice coder; its frames are counted on the two bands from 9.6 to
 15.6 kHz, as a share of the frames tested.
 
+Frames of 10, 5 and 2.5 ms hold the same bands in a half, a quarter and an eighth of the
+transform values, and predict each band with other shares of the frame before and of the lower
+bands. Each length is counted on its own grid, a frame as one block after the frame before it
+or without it. libopus delays its input by 312 samples, or by 120 in its low-delay mode, which
+ffmpeg sets for frames under 10 ms; the windows are counted on the grid each delay leaves.
+
 A gain after the decode moves every step by the same amount, half the gain, so the lattice is
 still there, moved. The scan takes the move that the most frames of a channel name and counts
 the frames on the lattice once it is taken off. Moves 9.6 dB of gain apart fit most frames
@@ -104,6 +110,8 @@ for its long blocks, so a grid's offset and window fit an encoder family:
 - The offsets are those of a decode whose start was not cut, from a decoder that cuts the delay
   the file states, as ffmpeg does
 - A LAME file decoded without that cut sits at offset 1
+- Opus frames under 20 ms sit at 468 or 180 (10 ms), 108 or 60 (5 ms) and 48 or 0 (2.5 ms),
+  by libopus's two delays
 - Versions of one encoder share its delay and read alike
 - About one Vorbis decode in thirteen reads as AAC at Nero's offset
 
@@ -327,9 +335,9 @@ Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
 - An MP3 or AAC decode converted to another rate is found between 44.1 and 48 kHz only; after
   any other conversion it reads as possibly lossy at most
 - A Vorbis decode's grid mostly reads as AAC's
-- Opus is found in 20 ms frames (and the 40 and 60 ms packets made of them) with the pitch
-  post-filter off; a decode made mostly of filtered frames, one of 2.5, 5 or 10 ms frames, and
-  one in SILK voice mode read as possibly lossy at most
+- Opus is found in frames with the pitch post-filter off; a decode made mostly of filtered
+  frames and one in SILK voice mode read as possibly lossy at most
+- An Opus decode of frames under 20 ms whose level was changed afterwards is not found
 - A hybrid-mode Opus decode whose level was changed afterwards is not found
 - A level that changes over time after an Opus decode, as under a fade or a limiter, hides the
   lattice where it changes
