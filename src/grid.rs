@@ -19,8 +19,9 @@
 //! runs once with each of the two windows the format gives a long block, the
 //! Kaiser-Bessel-derived one, which ffmpeg's encoder uses, and the sine one, which Apple's
 //! uses. The values an encoder zeroed come back only under its own window, so each analysis
-//! finds the other's grid weakly. The MP3 analysis is the layer III hybrid filterbank: the 512-tap polyphase filterbank, an 18-line MDCT per subband and the
-//! alias-reduction butterflies, at a hop of 576. Short blocks are not analyzed.
+//! finds the other's grid weakly. The MP3 analysis is the layer III hybrid filterbank: the
+//! 512-tap polyphase filterbank, an 18-line MDCT per subband and the alias-reduction
+//! butterflies, at a hop of 576. Short blocks are not analyzed.
 //!
 //! # Opus
 //!
@@ -222,9 +223,9 @@ pub struct Found {
 
 /// the grid `scan` shows under `thresholds`: MP3 or AAC over its z threshold with as many
 /// segments agreeing as its own threshold asks, the one furthest over its z threshold when
-/// several are. AAC is read under each of its windows. without either, Opus with enough frames on its lattice in the segments or in the
-/// windows: the codec decoded last leaves the grid that counts, and Opus's energies can show
-/// through an MP3 made from its decode
+/// several are. AAC is read under each of its windows. without either, Opus with enough frames
+/// on its lattice in the segments or in the windows: the codec decoded last leaves the grid
+/// that counts, and Opus's energies can show through an MP3 made from its decode
 pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found> {
   let aac = |scan| {
     (
