@@ -16,6 +16,7 @@ use symphonia::core::codecs::audio::{
 use symphonia::core::codecs::registry::{RegisterableAudioDecoder, SupportedAudioCodec};
 use symphonia::core::errors::{Error, Result, unsupported_error};
 use symphonia::core::packet::PacketRef;
+use tracing::{debug, trace};
 
 /// the most channels a frame is taken with; the format's channel configurations go no further
 const MAX_CHANNELS: u16 = 8;
@@ -49,8 +50,10 @@ pub(crate) struct Core {
 /// channels for a stream that carries none, as an ADTS one
 fn config(params: &AudioCodecParameters) -> Result<StreamConfig> {
   if let Some(bytes) = params.extra_data.as_deref() {
-    return rusty_aac::config::parse(bytes)
-      .or_else(|_| unsupported_error("aac: the stream's config is not one the decoder reads"));
+    return rusty_aac::config::parse(bytes).or_else(|e| {
+      debug!(error = %e, "aac config not read");
+      unsupported_error("aac: the stream's config is not one the decoder reads")
+    });
   }
   let Some(rate) = params.sample_rate else {
     return unsupported_error("aac: the sample rate is not stated");
@@ -102,10 +105,10 @@ impl AacDecoder {
 
   fn decode(&mut self, packet: &[u8]) -> Result<()> {
     self.buffer.clear();
-    let frame = self
-      .inner
-      .decode(packet, None)
-      .map_err(|_| Error::DecodeError("aac: the packet could not be decoded"))?;
+    let frame = self.inner.decode(packet, None).map_err(|e| {
+      trace!(error = %e, "aac packet not decoded");
+      Error::DecodeError("aac: the packet could not be decoded")
+    })?;
     let channels = usize::from(frame.channels);
     if frame.channels == 0 || frame.channels > MAX_CHANNELS || frame.sample_rate == 0 {
       return Err(Error::DecodeError("aac: a frame's shape is out of range"));

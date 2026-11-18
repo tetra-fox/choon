@@ -30,7 +30,9 @@ use symphonia::core::io::{MediaSource, MediaSourceStream, ReadBytes, ScopedStrea
 use symphonia::core::meta::{Metadata, MetadataLog};
 use symphonia::core::packet::{Packet, PacketRef};
 use symphonia::core::units::{Duration, TimeBase, Timestamp};
-use tracing::warn;
+use tracing::{debug, trace, warn};
+
+use crate::decode::refused;
 
 /// the first version whose range coder the decoder has; older files fail their checksums in it
 const OLDEST_VERSION: u16 = 3990;
@@ -127,34 +129,38 @@ impl<'s> ApeReader<'s> {
     let magic = reader.read_quad_bytes()?;
     reader.seek(SeekFrom::Start(start))?;
     if &magic == FLOAT_MAGIC {
-      return unsupported_error(UNREAD_SAMPLES);
+      return refused(UNREAD_SAMPLES);
     }
-    let Ok(info) = ape_decoder::format::parse(&mut reader) else {
-      return unsupported_error("ape: the header is not one the reader takes");
+    let info = match ape_decoder::format::parse(&mut reader) {
+      Ok(info) => info,
+      Err(e) => {
+        debug!(error = %e, "ape header not read");
+        return refused("ape: the header is not one the reader takes");
+      }
     };
     let header = &info.header;
     if info.descriptor.version < OLDEST_VERSION {
-      return unsupported_error(
+      return refused(
         "ape: the file was made before Monkey's Audio 3.99, which the decoder does not read",
       );
     }
     if header.format_flags & FLOAT != 0 || header.bits_per_sample == 32 {
-      return unsupported_error(UNREAD_SAMPLES);
+      return refused(UNREAD_SAMPLES);
     }
     if header.format_flags & (BIG_ENDIAN | SIGNED_8_BIT) != 0 {
-      return unsupported_error("ape: big-endian and signed 8-bit samples are not read");
+      return refused("ape: big-endian and signed 8-bit samples are not read");
     }
     if !matches!(header.bits_per_sample, 8 | 16 | 24) {
-      return unsupported_error("ape: the sample size is not 8, 16 or 24 bits");
+      return refused("ape: the sample size is not 8, 16 or 24 bits");
     }
     if !(1..=MAX_CHANNELS).contains(&header.channels) {
-      return unsupported_error("ape: the number of channels is out of range");
+      return refused("ape: the number of channels is out of range");
     }
     if !(1..=MAX_FRAME_BLOCKS).contains(&header.blocks_per_frame) {
-      return unsupported_error("ape: the length of a frame is out of range");
+      return refused("ape: the length of a frame is out of range");
     }
     let Some(rate) = NonZeroU32::new(header.sample_rate) else {
-      return unsupported_error("ape: the sample rate is not stated");
+      return refused("ape: the sample rate is not stated");
     };
     let stream = Stream {
       version: info.descriptor.version,
@@ -364,10 +370,11 @@ impl ApeDecoder {
     if params.codec != CODEC_ID_MONKEYS_AUDIO || !sized {
       return unsupported_error("ape: the stream's parameters are out of range");
     }
-    let Ok(inner) = FrameDecoder::new(stream.version, stream.channels, stream.bits, stream.level)
-    else {
-      return unsupported_error("ape: the decoder does not read this version of the format");
-    };
+    let inner = FrameDecoder::new(stream.version, stream.channels, stream.bits, stream.level)
+      .or_else(|e| {
+        debug!(error = %e, "ape decoder not made");
+        unsupported_error("ape: the decoder does not read this version of the format")
+      })?;
     let spec = AudioSpec::new(rate, Channels::Discrete(stream.channels));
     Ok(Self {
       inner,
@@ -398,7 +405,7 @@ impl ApeDecoder {
         .decode_frame(frame, u32::from(prefix[0]), blocks as usize)
     });
     let Ok(decoded) = catch_unwind(decoding) else {
-      warn!("PANIC in the Monkey's Audio decoder caught and handled, its frame skipped");
+      warn!("a panic in the Monkey's Audio decoder was caught, its frame skipped");
       // what a panic left of the decoder's state is not used again
       let Stream {
         version,
@@ -407,11 +414,16 @@ impl ApeDecoder {
         channels,
         ..
       } = self.stream;
-      self.inner = FrameDecoder::new(version, channels, bits, level)
-        .map_err(|_| Error::DecodeError("ape: the decoder could not be made again"))?;
+      self.inner = FrameDecoder::new(version, channels, bits, level).map_err(|e| {
+        debug!(error = %e, "ape decoder not made again");
+        Error::DecodeError("ape: the decoder could not be made again")
+      })?;
       return decode_error("ape: the decoder panicked on the frame");
     };
-    let pcm = decoded.map_err(|_| Error::DecodeError("ape: the frame could not be decoded"))?;
+    let pcm = decoded.map_err(|e| {
+      trace!(error = %e, "ape frame not decoded");
+      Error::DecodeError("ape: the frame could not be decoded")
+    })?;
     let channels = usize::from(self.stream.channels);
     let width = usize::from(self.stream.bits / 8);
     if pcm.len() != blocks as usize * channels * width {

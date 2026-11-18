@@ -27,6 +27,9 @@ use symphonia::core::io::{MediaSource, MediaSourceStream, ReadBytes, ScopedStrea
 use symphonia::core::meta::{Metadata, MetadataLog};
 use symphonia::core::packet::{Packet, PacketRef};
 use symphonia::core::units::{Duration, TimeBase, Timestamp};
+use tracing::{debug, trace};
+
+use crate::decode::refused;
 
 /// the bytes of a block's header
 const HEADER: usize = 32;
@@ -138,13 +141,13 @@ impl<'s> WavPackReader<'s> {
     let (header, block) = loop {
       let at = reader.pos();
       let Some(header) = next_header(&mut reader)? else {
-        return unsupported_error("wavpack: the file holds no block with audio");
+        return refused("wavpack: the file holds no block with audio");
       };
       if header.flags & DSD != 0 {
-        return unsupported_error("wavpack: DSD in WavPack is not read");
+        return refused("wavpack: DSD in WavPack is not read");
       }
       if header.flags & HYBRID != 0 {
-        return unsupported_error(
+        return refused(
           "wavpack: the file is hybrid WavPack, which is lossy without its correction file, \
            and is not decoded",
         );
@@ -156,17 +159,21 @@ impl<'s> WavPackReader<'s> {
       }
       leading += 1;
       if leading == MAX_LEADING_BLOCKS {
-        return unsupported_error("wavpack: the file holds no block with audio");
+        return refused("wavpack: the file holds no block with audio");
       }
     };
-    let Ok(decoded) = wavicle::decode_stream(&block) else {
-      return unsupported_error(
-        "wavpack: the first block is not one the decoder reads: more than two channels, \
-         8-bit samples and streams older than WavPack 4 are not",
-      );
+    let decoded = match wavicle::decode_stream(&block) {
+      Ok(decoded) => decoded,
+      Err(e) => {
+        debug!(error = %e, "wavpack first block not decoded");
+        return refused(
+          "wavpack: the first block is not one the decoder reads: more than two channels, \
+           8-bit samples and streams older than WavPack 4 are not",
+        );
+      }
     };
     let Some(rate) = NonZeroU32::new(decoded.sample_rate) else {
-      return unsupported_error("wavpack: the sample rate is not stated");
+      return refused("wavpack: the sample rate is not stated");
     };
     let mut params = AudioCodecParameters::new();
     params
@@ -351,8 +358,10 @@ pub(crate) struct WavPackDecoder {
 impl WavPackDecoder {
   fn decode(&mut self, block: &[u8]) -> Result<()> {
     self.clear();
-    let decoded = wavicle::decode_stream(block)
-      .map_err(|_| Error::DecodeError("wavpack: the block could not be decoded"))?;
+    let decoded = wavicle::decode_stream(block).map_err(|e| {
+      trace!(error = %e, "wavpack block not decoded");
+      Error::DecodeError("wavpack: the block could not be decoded")
+    })?;
     let shape = Shape {
       rate: decoded.sample_rate,
       channels: decoded.channels,

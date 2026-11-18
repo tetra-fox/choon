@@ -32,6 +32,8 @@ use symphonia::core::meta::{Metadata, MetadataLog};
 use symphonia::core::packet::{Packet, PacketRef};
 use symphonia::core::units::{Duration, TimeBase, Timestamp};
 
+use crate::decode::refused;
+
 /// the codec of one-bit samples, which symphonia names no id for
 pub(crate) const CODEC_ID_DSD: AudioCodecId = AudioCodecId::new(FourCc::new(*b"DSD "));
 
@@ -311,16 +313,16 @@ pub(crate) struct DsdReader<'s> {
 impl<'s> DsdReader<'s> {
   fn try_new(mut reader: MediaSourceStream<'s>) -> Result<Self> {
     let Some(length) = reader.byte_len() else {
-      return unsupported_error("dsd: the length of the file is not known");
+      return refused("dsd: the length of the file is not known");
     };
     let header = match read_header(&mut reader, length) {
       Ok(header) => header,
       Err(Unread::Io(e)) => return Err(e.into()),
-      Err(Unread::Why(why)) => return unsupported_error(why),
+      Err(Unread::Why(why)) => return refused(why),
     };
     let rate = pcm_rate(header.rate).and_then(NonZeroU32::new);
     let Some(rate) = rate else {
-      return unsupported_error("dsd: the sample rate is not a DSD rate");
+      return refused("dsd: the sample rate is not a DSD rate");
     };
     let decimation = u64::from(header.rate / rate);
     let mut params = AudioCodecParameters::new();

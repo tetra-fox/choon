@@ -72,8 +72,23 @@ fn codecs() -> &'static CodecRegistry {
   &CODECS
 }
 
-/// what the readers written here start their reasons for refusing a file with
-const OWN_READERS: [&str; 3] = ["wavpack: ", "ape: ", "dsd: "];
+/// why a reader here does not read a file it knows. symphonia's probe hands a reader's error
+/// back as it is, so the reason goes through it as the payload of an io error
+#[derive(Debug)]
+struct Refused(&'static str);
+
+impl fmt::Display for Refused {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.write_str(self.0)
+  }
+}
+
+impl std::error::Error for Refused {}
+
+/// the error of a reader here that knows the file and says `why` it does not read it
+pub(crate) fn refused<T>(why: &'static str) -> symphonia::core::errors::Result<T> {
+  Err(Error::IoError(std::io::Error::other(Refused(why))))
+}
 
 /// the containers the analyzer reads: symphonia's own, WavPack, Monkey's Audio, DSF and DSDIFF
 fn probe() -> &'static Probe {
@@ -231,12 +246,15 @@ impl Decoder {
         FormatOptions::default(),
         MetadataOptions::default(),
       )
-      .map_err(|e| match e {
-        // a reader here that knows the file and says why it does not read it
-        Error::Unsupported(why) if OWN_READERS.iter().any(|own| why.starts_with(own)) => {
-          unsupported(why)
+      .map_err(|e| {
+        let refused = match &e {
+          Error::IoError(io) => io.get_ref().and_then(|inner| inner.downcast_ref()),
+          _ => None,
+        };
+        match refused {
+          Some(Refused(why)) => unsupported(why),
+          None => not_audio(format!("the container was not recognized: {e}")),
         }
-        e => not_audio(format!("the container was not recognized: {e}")),
       })?;
     let track = format
       .default_track(TrackType::Audio)
