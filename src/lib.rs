@@ -29,7 +29,7 @@
 //!
 //! In a file that claims a lossless format it also scans four stretches of the samples for a
 //! codec's frame grid ([`grid`]). Of an Opus file it keeps the coding mode and audio bandwidth
-//! each packet states ([`OpusUse`]).
+//! each packet states ([`OpusUse`]), and of an HE-AAC file what its decoder rebuilt ([`HeAac`]).
 //!
 //! [`Measured::read`] turns the measures into a [`Reading`]:
 //!
@@ -60,8 +60,11 @@
 //! - `testing` adds `fixtures`, the generated audio and the sample file the analyzer is tested
 //!   on.
 
+mod aac;
 mod aggregate;
+mod ape;
 mod decode;
+mod dsd;
 mod engine;
 mod flags;
 pub mod grid;
@@ -72,6 +75,7 @@ pub mod picture;
 mod reading;
 mod thresholds;
 mod totals;
+mod wavpack;
 mod window;
 
 #[cfg(any(test, feature = "testing"))]
@@ -84,7 +88,7 @@ mod tests;
 struct ReadmeDoctest;
 
 pub use aggregate::{CutoffBucket, Measures};
-pub use decode::Claimed;
+pub use decode::{Claimed, HeAac};
 pub use engine::{CancelCheck, Coverage, Error, Measured, Settings, measure, measure_bytes};
 pub use flags::Flag;
 pub use limitation::Limitation;

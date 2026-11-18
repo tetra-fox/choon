@@ -76,6 +76,21 @@ pub enum Limitation {
   CutoffWithoutGrid,
   /// Early roll-off, as old masters, speech and transfers have by nature.
   EarlyRollOff,
+  /// DSD file, measured as PCM filtered from its one-bit samples.
+  ///
+  /// The noise the one-bit samples carry above the audio band is in the PCM too, where it
+  /// reads as content. No codec grid is looked for.
+  Dsd {
+    /// Rate of the PCM the file was measured as, in Hz.
+    pcm_rate: u32,
+  },
+  /// Upper band an HE-AAC decoder rebuilt from the lower one.
+  ///
+  /// It holds none of the source's waveform, and where it stops is not an encoder's lowpass.
+  RebuiltBand {
+    /// Top of the band the core can code, in Hz.
+    hz: f64,
+  },
 }
 
 impl fmt::Display for Limitation {
@@ -148,6 +163,18 @@ impl fmt::Display for Limitation {
       Self::CutoffWithoutGrid => f.write_str(
         "A recording filtered where an encoder cuts, and a decode resampled afterwards, stop at \
          an encoder's cutoff without a frame grid",
+      ),
+      Self::Dsd { pcm_rate } => write!(
+        f,
+        "The file is DSD, measured as PCM at {}: the noise its one-bit samples carry above \
+         the audio band reads as content, and no codec grid is looked for",
+        khz(f64::from(*pcm_rate))
+      ),
+      Self::RebuiltBand { hz } => write!(
+        f,
+        "The decoder rebuilt the band above the HE-AAC core, which ends at or under {}, from \
+         the band below, so the cutoff is not where an encoder's lowpass sits",
+        khz(*hz)
       ),
       Self::EarlyRollOff => f.write_str(
         "Old masters, speech, lo-fi material and vinyl or cassette transfers roll off early, and \

@@ -15,7 +15,7 @@ use symphonia::core::formats::probe::Hint;
 use symphonia::core::io::MediaSource;
 use tracing::debug;
 
-use crate::decode::{self, Claimed, Decoder, Filled};
+use crate::decode::{self, Claimed, Decoder, Filled, HeAac};
 use crate::grid::{self, Scan, Segments};
 use crate::lattice::{self, Uncut};
 use crate::limitation::Limitation;
@@ -197,6 +197,14 @@ pub struct Measured {
   /// count, which in a sampled file are those around its windows. Empty for other codecs.
   #[cfg_attr(feature = "serde", serde(default))]
   pub opus: Vec<OpusUse>,
+  /// What an HE-AAC file's decoder rebuilt beside its core, `None` for any other file.
+  #[cfg_attr(feature = "serde", serde(default))]
+  pub he_aac: Option<HeAac>,
+  /// One-bit sample rate of a DSD file, in Hz, `None` for any other file.
+  ///
+  /// The file is measured as PCM, at the rate [`Claimed::sample_rate`] states.
+  #[cfg_attr(feature = "serde", serde(default))]
+  pub dsd_rate: Option<u32>,
   /// Every analyzed window, in time order.
   pub windows: Vec<Window>,
   /// the figures over every analyzed sample
@@ -404,7 +412,10 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
   let stated = claimed.frames.map(|frames| frames as f64 / rate as f64);
   // samples without a stated depth are floats, which round no coarser than 24 bits
   let bits = claimed.bit_depth.unwrap_or(24);
-  let opus_rate = lattice::Rate::of(claimed.sample_rate).filter(|_| claimed.lossless);
+  // a lossy file carries its own codec's grid, which says nothing, and a codec's decode made
+  // into one-bit samples was resampled on the way, which leaves no grid
+  let scanned = claimed.lossless && decoder.dsd_rate.is_none();
+  let opus_rate = lattice::Rate::of(claimed.sample_rate).filter(|_| scanned);
   let mut measuring = Measuring {
     analyzer: Analyzer::new(claimed.sample_rate, claimed.bit_depth, &settings.thresholds),
     uncut: opus_rate.map(|rate| Uncut::new(rate, bits)),
@@ -412,16 +423,14 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
   let mut buffer: Vec<Vec<f32>> = (0..decoder.channels)
     .map(|_| Vec::with_capacity(rate))
     .collect();
-  // a lossy file carries its own codec's grid, which says nothing
-  let mut segments = claimed
-    .frames
-    .filter(|_| claimed.lossless)
-    .and_then(Segments::of);
-  let unscanned = claimed.lossless && claimed.frames.is_none();
+  let mut segments = claimed.frames.filter(|_| scanned).and_then(Segments::of);
+  let unscanned = scanned && claimed.frames.is_none();
   let mut measured = Measured {
     duration: stated.unwrap_or(0.0),
     bitrate_kbps: None,
     opus: Vec::new(),
+    he_aac: decoder.he_aac,
+    dsd_rate: decoder.dsd_rate,
     channels_left_out: claimed.channels.saturating_sub(decoder.channels as u32),
     claimed,
     windows: Vec::new(),

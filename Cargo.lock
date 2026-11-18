@@ -72,6 +72,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ape-decoder"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "95097ef8efebf7b1e1d638b77935cfce25576163614427b464efe256bb8b2ec1"
+dependencies = [
+ "crc32fast",
+ "md-5",
+]
+
+[[package]]
 name = "arrayvec"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -204,6 +214,7 @@ version = "0.1.0"
 dependencies = [
  "anstream",
  "anstyle",
+ "ape-decoder",
  "choon",
  "clap",
  "comfy-table",
@@ -212,10 +223,12 @@ dependencies = [
  "indicatif",
  "mp3lame-encoder",
  "opus",
+ "oxideav-ape",
  "proptest",
  "rayon",
  "realfft",
  "rustfft",
+ "rusty_aac",
  "serde",
  "serde_json",
  "symphonia",
@@ -224,6 +237,7 @@ dependencies = [
  "tempfile",
  "tracing",
  "walkdir",
+ "wavicle",
 ]
 
 [[package]]
@@ -335,6 +349,15 @@ name = "crc-catalog"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "217698eaf96b4a3f0bc4f3662aaa55bdf913cd54d7204591faa790070c6d0853"
+
+[[package]]
+name = "crc32fast"
+version = "1.5.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b929dd2a135771f40afabd1073f85eed59c800b7c61901e5c254270497dad64"
+dependencies = [
+ "cfg-if",
+]
 
 [[package]]
 name = "crossbeam-deque"
@@ -714,6 +737,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxideav-ape"
+version = "0.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aef80c61f11680a0381b05fea01df41088f31b7c6d490408e729e5092ce91c91"
+
+[[package]]
 name = "parking_lot"
 version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -935,6 +964,12 @@ dependencies = [
  "tempfile",
  "wait-timeout",
 ]
+
+[[package]]
+name = "rusty_aac"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3dbc43fb52354757803c3d465d3471b3ab344889e6df34ebcbdff18132a6f6f"
 
 [[package]]
 name = "same-file"
@@ -1441,6 +1476,12 @@ dependencies = [
  "same-file",
  "winapi-util",
 ]
+
+[[package]]
+name = "wavicle"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e312eaf22b4a7e5b7bf038edb3a7e4703c7b86dfabaea49d17af85e55eb76ab"
 
 [[package]]
 name = "winapi"

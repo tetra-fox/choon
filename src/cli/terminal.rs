@@ -330,6 +330,18 @@ pub fn readout(path: &Path, checked: &Checked, profiled: bool, colour: bool, wid
     if let Some(coding) = OpusUse::describe(&checked.opus) {
       add("Opus packets", coding);
     }
+    if let Some(rate) = checked.dsd_rate {
+      add(
+        "DSD",
+        format!("DSD{}, one-bit samples at {rate} Hz", rate / 44_100),
+      );
+    }
+    if let Some(he_aac) = checked.he_aac {
+      add(
+        "AAC profile",
+        format!("{he_aac}, core at {} Hz", he_aac.core_rate),
+      );
+    }
     add(
       "Verdict",
       painted(Some(reading.verdict), label(reading.verdict), colour),

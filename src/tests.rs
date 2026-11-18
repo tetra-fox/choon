@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::decode::HeAac;
 use crate::engine::{self, Coverage, Error, Measured, Settings, measure, measure_bytes};
 use crate::fixtures::{self, Audio, Bitrate, LongWindow, lo_fi, music, music_for, pink, tone};
 use crate::flags::Flag;
@@ -897,8 +898,122 @@ fn a_step_search_from_far_below_the_spectrum_ends() {
   assert!(measured.windows.iter().any(|w| w.inner_shelf.is_some()));
 }
 
+#[test]
+fn he_aac_is_read_at_its_output_rate_however_its_band_replication_is_signalled() {
+  for (name, bytes, parametric_stereo) in [
+    ("after the core", fixtures::HE_AAC, false),
+    ("first", fixtures::HE_AAC_HIERARCHICAL, false),
+    ("not in an MP4", fixtures::HE_AAC_IMPLICIT, false),
+    ("not in ADTS", fixtures::HE_AAC_ADTS, false),
+    ("with parametric stereo", fixtures::HE_AAC_V2, true),
+  ] {
+    let measured = measure_bytes(bytes.to_vec(), &settings()).unwrap();
+    assert_eq!(measured.claimed.sample_rate, 44_100, "{name}");
+    assert_eq!(measured.claimed.channels, 2, "{name}");
+    assert!(!measured.claimed.lossless, "{name}");
+    assert_eq!(
+      measured.he_aac,
+      Some(HeAac {
+        core_rate: 22_050,
+        parametric_stereo
+      }),
+      "{name}"
+    );
+    // three seconds, and the encoder's delay and padding, which no container here trims
+    assert!(
+      (3.0..3.3).contains(&measured.duration),
+      "{name}: {}",
+      measured.duration
+    );
+    // the core alone stops under 11.025 kHz: a higher cutoff is the rebuilt band's
+    let reading = read(&measured);
+    let cutoff = reading
+      .cutoff_hz
+      .unwrap_or_else(|| panic!("{name}: {reading:#?}"));
+    assert!((15_000.0..17_500.0).contains(&cutoff), "{name}: {cutoff}");
+    assert_eq!(reading.encoder_guess, None, "{name}");
+    assert!(
+      reading
+        .limitations
+        .contains(&Limitation::RebuiltBand { hz: 11_025.0 }),
+      "{name}: {reading:#?}"
+    );
+    let profile = if parametric_stereo {
+      "HE-AAC v2"
+    } else {
+      "HE-AAC"
+    };
+    assert!(
+      reading
+        .summary
+        .ends_with(&format!("The file is {profile}.")),
+      "{name}: {}",
+      reading.summary
+    );
+  }
+}
+
 proptest::proptest! {
   #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
+
+  /// a WavPack or Monkey's Audio file with bytes overwritten and its end cut off is read
+  /// without a panic
+  #[test]
+  fn a_damaged_wavpack_or_ape_file_is_read_without_panicking(
+    damage in proptest::collection::vec((0.0f64..1.0, proptest::prelude::any::<u8>()), 0..64),
+    kept in 0.2f64..1.0,
+    file in 0usize..3,
+  ) {
+    let mut input = [fixtures::WAVPACK, fixtures::APE_NORMAL, fixtures::APE_INSANE][file].to_vec();
+    let length = input.len();
+    for (at, byte) in damage {
+      input[(at * length as f64) as usize] = byte;
+    }
+    input.truncate((kept * length as f64) as usize);
+    if let Ok(measured) = measure_bytes(input, &settings()) {
+      read(&measured);
+    }
+  }
+
+  /// a DSD file with bytes overwritten and its end cut off is read without a panic
+  #[test]
+  fn a_damaged_dsd_file_is_read_without_panicking(
+    damage in proptest::collection::vec((0.0f64..0.01, proptest::prelude::any::<u8>()), 0..64),
+    kept in 0.0f64..1.0,
+    dsf in proptest::prelude::any::<bool>(),
+  ) {
+    static TONES: std::sync::LazyLock<fixtures::OneBit> =
+      std::sync::LazyLock::new(|| fixtures::one_bit_tones(&[1000.0, 3000.0], 1));
+    // the damage is put where the headers are
+    let mut input = if dsf { TONES.dsf() } else { TONES.dff() };
+    let length = input.len();
+    for (at, byte) in damage {
+      input[(at * length as f64) as usize] = byte;
+    }
+    input.truncate((kept * length as f64) as usize);
+    if let Ok(measured) = measure_bytes(input, &settings()) {
+      read(&measured);
+    }
+  }
+
+  /// an HE-AAC file with bytes overwritten and its end cut off is read without a panic. ADTS
+  /// and MP4 have no checksums, so the damage reaches the AAC decoder
+  #[test]
+  fn a_damaged_he_aac_file_is_read_without_panicking(
+    damage in proptest::collection::vec((0.0f64..1.0, proptest::prelude::any::<u8>()), 0..64),
+    kept in 0.2f64..1.0,
+    file in 0usize..3,
+  ) {
+    let mut input = [fixtures::HE_AAC, fixtures::HE_AAC_ADTS, fixtures::HE_AAC_V2][file].to_vec();
+    let length = input.len();
+    for (at, byte) in damage {
+      input[(at * length as f64) as usize] = byte;
+    }
+    input.truncate((kept * length as f64) as usize);
+    if let Ok(measured) = measure_bytes(input, &settings()) {
+      read(&measured);
+    }
+  }
 
   /// arbitrary bytes, and a real file's header followed by arbitrary bytes, are read without a
   /// panic, as a reading of some kind

@@ -526,6 +526,79 @@ fn several_profiles_share_a_line_and_only_a_lossy_verdict_names_an_encoder() {
 }
 
 #[test]
+fn he_aac_wavpack_ape_and_dsd_files_are_read_and_name_what_they_are() {
+  let dir = tempfile::tempdir().unwrap();
+  let write = |name: &str, bytes: &[u8]| {
+    let file = dir.path().join(name);
+    std::fs::write(&file, bytes).unwrap();
+    path(&file)
+  };
+  let he_aac = write("he.m4a", fixtures::HE_AAC_V2);
+  let wavpack = write("clip.wv", fixtures::WAVPACK);
+  let ape = write("clip.ape", fixtures::APE_NORMAL);
+  let tones = fixtures::one_bit_tones(&[1000.0, 3000.0], 2);
+  let dsf = write("tones.dsf", &tones.dsf());
+  let dff = write("tones.dff", &tones.dff());
+
+  // a walk takes each by its extension, and each line ends with what a file is beside its codec
+  let output = choon(&[&path(dir.path())]);
+  assert_eq!(status(&output), 0, "{output:?}");
+  let lines = sorted_lines(&output);
+  let line = |file: &str| -> &str {
+    let found = lines.iter().find(|line| line.starts_with(file));
+    found.unwrap_or_else(|| panic!("{file}: {lines:?}"))
+  };
+  assert_eq!(lines.len(), 5, "{lines:?}");
+  assert!(line(&he_aac).ends_with("; HE-AAC v2"), "{lines:?}");
+  for file in [&dsf, &dff] {
+    assert!(line(file).ends_with("; DSD64"), "{lines:?}");
+  }
+  for file in [&wavpack, &ape] {
+    assert_eq!(line(file), format!("{file}: inconclusive"), "{lines:?}");
+  }
+
+  let output = choon(&["--json", &he_aac, &wavpack, &ape, &dsf]);
+  assert_eq!(status(&output), 0, "{output:?}");
+  let [ape, wavpack, he_aac, dsf] = &sorted_json(&output)[..] else {
+    panic!("four files: {output:?}")
+  };
+  assert_eq!(he_aac["claimed"]["sampleRate"], 44_100);
+  assert_eq!(he_aac["claimed"]["channels"], 2);
+  assert_eq!(he_aac["heAac"]["coreRate"], 22_050);
+  assert_eq!(he_aac["heAac"]["parametricStereo"], true);
+  assert_eq!(wavpack["claimed"]["codec"], "wavpack");
+  assert_eq!(wavpack["claimed"]["bitDepth"], 16);
+  assert_eq!(wavpack["claimed"]["lossless"], true);
+  assert_eq!(ape["claimed"]["codec"], "ape");
+  assert_eq!(ape["claimed"]["frames"], 11_025);
+  assert_eq!(dsf["claimed"]["codec"], "dsd");
+  assert_eq!(dsf["claimed"]["sampleRate"], 176_400);
+  assert_eq!(dsf["dsdRate"], 2_822_400);
+  // only a file of its kind states either
+  assert_eq!(wavpack.get("heAac"), None);
+  assert_eq!(wavpack.get("dsdRate"), None);
+  // a DSD file's samples were resampled on the way from any codec, so no grid is looked for
+  assert_eq!(dsf["grid"], serde_json::Value::Null);
+}
+
+#[test]
+fn a_file_a_reader_knows_and_does_not_decode_says_why() {
+  let dir = tempfile::tempdir().unwrap();
+  let hybrid = dir.path().join("hybrid.wv");
+  std::fs::write(&hybrid, fixtures::WAVPACK_HYBRID).unwrap();
+  let hybrid = path(&hybrid);
+  let output = choon(&[&hybrid]);
+  assert_eq!(status(&output), 2, "{output:?}");
+  assert_eq!(
+    String::from_utf8(output.stdout).unwrap(),
+    format!(
+      "{hybrid}: not read as audio: wavpack: the file is hybrid WavPack, which is lossy without \
+       its correction file, and is not decoded\n"
+    )
+  );
+}
+
+#[test]
 fn a_decode_of_a_sine_window_coder_names_aac_and_the_scan_states_both_windows() {
   let dir = tempfile::tempdir().unwrap();
   let through =

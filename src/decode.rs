@@ -1,6 +1,7 @@
 //! opens a file through symphonia and hands out its first two channels as floats in one-second
 //! windows, noting the bits its integer samples use
 
+use std::fmt;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::LazyLock;
@@ -9,23 +10,28 @@ use symphonia::core::audio::GenericAudioBufferRef;
 use symphonia::core::audio::sample::{i24, u24};
 use symphonia::core::audio::{Audio, AudioBuffer};
 use symphonia::core::codecs::audio::well_known::{
-  CODEC_ID_ALAC, CODEC_ID_FLAC, CODEC_ID_OPUS, CODEC_ID_PCM_ALAW, CODEC_ID_PCM_MULAW,
+  CODEC_ID_AAC, CODEC_ID_ALAC, CODEC_ID_FLAC, CODEC_ID_MONKEYS_AUDIO, CODEC_ID_OPUS,
+  CODEC_ID_PCM_ALAW, CODEC_ID_PCM_MULAW, CODEC_ID_WAVPACK,
 };
 use symphonia::core::codecs::audio::{
   AudioCodecId, AudioCodecParameters, AudioDecoder, AudioDecoderOptions,
 };
 use symphonia::core::codecs::registry::CodecRegistry;
 use symphonia::core::errors::{Error, SeekErrorKind};
-use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::probe::{Hint, Probe};
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, TrackType};
 use symphonia::core::io::{MediaSource, MediaSourceStream};
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::units::{Time, TimeBase, Timestamp};
+use symphonia::core::units::{TimeBase, Timestamp};
 use symphonia_common::apple::audio::alac::MagicCookie;
 use tracing::{debug, trace};
 
+use crate::aac;
+use crate::ape;
+use crate::dsd::{self, CODEC_ID_DSD};
 use crate::engine;
 use crate::opus::{self, OpusUse};
+use crate::wavpack;
 
 /// the most channels the analyzer reads; the rest of a surround file is left out
 const ANALYZED_CHANNELS: usize = 2;
@@ -42,15 +48,44 @@ const MAX_SKIPPED: u32 = 1000;
 /// differs from a read from the start by less than a millionth
 const OPUS_PRE_ROLL: f64 = 0.5;
 
-/// the codecs the analyzer decodes: symphonia's own, and Opus
+/// the sample frames an HE-AAC decoder is given before a position sought to: its band
+/// replication takes two of its frames to start
+const SBR_PRE_ROLL: u64 = 4096;
+
+/// the sample frames a DSD decoder is given before a position sought to, which is more than
+/// its filter holds
+const DSD_PRE_ROLL: u64 = 1024;
+
+/// the codecs the analyzer decodes: symphonia's own, Opus, WavPack, Monkey's Audio, DSD, and
+/// AAC through a decoder that reads HE-AAC, in the place of symphonia's
 fn codecs() -> &'static CodecRegistry {
   static CODECS: LazyLock<CodecRegistry> = LazyLock::new(|| {
     let mut codecs = CodecRegistry::new();
     symphonia::default::register_enabled_codecs(&mut codecs);
+    codecs.register_audio_decoder::<aac::AacDecoder>();
     codecs.register_audio_decoder::<symphonia_opus::OpusDecoder>();
+    codecs.register_audio_decoder::<wavpack::WavPackDecoder>();
+    codecs.register_audio_decoder::<ape::ApeDecoder>();
+    codecs.register_audio_decoder::<dsd::DsdDecoder>();
     codecs
   });
   &CODECS
+}
+
+/// what the readers written here start their reasons for refusing a file with
+const OWN_READERS: [&str; 3] = ["wavpack: ", "ape: ", "dsd: "];
+
+/// the containers the analyzer reads: symphonia's own, WavPack, Monkey's Audio, DSF and DSDIFF
+fn probe() -> &'static Probe {
+  static PROBE: LazyLock<Probe> = LazyLock::new(|| {
+    let mut probe = Probe::new();
+    symphonia::default::register_enabled_formats(&mut probe);
+    probe.register_format::<wavpack::WavPackReader<'_>>();
+    probe.register_format::<ape::ApeReader<'_>>();
+    probe.register_format::<dsd::DsdReader<'_>>();
+    probe
+  });
+  &PROBE
 }
 
 /// Format a file's container and codec claim.
@@ -70,6 +105,41 @@ pub struct Claimed {
   pub lossless: bool,
   /// Length the container states, in sample frames, when it states one.
   pub frames: Option<u64>,
+}
+
+/// What an HE-AAC stream's decoder rebuilt beside its AAC-LC core.
+///
+/// The core codes the lower half of the band at half the sample rate. Spectral band
+/// replication rebuilds the upper half from the lower with a few bits of guidance, so the band
+/// above the core holds none of the source's own waveform.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct HeAac {
+  /// Sample rate of the core, in Hz, half the rate of the decoded audio.
+  pub core_rate: u32,
+  /// Whether the two channels were rebuilt from one by parametric stereo, as in HE-AAC v2.
+  pub parametric_stereo: bool,
+}
+
+impl HeAac {
+  /// Returns the top of the band the core can code, in Hz: half its sample rate.
+  ///
+  /// The core stops at or under it, and everything above was rebuilt.
+  pub fn core_top_hz(&self) -> f64 {
+    f64::from(self.core_rate) / 2.0
+  }
+}
+
+impl fmt::Display for HeAac {
+  /// Writes the profile's name, `HE-AAC` or `HE-AAC v2`.
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.write_str(if self.parametric_stereo {
+      "HE-AAC v2"
+    } else {
+      "HE-AAC"
+    })
+  }
 }
 
 /// an audio file open for decoding
@@ -103,6 +173,10 @@ pub(crate) struct Decoder {
   pub(crate) stopped: Option<String>,
   /// what an Opus stream's header and packets state
   opus: Option<Opus>,
+  /// what an HE-AAC stream's decoder rebuilt
+  pub(crate) he_aac: Option<HeAac>,
+  /// the one-bit sample rate of a DSD file
+  pub(crate) dsd_rate: Option<u32>,
 }
 
 /// what the analyzer keeps of an Opus stream beside its samples
@@ -150,14 +224,20 @@ impl Decoder {
     let unsupported = |why: &str| engine::Error::Unsupported(why.to_string());
     let file_bytes = source.byte_len();
     let stream = MediaSourceStream::new(source, Default::default());
-    let format = symphonia::default::get_probe()
+    let format = probe()
       .probe(
         hint,
         stream,
         FormatOptions::default(),
         MetadataOptions::default(),
       )
-      .map_err(|e| not_audio(format!("the container was not recognized: {e}")))?;
+      .map_err(|e| match e {
+        // a reader here that knows the file and says why it does not read it
+        Error::Unsupported(why) if OWN_READERS.iter().any(|own| why.starts_with(own)) => {
+          unsupported(why)
+        }
+        e => not_audio(format!("the container was not recognized: {e}")),
+      })?;
     let track = format
       .default_track(TrackType::Audio)
       .ok_or_else(|| not_audio("the file holds no audio track".to_string()))?;
@@ -221,8 +301,9 @@ impl Decoder {
       return Err(unsupported("the number of channels is not stated"));
     }
     let channels = all.min(ANALYZED_CHANNELS);
-    debug!(codec, sample_rate, channels = all, "audio opened");
-    Ok(Self {
+    let core = (params.codec == CODEC_ID_AAC).then(|| aac::core(&params));
+    let ticks = track.num_frames;
+    let mut opened = Self {
       format,
       decoder,
       track: track_id,
@@ -246,7 +327,57 @@ impl Decoder {
       skipped: 0,
       stopped: None,
       opus,
-    })
+      he_aac: None,
+      // the reader passes the decoder the one-bit rate as its extra data
+      dsd_rate: (params.codec == CODEC_ID_DSD)
+        .then(|| params.extra_data.as_deref()?.try_into().ok())
+        .flatten()
+        .map(u32::from_le_bytes),
+    };
+    if let Some(core) = core {
+      opened.prime(core, ticks)?;
+    }
+    debug!(
+      codec = opened.claimed.codec,
+      sample_rate = opened.claimed.sample_rate,
+      channels = opened.claimed.channels,
+      "audio opened"
+    );
+    Ok(opened)
+  }
+
+  /// decodes an AAC stream's first packet, whose samples say what the track cannot: the rate
+  /// and channels the decoder gives, which are twice the core's rate with band replication
+  /// and two channels from one with parametric stereo. `ticks` is the length the track states
+  fn prime(&mut self, core: Option<aac::Core>, ticks: Option<u64>) -> Result<(), engine::Error> {
+    let unsupported = |why: String| engine::Error::Unsupported(why);
+    let Some(Stepped { trim, .. }) = self.step() else {
+      let why = self.stopped.take();
+      return Err(unsupported(why.unwrap_or_else(|| {
+        "the stream holds no packet the decoder reads".to_string()
+      })));
+    };
+    let decoded = self.decoder.last_decoded();
+    let (rate, all) = (decoded.spec().rate(), decoded.spec().channels().count());
+    if rate > MAX_RATE {
+      return Err(unsupported(format!(
+        "the sample rate of {rate} Hz is above the {MAX_RATE} Hz the analyzer reads"
+      )));
+    }
+    self.claimed.sample_rate = rate;
+    self.claimed.channels = u32::try_from(all).unwrap_or(u32::MAX);
+    // the track's ticks are the core's frames or the output's, whichever its container counts
+    self.claimed.frames = ticks.and_then(|ticks| self.frame_at(u128::from(ticks)));
+    self.channels = all.min(ANALYZED_CHANNELS);
+    self.pending = vec![Vec::new(); self.channels];
+    self.he_aac = core
+      .filter(|core| core.rate.checked_mul(2) == Some(rate))
+      .map(|core| HeAac {
+        core_rate: core.rate,
+        parametric_stereo: core.channels == 1 && all == 2,
+      });
+    self.keep(trim);
+    Ok(())
   }
 
   /// the time the packets decoded so far spend in each Opus mode and bandwidth; empty for other
@@ -308,25 +439,31 @@ impl Decoder {
   /// moves to `seconds` from the start, dropping what was decoded and not taken. the container
   /// moves to the start of a packet, so the frames before the position are decoded and dropped
   pub(crate) fn seek(&mut self, seconds: f64) -> Result<(), String> {
-    // an Opus stream is sought to a little before the position, in the time its container
-    // counts, and the frames decoded on the way are dropped with the others
-    let rate = f64::from(self.claimed.sample_rate);
-    let (at, lead) = match &self.opus {
-      Some(opus) => {
-        let position = seconds + opus.delay as f64 / rate;
-        let lead = position.min(OPUS_PRE_ROLL);
-        (position - lead, (lead * rate).round() as usize)
-      }
-      None => (seconds, 0),
+    // an Opus, HE-AAC or DSD stream is sought to a little before the position, in the time
+    // its container counts, and the frames decoded on the way are dropped with the others
+    let rate = self.claimed.sample_rate;
+    let (delay, pre_roll) = match (&self.opus, self.he_aac, self.dsd_rate) {
+      (Some(opus), ..) => (opus.delay, (OPUS_PRE_ROLL * f64::from(rate)) as u64),
+      (None, Some(_), _) => (0, SBR_PRE_ROLL),
+      (None, None, Some(_)) => (0, DSD_PRE_ROLL),
+      (None, None, None) => (0, 0),
     };
-    let time = Time::try_from_secs_f64(at).ok_or("the position is out of range")?;
+    // the position and the place sought to are whole sample frames, and the place a timestamp
+    // worked out from them: a time in seconds is rounded on its way to one, and a tick lost
+    // there starts the window early
+    let position = ((seconds * f64::from(rate)).round() as u64)
+      .checked_add(delay)
+      .ok_or("the position is out of range")?;
+    let (numer, denom) = self.ticks();
+    let ticks = u128::from(position - position.min(pre_roll)) * denom / (numer * u128::from(rate));
+    let ts = i64::try_from(ticks).map_err(|_| "the position is out of range")?;
     let sought = self
       .format
       .seek(
         SeekMode::Accurate,
-        SeekTo::Time {
-          time,
-          track_id: Some(self.track),
+        SeekTo::Timestamp {
+          ts: Timestamp::new(ts),
+          track_id: self.track,
         },
       )
       .map_err(|e| format!("seeking failed: {e}"))?;
@@ -341,16 +478,15 @@ impl Decoder {
     }
     // the frames from where the container landed to the position are decoded and dropped. a
     // landing past the position, which symphonia 0.6.1's Matroska reader can give, fails
-    let ticks = sought
-      .required_ts
-      .checked_delta(sought.actual_ts)
-      .ok_or("the position is out of range")?;
-    let ticks =
-      u128::try_from(ticks.get()).map_err(|_| "the container sought past the position")?;
-    let mut early = self
-      .frame_at(ticks)
+    let landed = sought.actual_ts.get();
+    if landed > ts {
+      return Err("the container sought past the position".to_string());
+    }
+    let mut early = u128::try_from(landed)
+      .ok()
+      .and_then(|landed| self.frame_at(landed))
+      .and_then(|landed| position.checked_sub(landed))
       .and_then(|frames| usize::try_from(frames).ok())
-      .and_then(|frames| frames.checked_add(lead))
       .ok_or("the position is out of range")?;
     while early > 0 {
       if self.pending[0].len() == self.taken && !self.decode_next() {
@@ -448,6 +584,12 @@ impl Decoder {
     let Some(Stepped { trim, .. }) = self.step() else {
       return false;
     };
+    self.keep(trim)
+  }
+
+  /// adds the packet just decoded to `pending`, less `trim` frames at its ends; false, with the
+  /// reason in `stopped`, when it holds fewer channels than the stream
+  fn keep(&mut self, trim: (usize, usize)) -> bool {
     self
       .decoder
       .last_decoded()
@@ -604,7 +746,14 @@ fn lossless(codec: AudioCodecId) -> bool {
 
 /// whether a codec is one of the lossless coders
 fn keeps_every_bit(codec: AudioCodecId) -> bool {
-  codec == CODEC_ID_FLAC || codec == CODEC_ID_ALAC
+  [
+    CODEC_ID_FLAC,
+    CODEC_ID_ALAC,
+    CODEC_ID_WAVPACK,
+    CODEC_ID_MONKEYS_AUDIO,
+    CODEC_ID_DSD,
+  ]
+  .contains(&codec)
 }
 
 /// whether a codec is PCM, plain or companded
@@ -807,6 +956,222 @@ mod tests {
       decoder.seek(5.0),
       Err("the container sought past the position".to_string())
     );
+  }
+
+  #[test]
+  fn a_seek_in_he_aac_gives_the_audio_a_read_from_the_start_gives() {
+    let (claimed, straight) = decoded(fixtures::HE_AAC.to_vec());
+    assert_eq!(claimed.frames, Some(straight[0].len() as u64));
+    let mut decoder = Decoder::from_source(
+      Box::new(std::io::Cursor::new(fixtures::HE_AAC.to_vec())),
+      &Hint::new(),
+    )
+    .unwrap();
+    let mut window = vec![Vec::new(); 2];
+    for second in [2, 0, 1] {
+      decoder.seek(f64::from(second)).unwrap();
+      assert_eq!(decoder.fill(&mut window, 44_100), Filled::Full);
+      let from = second as usize * 44_100;
+      // the rebuilt band's noise differs from one decode to the next; the core does not
+      let off = apart(&window[0], &straight[0][from..from + 44_100]);
+      assert!(off < 0.2, "second {second}: {off}");
+    }
+  }
+
+  #[test]
+  fn wavpack_from_the_reference_encoder_decodes_to_the_samples_it_was_made_from() {
+    let (claimed, samples) = decoded(fixtures::WAVPACK.to_vec());
+    assert_eq!(claimed.codec, "wavpack");
+    assert!(claimed.lossless);
+    assert_eq!(
+      (claimed.sample_rate, claimed.bit_depth, claimed.channels),
+      (44_100, Some(16), 2)
+    );
+    let (frames, _) = fixtures::CLIP_PCM.as_chunks::<4>();
+    assert_eq!(claimed.frames, Some(frames.len() as u64));
+    for (channel, decoded) in samples.iter().enumerate() {
+      let source: Vec<f32> = frames
+        .iter()
+        .map(|f| f32::from(i16::from_le_bytes([f[2 * channel], f[2 * channel + 1]])) / 32_768.0)
+        .collect();
+      assert_eq!(decoded, &source, "channel {channel}");
+    }
+  }
+
+  #[test]
+  fn wavpack_decodes_to_the_samples_flac_does() {
+    let audio = fixtures::music_for(3, 3, 44_100, fixtures::pink);
+    for bits in [16, 24] {
+      let (claimed, packed) = decoded(fixtures::wavpack(&audio, bits));
+      let (_, flac) = decoded(fixtures::flac(&audio, bits, false));
+      assert_eq!(claimed.bit_depth, Some(bits), "{bits} bits");
+      assert_eq!(claimed.frames, Some(132_300), "{bits} bits");
+      assert_eq!(packed.len(), 2, "{bits} bits");
+      // the FLAC written here ends at its last whole block
+      for (packed, flac) in packed.iter().zip(&flac) {
+        assert_eq!(packed.len(), 132_300, "{bits} bits");
+        assert_eq!(flac.len(), 131_072, "{bits} bits");
+        assert!(packed[..flac.len()] == flac[..], "{bits} bits");
+      }
+      // one channel alone, at another rate, is the same channel
+      let mono = fixtures::Audio {
+        rate: 48_000,
+        channels: vec![audio.channels[0].clone()],
+      };
+      let (claimed, alone) = decoded(fixtures::wavpack(&mono, bits));
+      assert_eq!((claimed.sample_rate, claimed.channels), (48_000, 1));
+      assert!(alone == packed[..1], "{bits} bits, mono");
+    }
+    // float samples come back as they went in, with no depth to state
+    let (claimed, packed) = decoded(fixtures::wavpack_float(&audio));
+    assert_eq!(claimed.bit_depth, None);
+    assert!(packed == audio.channels);
+  }
+
+  #[test]
+  fn a_seek_in_wavpack_gives_the_samples_a_read_from_the_start_gives() {
+    let audio = fixtures::music_for(5, 3, 44_100, fixtures::pink);
+    let bytes = fixtures::wavpack(&audio, 16);
+    let (_, straight) = decoded(bytes.clone());
+    let mut decoder =
+      Decoder::from_source(Box::new(std::io::Cursor::new(bytes)), &Hint::new()).unwrap();
+    let mut window = vec![Vec::new(); 2];
+    for second in [3, 0, 4, 1] {
+      decoder.seek(f64::from(second)).unwrap();
+      assert_eq!(decoder.fill(&mut window, 44_100), Filled::Full);
+      let from = second as usize * 44_100;
+      assert_eq!(
+        window[1],
+        straight[1][from..from + 44_100],
+        "second {second}"
+      );
+    }
+  }
+
+  #[test]
+  fn ape_from_the_reference_encoder_decodes_to_the_samples_it_was_made_from() {
+    let (frames, _) = fixtures::CLIP_PCM.as_chunks::<4>();
+    for (level, bytes) in [
+      ("normal", fixtures::APE_NORMAL),
+      ("insane", fixtures::APE_INSANE),
+    ] {
+      let (claimed, samples) = decoded(bytes.to_vec());
+      assert_eq!(claimed.codec, "ape", "{level}");
+      assert!(claimed.lossless, "{level}");
+      assert_eq!(
+        (claimed.sample_rate, claimed.bit_depth, claimed.channels),
+        (44_100, Some(16), 2),
+        "{level}"
+      );
+      assert_eq!(claimed.frames, Some(frames.len() as u64), "{level}");
+      for (channel, decoded) in samples.iter().enumerate() {
+        let source: Vec<f32> = frames
+          .iter()
+          .map(|f| f32::from(i16::from_le_bytes([f[2 * channel], f[2 * channel + 1]])) / 32_768.0)
+          .collect();
+        assert!(decoded == &source, "{level}, channel {channel}");
+      }
+    }
+  }
+
+  #[test]
+  fn ape_decodes_to_the_samples_wavpack_does_and_seeks_to_them() {
+    // long enough for several frames at either level
+    let audio = fixtures::music_for(12, 3, 44_100, fixtures::pink);
+    for (bits, extra_high) in [(16, false), (24, true)] {
+      let bytes = fixtures::ape(&audio, bits, extra_high);
+      let (claimed, straight) = decoded(bytes.clone());
+      let (_, packed) = decoded(fixtures::wavpack(&audio, bits));
+      assert_eq!(claimed.bit_depth, Some(bits));
+      assert_eq!(claimed.frames, Some(12 * 44_100));
+      assert!(straight == packed, "{bits} bits");
+      let mut decoder =
+        Decoder::from_source(Box::new(std::io::Cursor::new(bytes)), &Hint::new()).unwrap();
+      let mut window = vec![Vec::new(); 2];
+      for second in [7, 0, 11, 3] {
+        decoder.seek(f64::from(second)).unwrap();
+        assert_eq!(decoder.fill(&mut window, 44_100), Filled::Full);
+        let from = second as usize * 44_100;
+        assert!(
+          window[1] == straight[1][from..from + 44_100],
+          "{bits} bits, second {second}"
+        );
+      }
+    }
+  }
+
+  #[test]
+  fn dsd_decodes_to_the_tones_it_was_made_from_in_dsf_and_dsdiff() {
+    let one_bit = fixtures::one_bit_tones(&[1000.0, 3000.0], 3);
+    let (claimed, dsf) = decoded(one_bit.dsf());
+    let (_, dff) = decoded(one_bit.dff());
+    assert_eq!(claimed.codec, "dsd");
+    assert!(claimed.lossless);
+    assert_eq!(
+      (claimed.sample_rate, claimed.bit_depth, claimed.channels),
+      (176_400, None, 2)
+    );
+    assert_eq!(claimed.frames, Some(3 * 176_400));
+    assert!(dsf == dff, "the two containers hold the same samples");
+    // the last samples are still under the filter when the file ends
+    let short = 3 * 176_400 - dsf[0].len();
+    assert!(short < 100, "{short} frames short");
+    for (channel, hz) in dsf.iter().zip([1000.0, 3000.0]) {
+      // a tone rises through zero once a cycle, and one at half of full scale has this level
+      let settled = &channel[1000..];
+      let rises = settled
+        .windows(2)
+        .filter(|pair| pair[0] < 0.0 && pair[1] >= 0.0)
+        .count();
+      let cycles = hz * settled.len() as f64 / 176_400.0;
+      assert!(
+        (rises as f64 - cycles).abs() <= 1.0,
+        "{hz} Hz: {rises} cycles"
+      );
+      let level = rms(settled);
+      assert!(
+        (level - 0.5 / 2f64.sqrt()).abs() < 0.001,
+        "{hz} Hz: {level}"
+      );
+    }
+  }
+
+  #[test]
+  fn a_seek_in_dsd_gives_the_samples_a_read_from_the_start_gives() {
+    let bytes = fixtures::one_bit_tones(&[1000.0, 3000.0], 4).dsf();
+    let (_, straight) = decoded(bytes.clone());
+    let mut decoder =
+      Decoder::from_source(Box::new(std::io::Cursor::new(bytes)), &Hint::new()).unwrap();
+    let mut window = vec![Vec::new(); 2];
+    for second in [2, 0, 1] {
+      decoder.seek(f64::from(second)).unwrap();
+      assert_eq!(decoder.fill(&mut window, 176_400), Filled::Full);
+      let from = second as usize * 176_400;
+      let off = apart(&window[1], &straight[1][from..from + 176_400]);
+      assert!(off < 1e-6, "second {second}: {off}");
+    }
+  }
+
+  #[test]
+  fn dst_compressed_dsd_is_refused_by_name() {
+    // the sound data chunk of a DST file is named for it
+    let mut bytes = fixtures::one_bit_tones(&[1000.0], 1).dff();
+    let at = bytes.windows(4).rposition(|id| id == b"DSD ").unwrap();
+    bytes[at..at + 4].copy_from_slice(b"DST ");
+    let source = Box::new(std::io::Cursor::new(bytes));
+    let Err(engine::Error::Unsupported(why)) = Decoder::from_source(source, &Hint::new()) else {
+      panic!("a DST file opened")
+    };
+    assert!(why.contains("DST-compressed"), "{why}");
+  }
+
+  #[test]
+  fn hybrid_wavpack_is_refused_as_lossy() {
+    let source = Box::new(std::io::Cursor::new(fixtures::WAVPACK_HYBRID.to_vec()));
+    let Err(engine::Error::Unsupported(why)) = Decoder::from_source(source, &Hint::new()) else {
+      panic!("a hybrid file opened")
+    };
+    assert!(why.contains("hybrid WavPack, which is lossy"), "{why}");
   }
 
   #[test]

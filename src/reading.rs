@@ -338,6 +338,22 @@ impl Measured {
       found = weighed(found, grid.as_ref(), thresholds);
     }
     limitations.extend(found.limitations);
+    if let Some(he_aac) = &self.he_aac {
+      // the profiles are lowpasses of encoders that code the whole band, which neither the
+      // guess nor the summary can name here
+      found.encoder_guess = None;
+      if let Some(hz) = found.cutoff_hz {
+        found.summary = format!("The decoded band reaches about {}.", khz(hz));
+      }
+      limitations.push(Limitation::RebuiltBand {
+        hz: he_aac.core_top_hz(),
+      });
+    }
+    if self.dsd_rate.is_some() {
+      limitations.push(Limitation::Dsd {
+        pcm_rate: claimed.sample_rate,
+      });
+    }
     Reading {
       verdict: found.verdict,
       cutoff_verdict,
@@ -349,6 +365,12 @@ impl Measured {
         .chain(found_beside.notes)
         .chain(
           OpusUse::describe(&self.opus).map(|coding| format!("Its Opus packets are {coding}.")),
+        )
+        .chain(self.he_aac.map(|he_aac| format!("The file is {he_aac}.")))
+        .chain(
+          self
+            .dsd_rate
+            .map(|rate| format!("The file is DSD{}.", crate::dsd::multiple_of(rate))),
         )
         .collect::<Vec<_>>()
         .join(" "),

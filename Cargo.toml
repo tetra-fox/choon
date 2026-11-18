@@ -29,7 +29,13 @@ cli = [
 serde = ["dep:serde"]
 # the generated audio and the sample file the analyzer is tested on, for the program's tests here
 # and the tests of the crates that use this one
-testing = ["dep:flacenc", "dep:mp3lame-encoder", "dep:opus"]
+testing = [
+  "dep:flacenc",
+  "dep:mp3lame-encoder",
+  "dep:opus",
+  "dep:oxideav-ape",
+  "wavicle/encode",
+]
 
 # docs.rs shows what `serde` adds; `testing` builds LAME and libopus, which it cannot
 [package.metadata.docs.rs]
@@ -46,6 +52,14 @@ rayon = "1.12.0"
 realfft = "3.5.1"
 # the half-length complex transform of the codec grid scan's DCT-IV
 rustfft = "6.4.1"
+# decodes AAC, with the HE-AAC that symphonia's decoder leaves out. pinned to the release checked
+# against ffmpeg's decode and fuzzed; without its SIMD, which is where most of its unsafe code is
+rusty_aac = { version = "=2.0.2", default-features = false }
+# decodes Monkey's Audio. pinned to the release checked sample for sample against the reference
+# decoder and fuzzed
+ape-decoder = "=0.3.2"
+# decodes WavPack. pinned to the release checked sample for sample against wvunpack and fuzzed
+wavicle = "=0.1.0"
 serde = { version = "1.0.229", features = ["derive"], optional = true }
 # decodes every audio format the analyzer reads, streamed
 symphonia = { version = "0.6.1", features = ["all"] }
@@ -80,6 +94,8 @@ serde_json = { version = "1.0.154", features = [
 flacenc = { version = "0.5.1", default-features = false, optional = true }
 mp3lame-encoder = { version = "0.3.0", optional = true }
 opus = { version = "0.4.0", optional = true }
+# writes Monkey's Audio, without the framework it can register itself in
+oxideav-ape = { version = "=0.0.5", default-features = false, optional = true }
 
 [dev-dependencies]
 # the crate itself with `testing`, for the generated audio its tests read
@@ -115,6 +131,15 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package.symphonia-opus]
+opt-level = 3
+
+[profile.dev.package.ape-decoder]
+opt-level = 3
+
+[profile.dev.package.wavicle]
+opt-level = 3
+
+[profile.dev.package.rusty_aac]
 opt-level = 3
 
 # the encoders the tests make audio with

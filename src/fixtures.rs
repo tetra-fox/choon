@@ -2,8 +2,11 @@
 //!
 //! It is made in the test from a fixed seed: noise shaped like music's spectrum, written as
 //! FLAC, the same noise through the LAME MP3 encoder and back for the transcodes, and through
-//! libopus for Opus streams in Ogg, MP4 and WebM. The one file kept as bytes is a short ALAC tone,
-//! which nothing here can encode.
+//! libopus for Opus streams in Ogg, MP4 and WebM, as WavPack and Monkey's Audio, and tones as
+//! the one-bit samples of DSF and DSDIFF. The files
+//! kept as bytes are a short ALAC tone and five short HE-AAC files, which nothing here can
+//! encode, and a clip from the WavPack and Monkey's Audio reference encoders with the samples it
+//! was made from.
 //!
 //! As test support, every function here panics when encoding, writing or decoding fails.
 
@@ -26,6 +29,38 @@ pub use mp3lame_encoder::Bitrate;
 /// It holds four packets of 4096, 4096, 4096 and 3712 frames, one after the other in its media
 /// data.
 pub const TONE: &[u8] = include_bytes!("fixtures/tone.m4a");
+
+/// HE-AAC files, each three seconds of stereo pink noise at 44.1 kHz with its core at 22.05 kHz.
+///
+/// They were made by fdkaac 1.0.9 from generated noise, at 48 kbit/s and, for HE-AAC v2, at
+/// 32 kbit/s. Nothing here can encode them. Each states its band replication in another way:
+/// after the core's config, in place of it, not at all in an MP4 whose track states the
+/// output rate, and not at all in an ADTS stream.
+pub const HE_AAC: &[u8] = include_bytes!("fixtures/he-aac.m4a");
+/// See [`HE_AAC`]: the config states HE-AAC first.
+pub const HE_AAC_HIERARCHICAL: &[u8] = include_bytes!("fixtures/he-aac-hierarchical.m4a");
+/// See [`HE_AAC`]: an MP4 whose config states the core alone.
+pub const HE_AAC_IMPLICIT: &[u8] = include_bytes!("fixtures/he-aac-implicit.m4a");
+/// See [`HE_AAC`]: an ADTS stream, whose headers state the core alone.
+pub const HE_AAC_ADTS: &[u8] = include_bytes!("fixtures/he-aac.aac");
+/// See [`HE_AAC`]: HE-AAC v2, one coded channel made two by parametric stereo.
+pub const HE_AAC_V2: &[u8] = include_bytes!("fixtures/he-aac-v2.m4a");
+
+/// Quarter of a second of 16-bit stereo noise and tones at 44.1 kHz, as little-endian samples.
+///
+/// It is what [`WAVPACK`], [`APE_NORMAL`] and [`APE_INSANE`] were made from, and what the
+/// reference decoders give back for them.
+pub const CLIP_PCM: &[u8] = include_bytes!("fixtures/clip.pcm");
+/// [`CLIP_PCM`] as WavPack, made by `wavpack -hx3` 5.9.0, with joint stereo and the extra modes
+/// the encoder here does not write.
+pub const WAVPACK: &[u8] = include_bytes!("fixtures/clip.wv");
+/// [`CLIP_PCM`] as hybrid WavPack at 320 kbit/s without its correction file, which is lossy.
+pub const WAVPACK_HYBRID: &[u8] = include_bytes!("fixtures/clip-hybrid.wv");
+
+/// [`CLIP_PCM`] as Monkey's Audio at its normal level, made by `mac` 13.45.
+pub const APE_NORMAL: &[u8] = include_bytes!("fixtures/clip-normal.ape");
+/// [`CLIP_PCM`] as Monkey's Audio at its insane level, made by `mac` 13.45.
+pub const APE_INSANE: &[u8] = include_bytes!("fixtures/clip-insane.ape");
 
 /// Length of most generated files, in seconds.
 ///
@@ -368,6 +403,169 @@ pub fn flac(audio: &Audio, bits: u32, padded: bool) -> Vec<u8> {
   let mut sink = flacenc::bitsink::ByteSink::new();
   flac_stream(audio, bits, padded).write(&mut sink).unwrap();
   sink.into_inner()
+}
+
+/// Returns `audio` as a WavPack stream of `bits`-bit samples, the ones [`flac`] writes.
+pub fn wavpack(audio: &Audio, bits: u32) -> Vec<u8> {
+  let planes = audio.quantized(bits, 7);
+  let interleaved: Vec<i32> = (0..planes[0].len())
+    .flat_map(|i| planes.iter().map(move |p| p[i]))
+    .collect();
+  let params = wavicle::EncodeParams {
+    channels: planes.len() as u32,
+    sample_rate: audio.rate,
+    bits_per_sample: bits,
+  };
+  wavicle::encode_int(params, &interleaved).unwrap()
+}
+
+/// Returns `audio` as a Monkey's Audio file of `bits`-bit samples, 16 or 24, the ones [`flac`]
+/// writes, at the fast level or the extra high one.
+pub fn ape(audio: &Audio, bits: u32, extra_high: bool) -> Vec<u8> {
+  let planes = audio.quantized(bits, 7);
+  let width = (bits / 8) as usize;
+  let data: Vec<u8> = (0..planes[0].len())
+    .flat_map(|i| planes.iter().map(move |p| p[i]))
+    .flat_map(|sample| sample.to_le_bytes().into_iter().take(width))
+    .collect();
+  // the encoder takes a WAV file: its 44-byte header, then the samples
+  let align = (width * planes.len()) as u16;
+  let mut wav = b"RIFF".to_vec();
+  wav.extend_from_slice(&(36 + data.len() as u32).to_le_bytes());
+  wav.extend_from_slice(b"WAVEfmt \x10\0\0\0\x01\0");
+  wav.extend_from_slice(&(planes.len() as u16).to_le_bytes());
+  wav.extend_from_slice(&audio.rate.to_le_bytes());
+  wav.extend_from_slice(&(audio.rate * u32::from(align)).to_le_bytes());
+  wav.extend_from_slice(&align.to_le_bytes());
+  wav.extend_from_slice(&(bits as u16).to_le_bytes());
+  wav.extend_from_slice(b"data");
+  wav.extend_from_slice(&(data.len() as u32).to_le_bytes());
+  wav.extend_from_slice(&data);
+  let level = if extra_high {
+    oxideav_ape::CompressionLevel::ExtraHigh
+  } else {
+    oxideav_ape::CompressionLevel::Fast
+  };
+  oxideav_ape::encode_wav(&wav, level).unwrap()
+}
+
+/// One-bit samples of a DSD file, one vector of bytes per channel.
+///
+/// The first sample of each byte is in its highest bit, and each channel is whole blocks of
+/// 4096 bytes, the last filled out with the pattern DSD holds for silence.
+#[derive(Clone, Debug)]
+pub struct OneBit {
+  /// One-bit samples per second.
+  pub rate: u32,
+  /// One-bit samples in each channel.
+  pub samples: u64,
+  /// Bytes of each channel.
+  pub channels: Vec<Vec<u8>>,
+}
+
+/// Returns `seconds` of tones at half of full scale as one-bit samples at 64 times 44.1 kHz.
+///
+/// Each channel holds the tone of its entry in `hz`, made at the one-bit rate and put through
+/// a second-order sigma-delta modulator.
+pub fn one_bit_tones(hz: &[f64], seconds: usize) -> OneBit {
+  let rate = 64 * 44_100u32;
+  let samples = seconds * rate as usize;
+  let channels = hz
+    .iter()
+    .map(|hz| {
+      let mut bytes = vec![0x69u8; samples.div_ceil(8).next_multiple_of(4096)];
+      bytes[..samples.div_ceil(8)].fill(0);
+      // the quantizer's error of the two steps before, which the loop feeds back so that it
+      // comes out shaped by (1 - z^-1)^2
+      let (mut before, mut two_before) = (0.0f64, 0.0f64);
+      let step = std::f64::consts::TAU * hz / f64::from(rate);
+      for n in 0..samples {
+        let wanted = 0.5 * (step * n as f64).sin() - 2.0 * before + two_before;
+        let bit = wanted >= 0.0;
+        two_before = before;
+        before = if bit { 1.0 } else { -1.0 } - wanted;
+        if bit {
+          bytes[n / 8] |= 0x80 >> (n % 8);
+        }
+      }
+      bytes
+    })
+    .collect();
+  OneBit {
+    rate,
+    samples: samples as u64,
+    channels,
+  }
+}
+
+impl OneBit {
+  /// Returns the samples as a DSF file, the first sample of each byte in its lowest bit.
+  pub fn dsf(&self) -> Vec<u8> {
+    let data: usize = self.channels.iter().map(Vec::len).sum();
+    let mut file = b"DSD ".to_vec();
+    file.extend_from_slice(&28u64.to_le_bytes());
+    file.extend_from_slice(&(92 + data as u64).to_le_bytes());
+    file.extend_from_slice(&0u64.to_le_bytes());
+    file.extend_from_slice(b"fmt ");
+    file.extend_from_slice(&52u64.to_le_bytes());
+    let count = self.channels.len() as u32;
+    // the version, plain DSD, the channel layout, the channels, the rate, a bit per sample
+    for field in [1, 0, count.min(2), count, self.rate, 1] {
+      file.extend_from_slice(&field.to_le_bytes());
+    }
+    file.extend_from_slice(&self.samples.to_le_bytes());
+    file.extend_from_slice(&4096u32.to_le_bytes());
+    file.extend_from_slice(&0u32.to_le_bytes());
+    file.extend_from_slice(b"data");
+    file.extend_from_slice(&(12 + data as u64).to_le_bytes());
+    for block in 0..self.channels[0].len() / 4096 {
+      for channel in &self.channels {
+        let bytes = &channel[block * 4096..(block + 1) * 4096];
+        file.extend(bytes.iter().map(|byte| byte.reverse_bits()));
+      }
+    }
+    file
+  }
+
+  /// Returns the samples as a DSDIFF file.
+  pub fn dff(&self) -> Vec<u8> {
+    let chunk = |id: &[u8; 4], body: &[u8]| {
+      let mut chunk = id.to_vec();
+      chunk.extend_from_slice(&(body.len() as u64).to_be_bytes());
+      chunk.extend_from_slice(body);
+      // a chunk is padded to an even length
+      chunk.resize(chunk.len().next_multiple_of(2), 0);
+      chunk
+    };
+    let held = self.samples.div_ceil(8) as usize;
+    let data: Vec<u8> = (0..held)
+      .flat_map(|i| self.channels.iter().map(move |channel| channel[i]))
+      .collect();
+    let mut channels = (self.channels.len() as u16).to_be_bytes().to_vec();
+    for id in [b"SLFT", b"SRGT", b"C   ", b"LFE ", b"LS  ", b"RS  "]
+      .iter()
+      .take(self.channels.len())
+    {
+      channels.extend_from_slice(*id);
+    }
+    let mut properties = b"SND ".to_vec();
+    properties.extend(chunk(b"FS  ", &self.rate.to_be_bytes()));
+    properties.extend(chunk(b"CHNL", &channels));
+    properties.extend(chunk(b"CMPR", b"DSD \x0enot compressed\0"));
+    let mut form = b"DSD ".to_vec();
+    form.extend(chunk(b"FVER", &[1, 5, 0, 0]));
+    form.extend(chunk(b"PROP", &properties));
+    form.extend(chunk(b"DSD ", &data));
+    chunk(b"FRM8", &form)
+  }
+}
+
+/// Returns `audio` as a WavPack stream of float samples.
+pub fn wavpack_float(audio: &Audio) -> Vec<u8> {
+  let interleaved: Vec<f32> = (0..audio.channels[0].len())
+    .flat_map(|i| audio.channels.iter().map(move |c| c[i]))
+    .collect();
+  wavicle::encode_float(audio.channels.len() as u32, audio.rate, &interleaved).unwrap()
 }
 
 /// Returns `audio` encoded as `bits`-bit FLAC in an Ogg container.

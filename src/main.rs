@@ -20,8 +20,8 @@ use std::time::{Duration, Instant};
 
 use choon::grid::{Evidence, Scan};
 use choon::{
-  CancelCheck, Claimed, Coverage, Error, Flag, MeasureThresholds, Measured, OpusUse, Reading,
-  ReadingThresholds, Settings, Verdict,
+  CancelCheck, Claimed, Coverage, Error, Flag, HeAac, MeasureThresholds, Measured, OpusUse,
+  Reading, ReadingThresholds, Settings, Verdict,
 };
 use clap::{Args, ColorChoice, Parser, Subcommand};
 use rayon::iter::{ParallelBridge, ParallelIterator};
@@ -161,6 +161,8 @@ struct Checked {
   windows: usize,
   grid: Option<Scan>,
   opus: Vec<OpusUse>,
+  he_aac: Option<HeAac>,
+  dsd_rate: Option<u32>,
   readings: Vec<Read>,
 }
 
@@ -178,6 +180,12 @@ struct Analyzed<'a> {
   /// left out for a file that is not Opus
   #[serde(skip_serializing_if = "<[OpusUse]>::is_empty")]
   opus: &'a [OpusUse],
+  /// left out for a file that is not HE-AAC
+  #[serde(skip_serializing_if = "Option::is_none")]
+  he_aac: Option<HeAac>,
+  /// left out for a file that is not DSD
+  #[serde(skip_serializing_if = "Option::is_none")]
+  dsd_rate: Option<u32>,
   readings: &'a [Read],
 }
 
@@ -402,6 +410,8 @@ fn printed(
             windows: checked.windows,
             grid: checked.grid.as_ref(),
             opus: &checked.opus,
+            he_aac: checked.he_aac,
+            dsd_rate: checked.dsd_rate,
             readings: &checked.readings,
           })
           .expect("a reading serializes")
@@ -655,12 +665,15 @@ fn analyzed(
     windows: first.windows.len(),
     grid: first.grid,
     opus: first.opus,
+    he_aac: first.he_aac,
+    dsd_rate: first.dsd_rate,
     readings,
   })
 }
 
 /// a file's readings in a few words each, named after their profile when there are several, with
-/// the verdicts coloured when `colour`, then what an Opus file's packets state
+/// the verdicts coloured when `colour`, then what an Opus file's packets state or the profile of
+/// an HE-AAC file
 fn said(checked: &Checked, colour: bool) -> String {
   let words = |reading: &Reading| {
     let (verdict, rest) = words(reading);
@@ -674,9 +687,16 @@ fn said(checked: &Checked, colour: bool) -> String {
       .collect::<Vec<_>>()
       .join("; "),
   };
-  match OpusUse::describe(&checked.opus) {
-    Some(coding) => format!("{readings}; Opus {coding}"),
-    None => readings,
+  match (
+    OpusUse::describe(&checked.opus),
+    checked.he_aac,
+    checked.dsd_rate,
+  ) {
+    (Some(coding), ..) => format!("{readings}; Opus {coding}"),
+    (None, Some(he_aac), _) => format!("{readings}; {he_aac}"),
+    // a DSD rate is named by its multiple of 44.1 kHz, as DSD64
+    (None, None, Some(rate)) => format!("{readings}; DSD{}", rate / 44_100),
+    (None, None, None) => readings,
   }
 }
 
