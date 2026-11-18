@@ -15,9 +15,11 @@
 //! transform values that stand above the rounding noise of 16-bit samples, on a log scale, in
 //! left and right or in mid and side, whichever pair counts fewer in a frame. The offset with
 //! the lowest count, and how far that count sits below the others, is the codec's
-//! [`CodecScan`]. The AAC analysis is the long window of ffmpeg's AAC encoder: a 2048-point
-//! MDCT at a hop of 1024 with the Kaiser-Bessel-derived window. The MP3 analysis is the layer
-//! III hybrid filterbank: the 512-tap polyphase filterbank, an 18-line MDCT per subband and the
+//! [`CodecScan`]. The AAC analysis is a long block's: a 2048-point MDCT at a hop of 1024. It
+//! runs once with each of the two windows the format gives a long block, the
+//! Kaiser-Bessel-derived one, which ffmpeg's encoder uses, and the sine one, which Apple's
+//! uses. The values an encoder zeroed come back only under its own window, so each analysis
+//! finds the other's grid weakly. The MP3 analysis is the layer III hybrid filterbank: the 512-tap polyphase filterbank, an 18-line MDCT per subband and the
 //! alias-reduction butterflies, at a hop of 576. Short blocks are not analyzed.
 //!
 //! # Opus
@@ -59,7 +61,7 @@ use rustfft::num_traits::Float;
 use rustfft::{Fft, FftPlanner};
 
 /// AAC's hop, the length of its long frames' new samples
-const AAC_HOP: usize = 1024;
+pub(crate) const AAC_HOP: usize = 1024;
 /// MP3's hop, a granule
 const MP3_HOP: usize = 576;
 /// the number of segments scanned
@@ -81,7 +83,7 @@ const MAD_TO_SD: f64 = 1.4826;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum Codec {
-  /// AAC, read with the long blocks of ffmpeg's encoder.
+  /// AAC, read with a long block's transform under either of its windows.
   ///
   /// Vorbis decodes read as AAC too.
   Aac,
@@ -168,9 +170,15 @@ impl OpusScan {
 /// Scan of a file for the frame grids of MP3, AAC and Opus.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct Scan {
-  /// AAC's grid.
+  /// AAC's grid, with the Kaiser-Bessel-derived window.
   pub aac: CodecScan,
+  /// AAC's grid, with the sine window.
+  ///
+  /// `None` in measures kept by a version of the analyzer that did not scan with it.
+  #[cfg_attr(feature = "serde", serde(default))]
+  pub aac_sine: Option<CodecScan>,
   /// MP3's grid.
   pub mp3: CodecScan,
   /// Opus's frames, `None` at a sample rate other than 44.1 and 48 kHz.
@@ -213,26 +221,32 @@ pub struct Found {
 }
 
 /// the grid `scan` shows under `thresholds`: MP3 or AAC over its z threshold with as many
-/// segments agreeing as its own threshold asks, the one furthest over its z threshold when both
-/// are. without either, Opus with enough frames on its lattice in the segments or in the
+/// segments agreeing as its own threshold asks, the one furthest over its z threshold when
+/// several are. AAC is read under each of its windows. without either, Opus with enough frames on its lattice in the segments or in the
 /// windows: the codec decoded last leaves the grid that counts, and Opus's energies can show
 /// through an MP3 made from its decode
 pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found> {
-  let counted = [
+  let aac = |scan| {
     (
       Codec::Aac,
-      &scan.aac,
+      scan,
       thresholds.aac_grid_z,
       thresholds.aac_grid_segments_agreeing,
-    ),
-    (
-      Codec::Mp3,
-      &scan.mp3,
-      thresholds.mp3_grid_z,
-      thresholds.mp3_grid_segments_agreeing,
-    ),
+    )
+  };
+  let mp3 = (
+    Codec::Mp3,
+    &scan.mp3,
+    thresholds.mp3_grid_z,
+    thresholds.mp3_grid_segments_agreeing,
+  );
+  let counted = [
+    Some(aac(&scan.aac)),
+    scan.aac_sine.as_ref().map(aac),
+    Some(mp3),
   ]
   .into_iter()
+  .flatten()
   .filter(|(_, scan, z, agreeing)| scan.z > *z && scan.segments_agreeing >= *agreeing)
   .max_by(|(_, a, za, _), (_, b, zb, _)| (a.z / za).total_cmp(&(b.z / zb)))
   .map(|(codec, scan, _, _)| Found {
@@ -369,9 +383,10 @@ pub(crate) struct Opus {
   pub(crate) uncut_frames: usize,
 }
 
-/// the jobs of one scan: MP3 and AAC in each segment, and Opus where `opus`
+/// the jobs of one scan: MP3 and AAC under each of its windows in each segment, and Opus where
+/// `opus`
 pub(crate) fn jobs(opus: bool) -> usize {
-  (2 + usize::from(opus)) * SEGMENTS
+  (3 + usize::from(opus)) * SEGMENTS
 }
 /// the tasks a job's offsets are split into at most, so that one file's scan can fill the pool
 const TASKS: usize = 32;
@@ -387,7 +402,12 @@ pub(crate) fn scan(
   ended: impl Fn() + Sync,
 ) -> Option<Scan> {
   assert!(segments.complete(), "every segment is full before a scan");
-  let kinds = [Some(Job::Aac), Some(Job::Mp3), opus.map(Job::Opus)];
+  let kinds = [
+    Some(Job::Aac(Window::Kbd)),
+    Some(Job::Aac(Window::Sine)),
+    Some(Job::Mp3),
+    opus.map(Job::Opus),
+  ];
   let jobs: Vec<(Job, &Segment)> = segments
     .0
     .iter()
@@ -398,7 +418,9 @@ pub(crate) fn scan(
     .map(|(job, segment)| {
       go_on().then(|| {
         let curve = match job {
-          Job::Aac => Curve::Aac(in_file(&Aac::curve(segment), segment.start)),
+          Job::Aac(window) => {
+            Curve::Aac(window, in_file(&Aac::curve(segment, window), segment.start))
+          }
           Job::Mp3 => Curve::Mp3(in_file(&Mp3::new().curve(segment), segment.start)),
           // the counts come in the file's offsets
           Job::Opus(opus) => {
@@ -416,16 +438,18 @@ pub(crate) fn scan(
       })
     })
     .collect::<Option<_>>()?;
-  let (mut aac, mut mp3, mut frames) = (Vec::new(), Vec::new(), Vec::new());
+  let (mut aac, mut sine, mut mp3, mut frames) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
   for curve in curves {
     match curve {
-      Curve::Aac(curve) => aac.push(curve),
+      Curve::Aac(Window::Kbd, curve) => aac.push(curve),
+      Curve::Aac(Window::Sine, curve) => sine.push(curve),
       Curve::Mp3(curve) => mp3.push(curve),
       Curve::Opus(curve) => frames.push(curve),
     }
   }
   Some(Scan {
     aac: codec_scan(&aac),
+    aac_sine: Some(codec_scan(&sine)),
     mp3: codec_scan(&mp3),
     opus: opus.map(|opus| opus_scan(&frames, opus.uncut_frames)),
   })
@@ -434,7 +458,7 @@ pub(crate) fn scan(
 /// what one job of a scan looks for in its segment
 #[derive(Clone, Copy)]
 enum Job {
-  Aac,
+  Aac(Window),
   Mp3,
   Opus(Opus),
 }
@@ -442,7 +466,7 @@ enum Job {
 /// what a job found at each offset of the file's grid: MP3's and AAC's counts of transform
 /// values on a log scale, Opus's counts of frames
 enum Curve {
-  Aac(Vec<f64>),
+  Aac(Window, Vec<f64>),
   Mp3(Vec<f64>),
   Opus(Vec<usize>),
 }
@@ -553,7 +577,31 @@ fn active(values: &[f32], t2: f32) -> f64 {
     * std::f64::consts::LOG10_2
 }
 
-/// the AAC analysis: the KBD long window and an orthonormal MDCT, transformed in single
+/// the window of an AAC long block
+#[derive(Clone, Copy)]
+pub(crate) enum Window {
+  /// Kaiser-Bessel derived, with an alpha of 4
+  Kbd,
+  Sine,
+}
+
+impl Window {
+  /// the window over the 2048 samples of a long block
+  pub(crate) fn samples(self) -> Vec<f32> {
+    let length = 2 * AAC_HOP;
+    match self {
+      Self::Kbd => kbd_window(length, 4.0)
+        .into_iter()
+        .map(|w| w as f32)
+        .collect(),
+      Self::Sine => (0..length)
+        .map(|n| (std::f64::consts::PI * (n as f64 + 0.5) / length as f64).sin() as f32)
+        .collect(),
+    }
+  }
+}
+
+/// the AAC analysis: a long block's window and an orthonormal MDCT, transformed in single
 /// precision
 struct Aac {
   window: Vec<f32>,
@@ -567,12 +615,9 @@ struct Aac {
 }
 
 impl Aac {
-  fn new() -> Self {
+  fn new(window: Window) -> Self {
     Self {
-      window: kbd_window(2 * AAC_HOP, 4.0)
-        .into_iter()
-        .map(|w| w as f32)
-        .collect(),
+      window: window.samples(),
       dct: DctIv::new(AAC_HOP),
       frame: vec![0.0; 2 * AAC_HOP],
       folded: vec![0.0; AAC_HOP],
@@ -584,13 +629,16 @@ impl Aac {
   /// the active count summed over the long frames of `segment`, for each offset of the grid
   /// from its first sample. every offset counts the same frames. runs of offsets are tasks on
   /// rayon's thread pool, each with an analysis of its own.
-  fn curve(segment: &Segment) -> Vec<f64> {
+  fn curve(segment: &Segment, window: Window) -> Vec<f64> {
     let left: Vec<f32> = segment.left.iter().map(|s| *s as f32).collect();
     let right: Vec<f32> = segment.right.iter().map(|s| *s as f32).collect();
     (0..AAC_HOP)
       .into_par_iter()
       .with_min_len(AAC_HOP / TASKS)
-      .map_init(Self::new, |aac, offset| aac.count(&left, &right, offset))
+      .map_init(
+        || Self::new(window),
+        |aac, offset| aac.count(&left, &right, offset),
+      )
       .collect()
   }
 
@@ -1069,6 +1117,7 @@ mod tests {
     };
     let scan = |aac: (f64, usize), mp3: (f64, usize)| Scan {
       aac: codec_scan(aac.0, aac.1),
+      aac_sine: None,
       mp3: codec_scan(mp3.0, mp3.1),
       opus: None,
     };
@@ -1079,6 +1128,14 @@ mod tests {
     assert_eq!(codec(&scan((9.0, 4), (12.0, 4))), None);
     // both over: 30 / 9 against 36 / 12
     assert_eq!(codec(&scan((30.0, 4), (36.0, 3))), Some(Codec::Aac));
+    // a grid only the sine window shows is AAC's, with that window's evidence
+    let sine = Scan {
+      aac_sine: Some(codec_scan(40.0, 4)),
+      ..scan((6.0, 1), (2.0, 0))
+    };
+    let shown = found(&sine, &thresholds).expect("the sine scan is over the threshold");
+    assert_eq!(shown.codec, Codec::Aac);
+    assert_eq!(shown.evidence, Evidence::Count(codec_scan(40.0, 4)));
   }
 
   #[test]

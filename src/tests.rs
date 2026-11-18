@@ -8,9 +8,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::engine::{self, Coverage, Error, Measured, Settings, measure, measure_bytes};
-use crate::fixtures::{self, Audio, Bitrate, lo_fi, music, music_for, pink, tone};
+use crate::fixtures::{self, Audio, Bitrate, LongWindow, lo_fi, music, music_for, pink, tone};
 use crate::flags::Flag;
-use crate::grid::{self, Codec};
+use crate::grid::{self, Codec, Evidence};
 use crate::limitation::Limitation;
 use crate::reading::{Reading, Verdict};
 use crate::thresholds::{MeasureThresholds, ReadingThresholds};
@@ -150,6 +150,42 @@ fn an_mp3_decode_carries_the_mp3_grid_and_its_source_none() {
     } else {
       assert!(scan.aac.z < 5.0 && scan.mp3.z < 5.0, "{scan:?}");
     }
+  }
+}
+
+#[test]
+fn a_transform_decode_carries_the_aac_grid_under_the_window_it_was_coded_with() {
+  let dir = tempfile::tempdir().unwrap();
+  let source = music(1, 44_100, pink);
+  let apart = |a: &[f32], b: &[f32]| -> f64 {
+    let squares = |x: &mut dyn Iterator<Item = f64>| x.map(|v| v * v).sum::<f64>();
+    let difference = squares(&mut a.iter().zip(b).map(|(a, b)| f64::from(a - b)));
+    (difference / squares(&mut b.iter().map(|b| f64::from(*b)))).sqrt()
+  };
+  for (name, window) in [
+    ("kaiser-bessel", LongWindow::KaiserBessel),
+    ("sine", LongWindow::Sine),
+  ] {
+    let through = fixtures::through_transform(&source, window, 64);
+    // the coder kept the audio where it should be: it differs by its rounding and its cut
+    let off = apart(&through.channels[0], &source.channels[0]);
+    assert!(off < 0.5, "{name}: {off}");
+    let path = flac(dir.path(), &format!("{name}.flac"), &through, 16);
+    let measured = measure(path, &settings()).unwrap();
+    let scan = measured.grid.as_ref().expect("a lossless file is scanned");
+    let sine = scan.aac_sine.as_ref().expect("the sine window is scanned");
+    let (own, other) = match window {
+      LongWindow::KaiserBessel => (&scan.aac, sine),
+      LongWindow::Sine => (sine, &scan.aac),
+    };
+    assert_eq!(own.offset, 1024 - 64, "{name}: {scan:?}");
+    assert_eq!(own.segments_agreeing, 4, "{name}: {scan:?}");
+    assert!(own.z > 3.0 * other.z, "{name}: {scan:?}");
+    let found = grid::found(scan, &ReadingThresholds::default());
+    let found = found.unwrap_or_else(|| panic!("{name}: {scan:?}"));
+    assert_eq!(found.codec, Codec::Aac, "{name}: {scan:?}");
+    assert_eq!(found.evidence, Evidence::Count(own.clone()), "{name}");
+    assert_eq!(read(&measured).verdict, Verdict::LikelyTranscode, "{name}");
   }
 }
 

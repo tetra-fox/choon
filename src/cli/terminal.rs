@@ -387,9 +387,14 @@ fn grid(checked: &Checked, reading: &Reading) -> String {
       let opus = scan.opus.as_ref().map_or_else(String::new, |opus| {
         format!(", Opus frames {} and {}", opus.frames, opus.uncut_frames)
       });
+      // AAC's grid under whichever of its windows shows it more
+      let aac = scan
+        .aac_sine
+        .as_ref()
+        .map_or(scan.aac.z, |sine| sine.z.max(scan.aac.z));
       format!(
-        "none over the thresholds (MP3 z {:.1}, AAC z {:.1}{opus})",
-        scan.mp3.z, scan.aac.z
+        "none over the thresholds (MP3 z {:.1}, AAC z {aac:.1}{opus})",
+        scan.mp3.z
       )
     }
     (None, None) => "not scanned".to_string(),

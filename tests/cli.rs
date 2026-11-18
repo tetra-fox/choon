@@ -524,3 +524,24 @@ fn several_profiles_share_a_line_and_only_a_lossy_verdict_names_an_encoder() {
   );
   assert!(!lines[1].contains("kbps"), "{}", lines[1]);
 }
+
+#[test]
+fn a_decode_of_a_sine_window_coder_names_aac_and_the_scan_states_both_windows() {
+  let dir = tempfile::tempdir().unwrap();
+  let through =
+    fixtures::through_transform(&music(1, 44_100, pink), fixtures::LongWindow::Sine, 64);
+  let fake = dir.path().join("fake.flac");
+  fixtures::write_flac(&through, 16, false, &fake);
+  let fake = path(&fake);
+  let output = choon(&["--json", &fake]);
+  assert_eq!(status(&output), 1, "{output:?}");
+  let line: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+  let found = &line["readings"][0]["grid"];
+  assert_eq!(found["codec"], "aac");
+  assert_eq!(found["offset"], 960);
+  assert_eq!(found["z"], line["grid"]["aacSine"]["z"]);
+  assert!(
+    line["grid"]["aac"]["z"].as_f64().unwrap() < found["z"].as_f64().unwrap(),
+    "{line}"
+  );
+}
