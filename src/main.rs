@@ -721,6 +721,9 @@ fn words(reading: &Reading) -> (&'static str, String) {
       Evidence::Lattice(scan) => format!("{} frames", scan.most().1),
       Evidence::Shifted { shifted } => format!("{} frames at another level", shifted.most().1),
       Evidence::Hybrid { hybrid } => format!("{} hybrid frames", hybrid.most().1),
+      Evidence::Short { short } => {
+        format!("{} frames of {} ms", short.most().1, short.milliseconds())
+      }
     };
     let rest = format!(
       ": {} grid at offset {} ({how}), {cut}{at}",

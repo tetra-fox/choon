@@ -402,6 +402,60 @@ fn a_decode_of_opus_in_its_hybrid_mode_carries_hybrid_frames() {
 }
 
 #[test]
+fn an_opus_decode_of_frames_under_20_ms_carries_frames_of_their_length() {
+  let dir = tempfile::tempdir().unwrap();
+  let thresholds = ReadingThresholds::default();
+  let source = music(1, 48_000, pink);
+  // libopus set for music delays by 312 samples whatever the frame's length
+  for (at, (length, offset)) in [(480, 468), (240, 108), (120, 48)].into_iter().enumerate() {
+    let short = fixtures::OpusSettings {
+      frame: length,
+      ..fixtures::OpusSettings::music(128)
+    };
+    let path = dir.path().join(format!("frames-{length}.opus"));
+    std::fs::write(&path, fixtures::opus(&source, short).ogg()).unwrap();
+    let through = fixtures::decoded(&path);
+    for (name, audio) in [
+      ("decoded.flac", through.clone()),
+      ("at-44100.flac", through.resampled(44_100)),
+    ] {
+      let measured = measure(flac(dir.path(), name, &audio, 16), &settings()).unwrap();
+      let opus = measured.grid.as_ref().and_then(|scan| scan.opus.clone());
+      let opus = opus.expect("the rate is one Opus is looked for at");
+      let said = format!("{length} samples, {name}: {opus:?}");
+      assert!(
+        opus.frames < thresholds.opus_grid_frames
+          && opus.uncut_frames < thresholds.opus_uncut_frames,
+        "{said}"
+      );
+      for (other, counted) in opus.short.iter().enumerate() {
+        let enough = counted.frames >= 4 * thresholds.opus_short_frames
+          && counted.uncut_frames >= 4 * thresholds.opus_short_uncut_frames;
+        assert_eq!(enough, other == at, "{said}");
+        assert!(
+          other == at || counted.frames + counted.uncut_frames <= 1,
+          "{said}"
+        );
+      }
+      let short = opus.short[at].clone();
+      assert_eq!(
+        (short.length, short.offset, short.uncut_offset),
+        (length, offset, offset),
+        "{said}"
+      );
+      let reading = read(&measured);
+      assert_eq!(reading.verdict, Verdict::LikelyTranscode, "{reading:#?}");
+      let found = reading.grid.expect("the short frames make a grid");
+      assert_eq!(found.codec, Codec::Opus);
+      assert_eq!(found.family, Some(grid::Family::Libopus));
+      let frames = format!("frames of {} ms", short.milliseconds());
+      assert_eq!(found.evidence, Evidence::Short { short });
+      assert!(reading.summary.contains(&frames), "{}", reading.summary);
+    }
+  }
+}
+
+#[test]
 fn audio_that_was_never_opus_carries_no_opus_frames() {
   let dir = tempfile::tempdir().unwrap();
   let source = music(1, 44_100, pink);
@@ -426,6 +480,11 @@ fn audio_that_was_never_opus_carries_no_opus_frames() {
     let hybrid = opus.hybrid.as_ref().expect("hybrid frames are counted");
     assert!(
       (hybrid.uncut_frames as f64) < 0.05 * hybrid.uncut_tested as f64,
+      "{name}: {opus:?}"
+    );
+    let short = opus.short.iter();
+    assert!(
+      short.clone().count() == 3 && short.map(|s| s.frames + s.uncut_frames).all(|n| n <= 1),
       "{name}: {opus:?}"
     );
   }

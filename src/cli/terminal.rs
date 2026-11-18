@@ -422,6 +422,15 @@ fn grid(checked: &Checked, reading: &Reading) -> String {
         hybrid.uncut_frames,
         hybrid.uncut_tested
       ),
+      Evidence::Short { short } => format!(
+        "{} at offset {}, {} frames of {} ms on its energy lattice in the stretches, {} in the \
+         windows",
+        found.codec,
+        short.offset,
+        short.frames,
+        short.milliseconds(),
+        short.uncut_frames
+      ),
     },
     (None, Some(scan)) => {
       let opus = scan.opus.as_ref().map_or_else(String::new, |opus| {

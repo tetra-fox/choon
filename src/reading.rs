@@ -444,6 +444,14 @@ fn weighed(
            hybrid mode."
         )
       }
+      Evidence::Short { short } => {
+        let (offset, frames) = short.most();
+        format!(
+          "The band energies of {frames} frames of {} ms at offset {offset} sit on the lattice \
+           of Opus's quantizer.",
+          short.milliseconds()
+        )
+      }
     };
     let family = grid.family.map_or_else(String::new, |family| {
       format!(" The offset is the one {family} leaves in a decode whose start was not cut.")

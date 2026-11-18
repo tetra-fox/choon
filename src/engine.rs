@@ -537,6 +537,7 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
         rate,
         bits,
         uncut: uncut.counted(),
+        uncut_short: uncut.short_counted(),
         other_rate: settings.thresholds.scan_other_rate,
       });
     measured.grid = scan_grid(segments, opus, &run, &mut measured)?;

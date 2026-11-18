@@ -232,6 +232,16 @@ pub struct ReadingThresholds {
   /// [`OpusShifted::uncut_frames`](crate::grid::OpusShifted::uncut_frames), as
   /// `opus_shifted_frames` is with its count.
   pub opus_shifted_uncut_frames: usize,
+  /// Fewest frames of one length under 20 ms on Opus's lattice at one offset of the segments.
+  ///
+  /// It is compared with [`OpusShort::frames`](crate::grid::OpusShort::frames) of each
+  /// length, where no count of 20 ms frames makes an Opus grid.
+  pub opus_short_frames: usize,
+  /// Fewest frames of one length under 20 ms on Opus's lattice in the windows measured.
+  ///
+  /// It is compared with [`OpusShort::uncut_frames`](crate::grid::OpusShort::uncut_frames),
+  /// as `opus_short_frames` is with its count.
+  pub opus_short_uncut_frames: usize,
   /// Fewest different pairs of steps among Opus's hybrid frames, for an Opus grid.
   ///
   /// It is compared with [`OpusHybrid::steps`](crate::grid::OpusHybrid::steps) and with
@@ -348,6 +358,9 @@ impl Default for ReadingThresholds {
       // windows, apart from one master that carries such frames on an uncut decode's grid
       opus_shifted_frames: 6,
       opus_shifted_uncut_frames: 4,
+      // of frames under 20 ms they reach one in the stretches and one in the windows
+      opus_short_frames: 3,
+      opus_short_uncut_frames: 3,
       // the pilot files that were never Opus reach nine pairs of steps at this share, and a
       // share of 0.04 with this many pairs
       opus_hybrid_steps: 30,

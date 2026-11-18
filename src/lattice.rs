@@ -13,8 +13,10 @@
 //! predicts from its own lower bands alone. the hybrid mode codes only the top four bands this
 //! way, over a voice coder's output that reaches into the lowest of them.
 //!
-//! the analysis is of 20 ms frames at 48 kHz; samples at 44.1 kHz are brought back to 48 kHz
-//! first.
+//! the analysis is of frames at 48 kHz; samples at 44.1 kHz are brought back to 48 kHz first.
+//! frames of 20 ms are read every way above. frames of 10, 5 and 2.5 ms hold the same bands in
+//! a half, a quarter and an eighth of the bins and predict with other shares; they are read as
+//! one block, after the frame before or without it.
 
 use rayon::prelude::*;
 
@@ -49,6 +51,49 @@ const BETA: f64 = 6554.0 / 32768.0;
 /// how much of each coarse step is kept out of the sum over the lower bands in a frame coded
 /// without the frame before it, which predicts from that sum alone
 const BETA_INTRA: f64 = 4915.0 / 32768.0;
+
+/// a frame shorter than 20 ms
+#[derive(Clone, Copy)]
+pub(crate) struct Short {
+  /// the samples a frame brings at 48 kHz
+  pub(crate) length: usize,
+  /// how much of a band's energy a frame earlier predicts it
+  alpha: f64,
+  /// how much of each coarse step is kept out of the sum over the lower bands
+  beta: f64,
+}
+
+/// the samples libopus's encoder delays by: 312, or 120 in its low-delay mode, which ffmpeg
+/// sets for frames under 10 ms
+pub(crate) const DELAYS: [usize; 2] = [312, 120];
+
+/// frames of 10, 5 and 2.5 ms
+pub(crate) const SHORT: [Short; 3] = [
+  Short {
+    length: 480,
+    alpha: 21248.0 / 32768.0,
+    beta: 12124.0 / 32768.0,
+  },
+  Short {
+    length: 240,
+    alpha: 26112.0 / 32768.0,
+    beta: 22282.0 / 32768.0,
+  },
+  Short {
+    length: 120,
+    alpha: 29440.0 / 32768.0,
+    beta: 30147.0 / 32768.0,
+  },
+];
+
+impl Short {
+  /// where the frames of a decode sit when nothing was cut from its start, from the file's
+  /// first sample, for each of [`DELAYS`]: a frame's window reaches half of what its length has
+  /// over the overlap back from where its rise starts
+  pub(crate) fn uncut_offsets(&self) -> [usize; 2] {
+    DELAYS.map(|delay| (4 * self.length - delay - (self.length - OVERLAP) / 2) % self.length)
+  }
+}
 /// the short blocks of a transient frame, and the samples each brings
 const BLOCKS: usize = 8;
 const BLOCK: usize = FRAME / BLOCKS;
@@ -116,15 +161,21 @@ impl Rate {
   }
 }
 
-/// the rounding noise of a transform value in each band of pre-emphasized `bits`-bit samples
-fn noise(bits: u32) -> [f64; BANDS] {
+/// the bins of `band` in a frame of `length` samples
+fn bins(band: usize, length: usize) -> std::ops::Range<usize> {
+  EDGES[band] * length / FRAME..EDGES[band + 1] * length / FRAME
+}
+
+/// the rounding noise of a transform value in each band of a frame of `length` pre-emphasized
+/// `bits`-bit samples
+fn noise(bits: u32, length: usize) -> [f64; BANDS] {
   let sigma = 2f64.powi(1 - bits.min(24) as i32) / 12f64.sqrt();
   std::array::from_fn(|band| {
-    let bins = EDGES[band]..EDGES[band + 1];
+    let bins = bins(band, length);
     let width = bins.len() as f64;
     let gain: f64 = bins
       .map(|bin| {
-        let w = std::f64::consts::PI * (bin as f64 + 0.5) / FRAME as f64;
+        let w = std::f64::consts::PI * (bin as f64 + 0.5) / length as f64;
         // |1 - p e^(-jw)|^2
         1.0 - 2.0 * PRE_EMPHASIS * w.cos() + PRE_EMPHASIS * PRE_EMPHASIS
       })
@@ -145,9 +196,11 @@ fn pre_emphasized(samples: impl Iterator<Item = f64>) -> Vec<f32> {
     .collect()
 }
 
-/// the CELT analysis of a frame, as one long block or as eight short ones: the low-overlap
-/// window and an orthonormal MDCT
+/// the CELT analysis of a frame, as one long block or, at 20 ms, as eight short ones: the
+/// low-overlap window and an orthonormal MDCT
 struct Celt {
+  /// the samples a frame brings
+  length: usize,
   /// the window's rise over the overlap
   rise: Vec<f32>,
   dct: DctIv,
@@ -178,7 +231,8 @@ struct Bands {
 }
 
 impl Celt {
-  fn new(bits: u32) -> Self {
+  /// for frames of `length` samples of `bits` bits
+  fn new(bits: u32, length: usize) -> Self {
     let rise = (0..OVERLAP)
       .map(|i| {
         let inner = (0.5 * std::f64::consts::PI * (i as f64 + 0.5) / OVERLAP as f64).sin();
@@ -186,20 +240,22 @@ impl Celt {
       })
       .collect();
     Self {
+      length,
       rise,
-      dct: DctIv::new(FRAME),
-      frame: vec![0.0; 2 * FRAME],
-      folded: vec![0.0; FRAME],
-      values: vec![0.0; FRAME],
+      dct: DctIv::new(length),
+      frame: vec![0.0; 2 * length],
+      folded: vec![0.0; length],
+      values: vec![0.0; length],
       short: DctIv::new(BLOCK),
       block: vec![0.0; 2 * BLOCK],
       block_folded: vec![0.0; BLOCK],
       block_values: vec![0.0; BLOCK],
-      noise: noise(bits),
+      noise: noise(bits, length),
     }
   }
 
-  /// the bands of the frame whose 1920 pre-emphasized samples are `samples`, read as `blocks`
+  /// the bands of the 20 ms frame whose 1920 pre-emphasized samples are `samples`, read as
+  /// `blocks`
   fn read(&mut self, samples: &[f32], blocks: Blocks) -> Bands {
     match blocks {
       Blocks::Long => self.bands(samples),
@@ -207,7 +263,7 @@ impl Celt {
     }
   }
 
-  /// the bands of a frame read as eight short blocks: each block is 240 samples under the
+  /// the bands of a 20 ms frame read as eight short blocks: each block is 240 samples under the
   /// window's rise and fall, 120 after the one before, and a band's energy is the sum of its
   /// values in all eight
   fn short_bands(&mut self, samples: &[f32]) -> Bands {
@@ -247,11 +303,12 @@ impl Celt {
     bands
   }
 
-  /// the bands of the frame whose 1920 pre-emphasized samples are `samples`
+  /// the bands of the frame whose pre-emphasized samples, twice its length, are `samples`
   fn bands(&mut self, samples: &[f32]) -> Bands {
+    let length = self.length;
     // the window is zero, rises over the overlap, is one, falls and is zero again
-    let flat = (FRAME - OVERLAP) / 2;
-    let (rise_from, fall_from) = (flat, 2 * FRAME - flat - OVERLAP);
+    let flat = (length - OVERLAP) / 2;
+    let (rise_from, fall_from) = (flat, 2 * length - flat - OVERLAP);
     self.frame[..rise_from].fill(0.0);
     self.frame[fall_from + OVERLAP..].fill(0.0);
     self.frame[rise_from + OVERLAP..fall_from]
@@ -266,12 +323,14 @@ impl Celt {
       energy: [0.0; BANDS],
       loud: [false; BANDS],
     };
+    // an inverse transform gains the root of half the frame's length
+    let scale = SCALE + 0.5 * (FRAME as f64 / length as f64).log2();
     for band in 0..BANDS {
-      let squares: f64 = self.values[EDGES[band]..EDGES[band + 1]]
+      let squares: f64 = self.values[bins(band, length)]
         .iter()
         .map(|v| f64::from(*v).powi(2))
         .sum();
-      bands.energy[band] = 0.5 * (squares + 1e-300).log2() - MEANS[band] + SCALE;
+      bands.energy[band] = 0.5 * (squares + 1e-300).log2() - MEANS[band] + scale;
       bands.loud[band] = squares.sqrt() >= LOUD * self.noise[band];
     }
     bands
@@ -289,17 +348,27 @@ fn nearest(x: f64) -> f64 {
   (x + ROUNDS) - ROUNDS
 }
 
-/// each band's step from its prediction in a frame after the frame `before`, with `shift` taken
-/// off every step: a gain on the samples moves every energy by twice the shift
+/// each band's step from its prediction in a 20 ms frame after the frame `before`, with `shift`
+/// taken off every step: a gain on the samples moves every energy by twice the shift
 fn steps(before: &Bands, bands: &Bands, shift: f64) -> [f64; BANDS] {
+  steps_with((ALPHA, BETA), before, bands, shift)
+}
+
+/// [`steps`] for frames that predict with the shares `alpha` and `beta`
+fn steps_with(
+  (alpha, beta): (f64, f64),
+  before: &Bands,
+  bands: &Bands,
+  shift: f64,
+) -> [f64; BANDS] {
   let level = 2.0 * shift;
   let mut steps = [0.0; BANDS];
   // the sum over the lower bands of what their coarse steps leave
   let mut lower = 0.0;
   for band in 0..BANDS {
-    let predicted = ALPHA * (before.energy[band] - level).max(LOWEST_PREDICTING) + lower;
+    let predicted = alpha * (before.energy[band] - level).max(LOWEST_PREDICTING) + lower;
     let step = bands.energy[band] - level - predicted;
-    lower += (1.0 - BETA) * nearest(step);
+    lower += (1.0 - beta) * nearest(step);
     steps[band] = step;
   }
   steps
@@ -333,6 +402,12 @@ fn on_lattice(before: Option<&Bands>, bands: &Bands, shift: f64) -> (usize, usiz
     Some(before) => steps(before, bands, shift),
     None => steps_alone(bands, shift),
   };
+  tested_and_on(steps, before, bands)
+}
+
+/// of `steps`, the ones of bands loud in the frame and in the frame `before`, and how many of
+/// those sit on the lattice
+fn tested_and_on(steps: [f64; BANDS], before: Option<&Bands>, bands: &Bands) -> (usize, usize) {
   let (mut tested, mut hits) = (0, 0);
   for (band, step) in steps.into_iter().enumerate() {
     if bands.loud[band] && before.is_none_or(|before| before.loud[band]) {
@@ -643,6 +718,54 @@ fn frames_in(length: usize) -> usize {
   (length / FRAME).saturating_sub(3)
 }
 
+/// whether a short frame sits on the lattice after the frame before it, or with `alone`
+/// without it: every channel with enough tested bands has its share of them on the lattice,
+/// and one at least has enough
+fn short_sits(
+  short: Short,
+  frame: usize,
+  alone: bool,
+  channels: usize,
+  bands: &mut impl FnMut(usize, usize) -> Bands,
+) -> bool {
+  let mut any = false;
+  for channel in 0..channels {
+    let now = bands(channel, frame);
+    let (tested, hits) = if alone {
+      on_lattice(None, &now, 0.0)
+    } else {
+      let before = bands(channel, frame - 1);
+      let steps = steps_with((short.alpha, short.beta), &before, &now, 0.0);
+      tested_and_on(steps, Some(&before), &now)
+    };
+    match judged(tested, hits) {
+      Some(true) => any = true,
+      Some(false) => return false,
+      None => {}
+    }
+  }
+  any
+}
+
+/// how many of a run of `frames` short frames sit on the lattice after the frame before them,
+/// and how many do that or sit on it without the frame before. `bands(channel, frame)` gives a
+/// frame's bands, and is asked for a channel's only where the channels before it leave the
+/// frame open
+fn short_sitting(
+  short: Short,
+  frames: usize,
+  channels: usize,
+  mut bands: impl FnMut(usize, usize) -> Bands,
+) -> [usize; 2] {
+  let mut counts = [0; 2];
+  for frame in 1..frames {
+    let after = short_sits(short, frame, false, channels, &mut bands);
+    counts[0] += usize::from(after);
+    counts[1] += usize::from(after || short_sits(short, frame, true, channels, &mut bands));
+  }
+  counts
+}
+
 /// one stretch at 48 kHz: its channels, pre-emphasized, and where its first sample sits on the
 /// file's 48 kHz lattice
 struct Stretch {
@@ -712,7 +835,7 @@ impl Stretches {
       .map_init(
         || {
           (
-            Celt::new(self.bits),
+            Celt::new(self.bits, FRAME),
             vec![None; self.stretches.len() * 4 * most],
           )
         },
@@ -734,12 +857,49 @@ impl Stretches {
       )
       .collect()
   }
+
+  /// at each offset of the file's grid of `short` frames, how many of the stretches' frames
+  /// sit on the lattice after the frame before them, and how many do that or sit on it without
+  /// it. runs of offsets are tasks on rayon's thread pool
+  pub(crate) fn short_counted(&self, short: Short) -> Vec<[usize; 2]> {
+    let length = short.length;
+    (0..length)
+      .into_par_iter()
+      .with_min_len((length / 32).max(1))
+      .map_init(
+        || (Celt::new(self.bits, length), Vec::new()),
+        |(celt, kept), offset| {
+          let mut counts = [0; 2];
+          for stretch in self.stretches.iter().flatten() {
+            let frames = (stretch.channels[0].len() / length).saturating_sub(3);
+            // below the frame, so it fits
+            let shift = (stretch.start % length as u64) as usize;
+            let first = (offset + length - shift) % length;
+            kept.clear();
+            kept.resize(2 * frames, None);
+            let run = short_sitting(short, frames, 2, |channel, frame| {
+              *kept[channel * frames + frame].get_or_insert_with(|| {
+                celt.bands(&stretch.channels[channel][first + frame * length..][..2 * length])
+              })
+            });
+            counts[0] += run[0];
+            counts[1] += run[1];
+          }
+          counts
+        },
+      )
+      .collect()
+  }
 }
 
 /// counts the frames on the lattice in the windows a file is measured at, with the frame grid
 /// of a decode whose start was not cut
 pub(crate) struct Uncut {
   celt: Celt,
+  /// the analysis of each length of short frame, and what the windows' frames of that length
+  /// count on the grid of each of [`DELAYS`]: on the lattice after the frame before, and that
+  /// or without it
+  short: [(Celt, [[usize; 2]; 2]); 3],
   rate: Rate,
   /// each window's frames on that grid, by channel: a frame read as a long block and as short
   /// ones
@@ -749,7 +909,8 @@ pub(crate) struct Uncut {
 impl Uncut {
   pub(crate) fn new(rate: Rate, bits: u32) -> Self {
     Self {
-      celt: Celt::new(bits),
+      celt: Celt::new(bits, FRAME),
+      short: SHORT.map(|short| (Celt::new(bits, short.length), [[0; 2]; 2])),
       rate,
       windows: Vec::new(),
     }
@@ -771,6 +932,23 @@ impl Uncut {
       return;
     };
     let length = stretch.channels[0].len();
+    for (short, (celt, counts)) in SHORT.iter().zip(&mut self.short) {
+      let frame = short.length;
+      // below the frame, so it fits
+      let shift = (stretch.start % frame as u64) as usize;
+      for (grid, counts) in short.uncut_offsets().into_iter().zip(counts) {
+        let offset = (grid + frame - shift) % frame;
+        let frames = (length.saturating_sub(offset) / frame).saturating_sub(1);
+        let mut kept = vec![None; stretch.channels.len() * frames];
+        let run = short_sitting(*short, frames, stretch.channels.len(), |channel, at| {
+          *kept[channel * frames + at].get_or_insert_with(|| {
+            celt.bands(&stretch.channels[channel][offset + at * frame..][..2 * frame])
+          })
+        });
+        counts[0] += run[0];
+        counts[1] += run[1];
+      }
+    }
     // the first frame of the grid at or after the stretch's first sample
     let grid = UNCUT_OFFSET as u64;
     let frame = FRAME as u64;
@@ -802,6 +980,12 @@ impl Uncut {
     counted(&runs, channels, |run, channel, frame, blocks| {
       self.windows[run][channel][frame][usize::from(blocks == Blocks::Short)]
     })
+  }
+
+  /// what the windows' frames of each length of [`SHORT`] count on the grid of each of
+  /// [`DELAYS`]: on the lattice after the frame before, and that or without it
+  pub(crate) fn short_counted(&self) -> [[[usize; 2]; 2]; 3] {
+    std::array::from_fn(|i| self.short[i].1)
   }
 }
 
@@ -840,6 +1024,35 @@ mod tests {
       on_lattice(Some(&quiet), &faint, 0.0),
       (BANDS - 2, BANDS - 2)
     );
+  }
+
+  #[test]
+  fn a_short_frame_predicts_with_its_lengths_shares_and_sits_where_its_delay_puts_it() {
+    let quiet = Bands {
+      energy: [-2.0; BANDS],
+      loud: [true; BANDS],
+    };
+    for short in SHORT {
+      // each band a coarse step of its own with a refinement, built as the decoder builds it
+      let mut bands = quiet;
+      let mut lower = 0.0;
+      for band in 0..BANDS {
+        let coarse = (band % 5) as f64 - 2.0;
+        let fine = if band % 2 == 0 { 0.25 } else { -0.125 };
+        bands.energy[band] = short.alpha * quiet.energy[band] + lower + coarse + fine;
+        lower += (1.0 - short.beta) * coarse;
+      }
+      let own = steps_with((short.alpha, short.beta), &quiet, &bands, 0.0);
+      assert_eq!(tested_and_on(own, Some(&quiet), &bands), (BANDS, BANDS));
+      // read with the shares of a 20 ms frame it is off the lattice
+      let (_, on) = on_lattice(Some(&quiet), &bands, 0.0);
+      assert!(on < BANDS / 2, "{}: {on}", short.length);
+      let run = [quiet, bands, bands];
+      let counts = short_sitting(short, run.len(), 1, |_, frame| run[frame]);
+      assert_eq!(counts, [1, 1], "{}", short.length);
+    }
+    let offsets = SHORT.map(|short| short.uncut_offsets());
+    assert_eq!(offsets, [[468, 180], [108, 60], [48, 0]]);
   }
 
   /// a frame after `before`: each band a coarse step of its own, refined by a quarter or an
@@ -1034,7 +1247,7 @@ mod tests {
     let samples: Vec<f32> = (0..2 * FRAME)
       .map(|i| ((i * i) as f32 * 0.000_37).sin() * 0.5)
       .collect();
-    let mut celt = Celt::new(16);
+    let mut celt = Celt::new(16, FRAME);
     let bands = celt.read(&samples, Blocks::Short);
     let flat = (FRAME - OVERLAP) / 2;
     let pi = std::f64::consts::PI;
@@ -1097,7 +1310,7 @@ mod tests {
     let samples: Vec<f32> = (0..2 * FRAME)
       .map(|i| ((i * i) as f32 * 0.000_37).sin() * 0.5)
       .collect();
-    let mut celt = Celt::new(16);
+    let mut celt = Celt::new(16, FRAME);
     celt.bands(&samples);
     let flat = (FRAME - OVERLAP) / 2;
     let window = |n: usize| -> f64 {
