@@ -198,8 +198,14 @@ impl<'s> WavPackReader<'s> {
 }
 
 impl Scoreable for WavPackReader<'_> {
-  fn score(_: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
-    Ok(Score::Supported(255))
+  /// a marker is a file's when a block's header follows it
+  fn score(mut source: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
+    let mut bytes = [0; HEADER];
+    source.read_buf_exact(&mut bytes)?;
+    Ok(match Header::parse(&bytes) {
+      Some(_) => Score::Supported(255),
+      None => Score::Unsupported,
+    })
   }
 }
 

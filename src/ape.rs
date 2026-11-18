@@ -34,6 +34,14 @@ use tracing::warn;
 
 /// the first version whose range coder the decoder has; older files fail their checksums in it
 const OLDEST_VERSION: u16 = 3990;
+/// the first version whose files start with a descriptor, which states its own length and the
+/// header's
+const DESCRIPTOR_VERSION: u16 = 3980;
+/// the bytes of the format's descriptor and of its header, which later versions may add to
+const DESCRIPTOR_BYTES: u32 = 52;
+const HEADER_BYTES: u32 = 24;
+/// the most bytes a descriptor or a header is taken for one with
+const MAX_STATED_BYTES: u32 = 1 << 16;
 /// the most channels a file is read with
 const MAX_CHANNELS: u16 = 8;
 /// the most sample frames one frame of a file is read with. the highest compression level
@@ -189,8 +197,22 @@ impl ApeReader<'_> {
 }
 
 impl Scoreable for ApeReader<'_> {
-  fn score(_: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
-    Ok(Score::Supported(255))
+  /// a marker is a file's when a descriptor's lengths follow it. a file from before the
+  /// descriptor has nothing to check and is taken, so that it is refused by name
+  fn score(mut source: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
+    let magic = source.read_quad_bytes()?;
+    let version = source.read_u16()?;
+    source.ignore_bytes(2)?;
+    let (descriptor, header) = (source.read_u32()?, source.read_u32()?);
+    let stated = (DESCRIPTOR_BYTES..=MAX_STATED_BYTES).contains(&descriptor)
+      && (HEADER_BYTES..=MAX_STATED_BYTES).contains(&header);
+    Ok(
+      if &magic == FLOAT_MAGIC || version < DESCRIPTOR_VERSION || stated {
+        Score::Supported(255)
+      } else {
+        Score::Unsupported
+      },
+    )
   }
 }
 

@@ -27,7 +27,7 @@ use symphonia::core::formats::probe::{
 use symphonia::core::formats::{
   FormatId, FormatInfo, FormatOptions, FormatReader, MediaInfo, SeekMode, SeekTo, SeekedTo, Track,
 };
-use symphonia::core::io::{MediaSource, MediaSourceStream, ScopedStream};
+use symphonia::core::io::{MediaSource, MediaSourceStream, ReadBytes, ScopedStream};
 use symphonia::core::meta::{Metadata, MetadataLog};
 use symphonia::core::packet::{Packet, PacketRef};
 use symphonia::core::units::{Duration, TimeBase, Timestamp};
@@ -353,8 +353,21 @@ impl<'s> DsdReader<'s> {
 }
 
 impl Scoreable for DsdReader<'_> {
-  fn score(_: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
-    Ok(Score::Supported(255))
+  /// a marker is a file's when what the format fixes follows it: the length of a DSF file's
+  /// first chunk, or the DSD form of a DSDIFF file
+  fn score(mut source: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
+    let mut head = [0u8; 16];
+    source.read_buf_exact(&mut head)?;
+    let known = match &head[..4] {
+      b"DSD " => le64(&head[4..]) == 28,
+      b"FRM8" => &head[12..] == b"DSD ",
+      _ => false,
+    };
+    Ok(if known {
+      Score::Supported(255)
+    } else {
+      Score::Unsupported
+    })
   }
 }
 

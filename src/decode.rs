@@ -1181,6 +1181,23 @@ mod tests {
   }
 
   #[test]
+  fn a_marker_of_a_reader_here_in_the_bytes_before_a_file_does_not_claim_it() {
+    let audio = fixtures::music_for(1, 3, 44_100, fixtures::pink);
+    let flac = fixtures::flac(&audio, 16, false);
+    for marker in [b"wvpk", b"MAC ", b"DSD ", b"FRM8"] {
+      // the marker, then bytes that are no header of its format
+      let mut bytes = marker.to_vec();
+      bytes.extend_from_slice(&[0xff; 60]);
+      bytes.extend_from_slice(&flac);
+      let source = Box::new(std::io::Cursor::new(bytes));
+      let name = String::from_utf8_lossy(marker);
+      let decoder =
+        Decoder::from_source(source, &Hint::new()).unwrap_or_else(|e| panic!("{name}: {e}"));
+      assert_eq!(decoder.claimed.codec, "flac", "{name}");
+    }
+  }
+
+  #[test]
   fn a_dsd_file_cut_before_its_stated_length_says_so() {
     let tones = fixtures::one_bit_tones(&[1000.0, 3000.0], 2);
     // a DSF file cut after a whole block of each channel, and a DSDIFF file cut anywhere
