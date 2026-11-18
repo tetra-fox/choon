@@ -100,7 +100,7 @@ for its long blocks, so a grid's offset and window fit an encoder family:
 | ----- | ------ | -------------- | --------------------------------- |
 | MP3   | 48     |                | LAME                              |
 | MP3   | 96     |                | Helix                             |
-| MP3   | 1      |                | no delay stated: Shine, BladeEnc, GOGO |
+| MP3   | 1      |                | no delay stated: Shine, BladeEnc, GOGO, Fraunhofer |
 | AAC   | 960    | sine           | Apple                             |
 | AAC   | 0      | sine           | FAAC                              |
 | AAC   | 448    | Kaiser-Bessel  | Nero                              |
@@ -327,7 +327,8 @@ Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
 - FAAC at 256 kbps codes nearly every frame as short blocks, which the scan does not analyse
 - An HE-AAC decode's core was coded at half the sample rate under the decoder's filterbank
 - A Vorbis decode is found by the AAC scan, whose windows are not Vorbis's
-- Fraunhofer's MP3 encoder was not tested
+- Fraunhofer's MP3 encoder, as the codec Windows ships, was checked on 44 other recordings at
+  96 to 320 kbps: every decode is found, at offset 1
 
 ## Limitations
 

@@ -489,7 +489,7 @@ pub enum Family {
   Lame,
   /// Helix, with a delay of 1680 samples.
   Helix,
-  /// MP3 encoder that states no delay for a decoder to cut: Shine, BladeEnc, GOGO.
+  /// MP3 encoder that states no delay for a decoder to cut: Shine, BladeEnc, GOGO, Fraunhofer.
   ///
   /// A LAME file reads the same from a decoder that cuts no delay.
   Untagged,
