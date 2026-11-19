@@ -4,6 +4,7 @@
 use super::{read, settings};
 use crate::engine::{Error, measure_bytes};
 use crate::fixtures::{self, music_for, pink};
+use crate::limitation::Limitation;
 
 #[test]
 fn a_wave_header_that_states_thousands_of_channels_is_refused_without_a_panic() {
@@ -58,6 +59,28 @@ fn float_samples_near_the_largest_an_f32_holds_are_read_without_a_panic() {
   }
   let measured = measure_bytes(wave, &settings()).expect("a float WAVE file is read");
   read(&measured);
+}
+
+#[test]
+fn an_mp4_whose_sample_counts_pass_32_bits_is_read_without_a_panic() {
+  let mut bytes = fixtures::TONE.to_vec();
+  // the table of sample durations: its name, version and flags, the number of entries, then a
+  // sample count and a duration for each. two entries, of 3 samples and of 1
+  let table = bytes.windows(4).position(|w| w == b"stts").unwrap();
+  let entries = table + 12;
+  assert_eq!(bytes[table + 8..entries], 2u32.to_be_bytes());
+  bytes[entries..entries + 4].copy_from_slice(&1u32.to_be_bytes());
+  bytes[entries + 8..entries + 12].copy_from_slice(&u32::MAX.to_be_bytes());
+  let measured = measure_bytes(bytes, &settings()).expect("the first sample is read");
+  let reading = read(&measured);
+  assert!(
+    reading
+      .limitations
+      .iter()
+      .any(|l| matches!(l, Limitation::Decoder(why) if why.contains("reader failed"))),
+    "{:?}",
+    reading.limitations
+  );
 }
 
 proptest::proptest! {

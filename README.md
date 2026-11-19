@@ -332,6 +332,8 @@ fn main() -> Result<(), choon::Error> {
 - ape-decoder 0.3.2 can panic on a damaged Monkey's Audio file in a build with overflow checks
 - That panic is caught, logged at `warn` and the frame skipped; a build with `panic = "abort"`
   aborts
+- symphonia 0.6.1 can panic the same way on an MP4 file whose sample counts pass 32 bits, which
+  is caught and ends the reading of that file there
 
 | Setting    | Description                                    |
 | ---------- | ---------------------------------------------- |

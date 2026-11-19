@@ -113,6 +113,20 @@ fn seek_timestamp(
   }
 }
 
+/// a call into a container's reader once it is open, a panic in it given as an error.
+/// symphonia-format-isomp4 0.6.1 adds an MP4's sample counts in 32 bits (atoms/stts.rs,
+/// find_timing_for_sample), which panics in a build with overflow checks on a table whose
+/// counts pass 2^32. the default panic hook still prints it, and panic = "abort" still aborts
+// TODO: remove once a symphonia release checks that sum
+fn caught<T>(
+  call: impl FnOnce() -> symphonia::core::errors::Result<T>,
+) -> symphonia::core::errors::Result<T> {
+  catch_unwind(AssertUnwindSafe(call)).unwrap_or_else(|_| {
+    warn!("a panic in a container's reader was caught, the file read no further");
+    Err(Error::DecodeError("the container's reader failed"))
+  })
+}
+
 /// the containers the analyzer reads: symphonia's own, WavPack, Monkey's Audio, DSF and DSDIFF
 fn probe() -> &'static Probe {
   static PROBE: LazyLock<Probe> = LazyLock::new(|| {
@@ -518,15 +532,11 @@ impl Decoder {
     let (numer, denom) = self.ticks();
     let ticks = u128::from(position - position.min(pre_roll)) * denom / (numer * u128::from(rate));
     let ts = i64::try_from(ticks).map_err(|_| "the position is out of range")?;
-    let sought = self
-      .format
-      .seek(
-        SeekMode::Accurate,
-        SeekTo::Timestamp {
-          ts: Timestamp::new(ts),
-          track_id: self.track,
-        },
-      )
+    let to = SeekTo::Timestamp {
+      ts: Timestamp::new(ts),
+      track_id: self.track,
+    };
+    let sought = caught(|| self.format.seek(SeekMode::Accurate, to))
       .map_err(|e| format!("seeking failed: {e}"))?;
     self.decoder.reset();
     for pending in &mut self.pending {
@@ -567,14 +577,11 @@ impl Decoder {
     let rate = u128::from(self.claimed.sample_rate);
     let ticks = u128::from(frame) * denom / (numer * rate);
     let ts = i64::try_from(ticks).map_err(|_| "the position is out of range")?;
-    let sought = self.format.seek(
-      SeekMode::Accurate,
-      SeekTo::Timestamp {
-        ts: Timestamp::new(ts),
-        track_id: self.track,
-      },
-    );
-    match sought {
+    let to = SeekTo::Timestamp {
+      ts: Timestamp::new(ts),
+      track_id: self.track,
+    };
+    match caught(|| self.format.seek(SeekMode::Accurate, to)) {
       Ok(_) => {
         self.decoder.reset();
         Ok(true)
@@ -689,7 +696,7 @@ impl Decoder {
   /// reason in `stopped`
   fn step(&mut self) -> Option<Stepped> {
     loop {
-      let packet = match self.format.next_packet() {
+      let packet = match caught(|| self.format.next_packet()) {
         Ok(Some(packet)) => packet,
         Ok(None) => return None,
         Err(Error::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
