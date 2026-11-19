@@ -18,7 +18,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use choon::grid::{Evidence, Scan};
+use choon::grid::{Evidence, Family, Scan};
 use choon::{
   CancelCheck, Claimed, Coverage, Error, Flag, HeAac, MeasureThresholds, Measured, OpusUse,
   Reading, ReadingThresholds, Settings, Verdict,
@@ -418,7 +418,7 @@ fn printed(
           })
           .expect("a reading serializes")
         } else {
-          format!("{}: {}", file.display(), said(&checked, false))
+          piped(file, &checked)
         }
       }
       Err(Error::Open(e)) => {
@@ -433,7 +433,7 @@ fn printed(
           })
           .expect("two strings serialize")
         } else {
-          format!("{}: not read as audio: {why}", file.display())
+          format!("{}: {NOT_READ} ({why})", file.display())
         }
       }
       Err(Error::Canceled | Error::OutOfTime) => {
@@ -485,8 +485,9 @@ fn shown(
               .iter()
               .any(|read| flagged(read.reading.verdict));
             if !one && (flagged || check.verbose) {
-              let line = format!("{}: {}", terminal::legible(path), said(&checked, colour));
-              bars.say(&line).map_err(Failed::Output)?;
+              bars
+                .say(&listed(path, &checked, colour))
+                .map_err(Failed::Output)?;
             }
             Ok(checked)
           }
@@ -495,12 +496,9 @@ fn shown(
             Err(e.to_string())
           }
           Err(Error::NotAudio(why) | Error::Unsupported(why)) => {
-            let line = format!(
-              "{}: {}: {why}",
-              terminal::legible(path),
-              terminal::painted(None, "not read as audio", colour)
-            );
-            bars.say(&line).map_err(Failed::Output)?;
+            bars
+              .say(&not_read(path, &why, colour))
+              .map_err(Failed::Output)?;
             Err(why)
           }
           Err(Error::Canceled | Error::OutOfTime) => {
@@ -523,7 +521,7 @@ fn shown(
         path,
         outcome: Ok(checked),
       },
-    ] => terminal::readout(path, checked, profiled, colour, width),
+    ] => terminal::readout(path, checked, profiled, check.verbose, colour, width),
     // its failure is already on the screen
     [_] => return Ok(code),
     _ => terminal::tables(
@@ -674,93 +672,162 @@ fn analyzed(
   })
 }
 
-/// a file's readings in a few words each, named after their profile when there are several, with
-/// the verdicts coloured when `colour`, then what an Opus file's packets state or the profile of
-/// an HE-AAC file
-fn said(checked: &Checked, colour: bool) -> String {
-  let words = |reading: &Reading| {
-    let (verdict, rest) = words(reading);
-    terminal::painted(Some(reading.verdict), verdict, colour) + &rest
+/// the widest verdict, which the lines of a terminal pad the others to
+const VERDICT_WIDTH: usize = "likely transcode".len();
+
+/// a file's line where lines are piped: its path, then its readings
+fn piped(path: &Path, checked: &Checked) -> String {
+  format!("{}: {}", path.display(), said(checked, false))
+}
+
+/// a file's line in a terminal: its verdict in a column of its own, what was found, then its
+/// path, which comes last so that it can be copied whole. several readings share the line
+/// unpadded
+fn listed(path: &Path, checked: &Checked, colour: bool) -> String {
+  let path = terminal::legible(path);
+  let [read] = &checked.readings[..] else {
+    return format!("{}  {path}", said(checked, colour));
   };
-  let readings = match &checked.readings[..] {
-    [read] => words(&read.reading),
+  let reading = &read.reading;
+  let mut found = found(reading);
+  found.extend(kind(checked));
+  status_line(
+    &terminal::painted(Some(reading.verdict), label(reading.verdict), colour),
+    label(reading.verdict).len(),
+    &found.join(", "),
+    &path,
+  )
+}
+
+/// a terminal's line for a file not read as audio
+fn not_read(path: &Path, why: &str, colour: bool) -> String {
+  status_line(
+    &terminal::painted(None, NOT_READ, colour),
+    NOT_READ.len(),
+    why,
+    &terminal::legible(path),
+  )
+}
+
+const NOT_READ: &str = "not read";
+
+/// `status`, `width` columns wide as printed, padded to the verdicts' column, then `found` in
+/// parentheses when there is any, then `path`
+fn status_line(status: &str, width: usize, found: &str, path: &str) -> String {
+  let pad = " ".repeat(VERDICT_WIDTH.saturating_sub(width));
+  if found.is_empty() {
+    format!("{status}{pad}  {path}")
+  } else {
+    format!("{status}{pad}  ({found})  {path}")
+  }
+}
+
+/// a file's readings, each its verdict and what was found in parentheses, named after their
+/// profile when there are several, with the verdicts coloured when `colour`
+fn said(checked: &Checked, colour: bool) -> String {
+  let kind = kind(checked);
+  let words = |reading: &Reading, kind: Option<String>| {
+    let mut found = found(reading);
+    found.extend(kind);
+    let verdict = terminal::painted(Some(reading.verdict), label(reading.verdict), colour);
+    if found.is_empty() {
+      verdict
+    } else {
+      format!("{verdict} ({})", found.join(", "))
+    }
+  };
+  match &checked.readings[..] {
+    [read] => words(&read.reading, kind),
     readings => readings
       .iter()
-      .map(|read| format!("[{}] {}", read.profile, words(&read.reading)))
+      .map(|read| format!("[{}] {}", read.profile, words(&read.reading, None)))
+      .chain(kind)
       .collect::<Vec<_>>()
       .join("; "),
-  };
+  }
+}
+
+/// what a file is beside its codec: what an Opus file's packets state, the profile of an HE-AAC
+/// file, the rate of a DSD file
+fn kind(checked: &Checked) -> Option<String> {
   match (
     OpusUse::describe(&checked.opus),
     checked.he_aac,
     checked.dsd_multiple,
   ) {
-    (Some(coding), ..) => format!("{readings}; Opus {coding}"),
-    (None, Some(he_aac), _) => format!("{readings}; {he_aac}"),
-    (None, None, Some(multiple)) => format!("{readings}; DSD{multiple}"),
-    (None, None, None) => readings,
+    (Some(coding), ..) => Some(format!("Opus {coding}")),
+    (None, Some(he_aac), _) => Some(he_aac.to_string()),
+    (None, None, Some(multiple)) => Some(format!("DSD{multiple}")),
+    (None, None, None) => None,
   }
 }
 
-/// a reading in a few words: its verdict, and what follows it
-fn words(reading: &Reading) -> (&'static str, String) {
-  let verdict = label(reading.verdict);
-  let cut = reading.cutoff_hz.map_or_else(
-    || "no cutoff found".to_string(),
-    |hz| format!("cut at {:.1} kHz", hz / 1000.0),
+/// what a reading found, a few words each: the grid and its encoder family, the cutoff and the
+/// encoder setting it matches, the flags, the confidence
+fn found(reading: &Reading) -> Vec<String> {
+  let mut found = Vec::new();
+  let cutoff = reading.cutoff_hz.map_or_else(
+    || "no cutoff".to_string(),
+    |hz| format!("cutoff {:.1} kHz", hz / 1000.0),
   );
-  let guess = named_guess(reading);
+  let guess = named_guess(reading).map(str::to_string);
   if let Some(grid) = &reading.grid {
-    let at = guess.map_or_else(String::new, |g| format!(", where {g} cuts"));
-    let how = match &grid.evidence {
-      Evidence::Count(scan) => match &grid.quantizer {
-        Some(steps) => format!("z {:.0}, {} bands on quantizer steps", scan.z, steps.whole),
-        None => format!("z {:.0}", scan.z),
-      },
-      Evidence::CountAt { rate, scan } => {
-        format!("z {:.0} at {} kHz", scan.z, f64::from(*rate) / 1000.0)
+    let codec = grid.codec;
+    found.push(match &grid.evidence {
+      Evidence::Count(_)
+      | Evidence::Steps { .. }
+      | Evidence::AacSteps { .. }
+      | Evidence::Lattice(_) => format!("{codec} grid"),
+      Evidence::CountAt { rate, .. } => {
+        format!("{codec} grid at {} kHz", f64::from(*rate) / 1000.0)
       }
-      Evidence::Steps { steps, .. } => format!("{} bands on quantizer steps", steps.whole),
-      Evidence::AacSteps { steps, .. } => format!("{} bands on quantizer steps", steps.whole),
-      Evidence::Lattice(scan) => format!("{} frames", scan.most().1),
-      Evidence::Shifted { shifted } => format!("{} frames at another level", shifted.most().1),
-      Evidence::Hybrid { hybrid } => format!("{} hybrid frames", hybrid.most().1),
-      Evidence::Short { short } => {
-        format!("{} frames of {} ms", short.most().1, short.milliseconds())
-      }
-    };
-    let rest = format!(
-      ": {} grid at offset {} ({how}), {cut}{at}",
-      grid.codec,
-      grid.evidence.offset()
-    );
-    return (verdict, rest);
+      Evidence::Shifted { .. } => format!("{codec} grid at another level"),
+      Evidence::Hybrid { .. } => format!("{codec} hybrid grid"),
+      Evidence::Short { short } => format!("{codec} grid, {} ms frames", short.milliseconds()),
+    });
+    found.extend(grid.family.and_then(family_words).map(str::to_string));
+    found.push(cutoff);
+    found.extend(guess);
+    return found;
   }
   if reading.verdict == Verdict::PossiblyLossy {
-    let read_as = match reading.cutoff_verdict {
-      Verdict::MixedSources => "mixed sources",
-      _ => "an encoder's cutoff",
-    };
-    let like = guess.map_or_else(String::new, |g| format!(", like {g}"));
-    let rest =
-      format!(", cannot confirm: no codec grid; the spectrum reads as {read_as} ({cut}{like})");
-    return (verdict, rest);
+    if reading.cutoff_verdict == Verdict::MixedSources {
+      found.push("mixed sources by cutoff".to_string());
+    }
+    found.push(cutoff);
+    found.extend(guess);
+    found.push("no grid".to_string());
+    return found;
   }
-  let mut rest = String::new();
-  if let Some(hz) = reading.cutoff_hz {
-    rest += &format!(", cutoff {:.1} kHz", hz / 1000.0);
+  if reading.cutoff_hz.is_some() {
+    found.push(cutoff);
   }
-  if let Some(guess) = guess {
-    rest += &format!(", {guess}");
-  }
-  for flag in &reading.flags {
-    rest += ", ";
-    rest += flag_words(*flag);
-  }
+  found.extend(guess);
+  found.extend(
+    reading
+      .flags
+      .iter()
+      .map(|flag| flag_words(*flag).to_string()),
+  );
   if reading.verdict != Verdict::Inconclusive {
-    rest += &format!(", confidence {:.2}", reading.confidence);
+    found.push(format!("confidence {:.2}", reading.confidence));
   }
-  (verdict, rest)
+  found
+}
+
+/// the encoder family of a grid in a word or two; `None` for the family that names no encoder
+fn family_words(family: Family) -> Option<&'static str> {
+  match family {
+    Family::Lame => Some("LAME"),
+    Family::Helix => Some("Helix"),
+    Family::Untagged => None,
+    Family::Apple => Some("Apple"),
+    Family::Faac => Some("FAAC"),
+    Family::Nero => Some("Nero"),
+    Family::FfmpegOrFdk => Some("ffmpeg or fdk-aac"),
+    Family::Fraunhofer => Some("Fraunhofer"),
+    Family::Libopus => Some("libopus"),
+  }
 }
 
 fn flag_words(flag: Flag) -> &'static str {

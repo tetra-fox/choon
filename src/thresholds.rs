@@ -409,18 +409,18 @@ impl Default for ReadingThresholds {
       // LAME's defaults are the commonest; other MP3 encoders and AAC cut a little lower at the
       // same bitrate
       profiles: vec![
-        EncoderProfile::new(11_000.0, "mp3 ~64 kbps", 64),
-        EncoderProfile::new(13_500.0, "mp3 ~80 kbps", 80),
-        EncoderProfile::new(15_100.0, "mp3 ~96 kbps", 96),
-        EncoderProfile::new(16_000.0, "mp3 ~128 kbps", 128),
-        EncoderProfile::new(17_000.0, "mp3 ~128 kbps", 128),
-        EncoderProfile::new(17_500.0, "mp3 ~160 kbps", 160),
-        EncoderProfile::new(18_600.0, "mp3 ~192 kbps", 192),
-        EncoderProfile::new(19_400.0, "mp3 ~224 kbps", 224),
+        EncoderProfile::new(11_000.0, "MP3 ~64 kbps", 64),
+        EncoderProfile::new(13_500.0, "MP3 ~80 kbps", 80),
+        EncoderProfile::new(15_100.0, "MP3 ~96 kbps", 96),
+        EncoderProfile::new(16_000.0, "MP3 ~128 kbps", 128),
+        EncoderProfile::new(17_000.0, "MP3 ~128 kbps", 128),
+        EncoderProfile::new(17_500.0, "MP3 ~160 kbps", 160),
+        EncoderProfile::new(18_600.0, "MP3 ~192 kbps", 192),
+        EncoderProfile::new(19_400.0, "MP3 ~224 kbps", 224),
         // LAME 3.100 cuts 224 kbps here too, so the name says both
-        EncoderProfile::new(19_530.0, "mp3 ~224-256 kbps", 256),
-        EncoderProfile::new(20_000.0, "mp3 ~320 kbps or aac", 320),
-        EncoderProfile::new(20_500.0, "mp3 ~320 kbps", 320),
+        EncoderProfile::new(19_530.0, "MP3 ~224-256 kbps", 256),
+        EncoderProfile::new(20_000.0, "MP3 ~320 kbps or AAC", 320),
+        EncoderProfile::new(20_500.0, "MP3 ~320 kbps", 320),
       ],
       // the tuning's lossless files reach z 8.24 for AAC, and 11.57 for MP3 apart from one with
       // an MP3 section in one segment, which the agreement keeps out

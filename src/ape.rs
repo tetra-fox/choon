@@ -139,9 +139,7 @@ impl<'s> ApeReader<'s> {
     };
     let header = &info.header;
     if info.descriptor.version < OLDEST_VERSION {
-      return refused(
-        "ape: the file was made before Monkey's Audio 3.99, which the decoder does not read",
-      );
+      return refused("ape: files older than Monkey's Audio 3.99 are not read");
     }
     if header.format_flags & FLOAT != 0 || header.bits_per_sample == 32 {
       return refused(UNREAD_SAMPLES);

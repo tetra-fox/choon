@@ -98,7 +98,7 @@ fn the_exit_status_says_whether_a_file_read_as_lossy_or_could_not_be_read() {
   assert_eq!(status(&output), 0, "{output:?}");
   let lines = String::from_utf8(output.stdout).unwrap();
   assert!(
-    lines.starts_with(&format!("{honest}: consistent, confidence ")),
+    lines.starts_with(&format!("{honest}: consistent (confidence ")),
     "{lines}"
   );
   assert_eq!(lines.lines().count(), 1);
@@ -109,9 +109,8 @@ fn the_exit_status_says_whether_a_file_read_as_lossy_or_could_not_be_read() {
   assert_eq!(lines.lines().count(), 2);
   let fake_line = lines.lines().find(|line| line.starts_with(&fake)).unwrap();
   assert!(
-    fake_line.starts_with(&format!("{fake}: likely transcode: MP3 grid at offset "))
-      && fake_line.contains("), cut at 16.")
-      && fake_line.ends_with("kHz, where mp3 ~128 kbps cuts"),
+    fake_line.starts_with(&format!("{fake}: likely transcode (MP3 grid, cutoff 16."))
+      && fake_line.ends_with("kHz, MP3 ~128 kbps)"),
     "{lines}"
   );
 
@@ -149,7 +148,7 @@ fn json_is_a_line_per_file_with_a_reading_per_profile() {
   assert_eq!(lines[1]["readings"][0]["verdict"], "likely_transcode");
   assert_eq!(
     lines[1]["readings"][0]["encoderGuess"]["profile"],
-    "mp3 ~128 kbps"
+    "MP3 ~128 kbps"
   );
   // the file's grid scan, and the grid its reading found
   assert_eq!(lines[1]["grid"]["mp3"]["segmentsAgreeing"], 4);
@@ -238,7 +237,7 @@ fn a_file_not_read_as_audio_fails_the_run_and_says_so() {
     let line = String::from_utf8(output.stdout).unwrap();
     assert!(
       line.starts_with(&format!(
-        "{bad}: not read as audio: the container was not recognized"
+        "{bad}: not read (the container was not recognized"
       )),
       "{line}"
     );
@@ -281,10 +280,10 @@ fn an_opus_file_and_a_flac_decoded_from_it_say_opus() {
     assert_eq!(status(&output), 0, "{output:?}");
     let line = String::from_utf8(output.stdout).unwrap();
     assert!(
-      line.starts_with(&format!("{file}: consistent, cutoff 20.")),
+      line.starts_with(&format!("{file}: consistent (cutoff 20.")),
       "{line}"
     );
-    assert!(line.trim_end().ends_with("; Opus CELT fullband"), "{line}");
+    assert!(line.trim_end().ends_with(", Opus CELT fullband)"), "{line}");
   }
 
   let output = choon(&[&fake]);
@@ -292,11 +291,10 @@ fn an_opus_file_and_a_flac_decoded_from_it_say_opus() {
   let line = String::from_utf8(output.stdout).unwrap();
   assert!(
     line.starts_with(&format!(
-      "{fake}: likely transcode: Opus grid at offset 228 ("
+      "{fake}: likely transcode (Opus grid, libopus, cutoff 20."
     )),
     "{line}"
   );
-  assert!(line.contains(" frames), cut at 20."), "{line}");
 
   let output = choon(&["--json", &opus, &fake]);
   assert_eq!(status(&output), 1, "{output:?}");
@@ -339,12 +337,8 @@ fn a_flac_decoded_from_opus_and_made_quieter_says_opus_at_another_level() {
   let line = String::from_utf8(output.stdout).unwrap();
   assert!(
     line.starts_with(&format!(
-      "{fake}: likely transcode: Opus grid at offset 228 ("
+      "{fake}: likely transcode (Opus grid at another level, libopus, cutoff 20."
     )),
-    "{line}"
-  );
-  assert!(
-    line.contains(" frames at another level), cut at 20."),
     "{line}"
   );
 
@@ -553,12 +547,12 @@ fn several_profiles_share_a_line_and_only_a_lossy_verdict_names_an_encoder() {
     .and_then(|rest| rest.split_once("; [strict] "))
     .unwrap_or_else(|| panic!("{lines:?}"));
   assert!(
-    shipped_says.starts_with("likely transcode: MP3 grid")
-      && shipped_says.contains("mp3 ~128 kbps"),
+    shipped_says.starts_with("likely transcode (MP3 grid")
+      && shipped_says.contains("MP3 ~128 kbps"),
     "{shipped_says}"
   );
   assert!(
-    strict_says.starts_with("likely transcode: MP3 grid"),
+    strict_says.starts_with("likely transcode (MP3 grid"),
     "{strict_says}"
   );
   // a 20 kHz cut reads as something the analyzer cannot tell, with no encoder named
@@ -598,9 +592,9 @@ fn he_aac_wavpack_ape_and_dsd_files_are_read_and_name_what_they_are() {
     found.unwrap_or_else(|| panic!("{file}: {lines:?}"))
   };
   assert_eq!(lines.len(), 6, "{lines:?}");
-  assert!(line(&he_aac).ends_with("; HE-AAC v2"), "{lines:?}");
+  assert!(line(&he_aac).ends_with(", HE-AAC v2)"), "{lines:?}");
   for file in [&dsf, &dff, &at_48k] {
-    assert!(line(file).ends_with("; DSD64"), "{lines:?}");
+    assert!(line(file).ends_with(" (DSD64)"), "{lines:?}");
   }
   for file in [&wavpack, &ape] {
     assert_eq!(line(file), format!("{file}: inconclusive"), "{lines:?}");
@@ -641,8 +635,8 @@ fn a_file_a_reader_knows_and_does_not_decode_says_why() {
   assert_eq!(
     String::from_utf8(output.stdout).unwrap(),
     format!(
-      "{hybrid}: not read as audio: wavpack: the file is hybrid WavPack, which is lossy without \
-       its correction file, and is not decoded\n"
+      "{hybrid}: not read (wavpack: hybrid WavPack without its correction file is lossy and is \
+       not read)\n"
     )
   );
 }

@@ -269,6 +269,11 @@ impl Decoder {
         };
         match refused {
           Some(Refused(why)) => unsupported(why),
+          // symphonia's probe found no reader for the bytes, which the reason already says
+          None if matches!(e, Error::Unsupported(_)) => {
+            debug!(error = %e, "container not recognized");
+            not_audio("the container was not recognized".to_string())
+          }
           None => not_audio(format!("the container was not recognized: {e}")),
         }
       })?;
@@ -1274,7 +1279,10 @@ mod tests {
     let Err(engine::Error::Unsupported(why)) = Decoder::from_source(source, &Hint::new()) else {
       panic!("a hybrid file opened")
     };
-    assert!(why.contains("hybrid WavPack, which is lossy"), "{why}");
+    assert!(
+      why.contains("hybrid WavPack without its correction file"),
+      "{why}"
+    );
   }
 
   #[test]

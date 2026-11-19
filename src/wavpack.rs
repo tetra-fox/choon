@@ -148,8 +148,7 @@ impl<'s> WavPackReader<'s> {
       }
       if header.flags & HYBRID != 0 {
         return refused(
-          "wavpack: the file is hybrid WavPack, which is lossy without its correction file, \
-           and is not decoded",
+          "wavpack: hybrid WavPack without its correction file is lossy and is not read",
         );
       }
       reader.seek(SeekFrom::Start(at))?;
@@ -167,8 +166,8 @@ impl<'s> WavPackReader<'s> {
       Err(e) => {
         debug!(error = %e, "wavpack first block not decoded");
         return refused(
-          "wavpack: the first block is not one the decoder reads: more than two channels, \
-           8-bit samples and streams older than WavPack 4 are not",
+          "wavpack: more than two channels, 8-bit samples and streams older than WavPack 4 \
+           are not read",
         );
       }
     };

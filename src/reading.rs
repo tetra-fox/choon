@@ -903,7 +903,7 @@ mod tests {
     let guess = found.encoder_guess.unwrap();
     assert_eq!(
       (guess.profile.as_str(), guess.confidence),
-      ("mp3 ~128 kbps", 0.4)
+      ("MP3 ~128 kbps", 0.4)
     );
     assert!(
       found.summary.contains("second lossy generation"),

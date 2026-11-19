@@ -99,12 +99,12 @@ fn reads_as_a_transcode_of(bitrate: Bitrate, profile: &str) {
 
 #[test]
 fn a_128_kbps_transcode_reads_as_a_transcode_of_its_bitrate() {
-  reads_as_a_transcode_of(Bitrate::Kbps128, "mp3 ~128 kbps");
+  reads_as_a_transcode_of(Bitrate::Kbps128, "MP3 ~128 kbps");
 }
 
 #[test]
 fn a_192_kbps_transcode_reads_as_a_transcode_of_its_bitrate() {
-  reads_as_a_transcode_of(Bitrate::Kbps192, "mp3 ~192 kbps");
+  reads_as_a_transcode_of(Bitrate::Kbps192, "MP3 ~192 kbps");
 }
 
 #[test]
@@ -136,12 +136,12 @@ fn a_lame_decode_at_the_offset_of_no_delay_is_not_read_as_fraunhofers() {
 /// LAME 3.100 cuts 224 kbps where it cuts 256, at 19.53 kHz, so the two take one name
 #[test]
 fn a_224_kbps_transcode_reads_as_the_cut_it_shares_with_256_kbps() {
-  reads_as_a_transcode_of(Bitrate::Kbps224, "mp3 ~224-256 kbps");
+  reads_as_a_transcode_of(Bitrate::Kbps224, "MP3 ~224-256 kbps");
 }
 
 #[test]
 fn a_256_kbps_transcode_reads_as_the_cut_it_shares_with_224_kbps() {
-  reads_as_a_transcode_of(Bitrate::Kbps256, "mp3 ~224-256 kbps");
+  reads_as_a_transcode_of(Bitrate::Kbps256, "MP3 ~224-256 kbps");
 }
 
 #[test]
@@ -824,7 +824,7 @@ fn a_320_kbps_stem_under_a_bed_reads_as_that_cut(gain: f32, grid: Option<Codec>)
   let guess = reading.encoder_guess.as_ref().unwrap();
   assert_eq!(
     (guess.profile.as_str(), guess.confidence),
-    ("mp3 ~320 kbps or aac", 0.4)
+    ("MP3 ~320 kbps or AAC", 0.4)
   );
   assert!(
     !reading.summary.contains("no encoder shelf"),
@@ -1713,7 +1713,7 @@ fn audio_made_at_32_khz_and_upsampled_to_96_khz_is_not_read_as_a_transcode() {
   a_cutoff_at_a_lower_rates_band_edge_is_not_read_as_a_transcode(
     "32 to 96",
     &music(1, 32_000, pink).resampled(96_000),
-    "mp3 ~128 kbps",
+    "MP3 ~128 kbps",
     "32 kHz",
   );
 }
@@ -1723,7 +1723,7 @@ fn audio_made_at_32_khz_and_upsampled_to_44_1_khz_is_not_read_as_a_transcode() {
   a_cutoff_at_a_lower_rates_band_edge_is_not_read_as_a_transcode(
     "32 to 44.1",
     &music(1, 32_000, pink).resampled(44_100),
-    "mp3 ~128 kbps",
+    "MP3 ~128 kbps",
     "32 kHz",
   );
 }
@@ -1734,7 +1734,7 @@ fn audio_made_at_22_05_khz_is_not_read_as_a_transcode() {
   a_cutoff_at_a_lower_rates_band_edge_is_not_read_as_a_transcode(
     "22.05 to 44.1",
     &music(1, 22_050, pink).resampled(44_100),
-    "mp3 ~64 kbps",
+    "MP3 ~64 kbps",
     "22.05 kHz",
   );
 }
@@ -1745,7 +1745,7 @@ fn a_cut_at_16_khz_is_not_read_as_a_transcode() {
   a_cutoff_at_a_lower_rates_band_edge_is_not_read_as_a_transcode(
     "cut at 16 kHz",
     &music(1, 44_100, fixtures::cut_at(16_000.0)),
-    "mp3 ~128 kbps",
+    "MP3 ~128 kbps",
     "32 kHz",
   );
 }

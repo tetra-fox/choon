@@ -52,7 +52,7 @@ fn config(params: &AudioCodecParameters) -> Result<StreamConfig> {
   if let Some(bytes) = params.extra_data.as_deref() {
     return rusty_aac::config::parse(bytes).or_else(|e| {
       debug!(error = %e, "aac config not read");
-      unsupported_error("aac: the stream's config is not one the decoder reads")
+      unsupported_error("aac: the stream's config is not read")
     });
   }
   let Some(rate) = params.sample_rate else {

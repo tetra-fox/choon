@@ -14,7 +14,7 @@ use comfy_table::{CellAlignment, ContentArrangement, LineStyle, Table, TableStyl
 use console::{Alignment, Term};
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 
-use crate::{Checked, flag_words, flagged, label, named_guess};
+use crate::{Checked, family_words, flag_words, flagged, label, named_guess};
 
 /// the verdicts in the order the summary counts them
 const VERDICTS: [Verdict; 5] = [
@@ -296,8 +296,15 @@ fn length(time: Duration) -> String {
 }
 
 /// one file's reading in detail, under each profile when `profiled`: aligned lines of a label
-/// and its value, wrapped at `width` columns
-pub fn readout(path: &Path, checked: &Checked, profiled: bool, colour: bool, width: u16) -> String {
+/// and its value, wrapped at `width` columns, with the reading's summary when `verbose`
+pub fn readout(
+  path: &Path,
+  checked: &Checked,
+  profiled: bool,
+  verbose: bool,
+  colour: bool,
+  width: u16,
+) -> String {
   let claimed = &checked.claimed;
   let mut format = vec![claimed.codec.clone(), format!("{} Hz", claimed.sample_rate)];
   if let Some(bits) = claimed.bit_depth {
@@ -347,6 +354,10 @@ pub fn readout(path: &Path, checked: &Checked, profiled: bool, colour: bool, wid
       painted(Some(reading.verdict), label(reading.verdict), colour),
     );
     add("Grid", grid(checked, reading));
+    let family = reading.grid.as_ref().and_then(|found| found.family);
+    if let Some(family) = family.and_then(family_words) {
+      add("Encoder family", family.to_string());
+    }
     add(
       "Cutoff",
       reading
@@ -363,7 +374,9 @@ pub fn readout(path: &Path, checked: &Checked, profiled: bool, colour: bool, wid
       let flags: Vec<&str> = reading.flags.iter().copied().map(flag_words).collect();
       add("Flags", flags.join(", "));
     }
-    add("Summary", reading.summary.clone());
+    if verbose {
+      add("Summary", reading.summary.clone());
+    }
     if !reading.limitations.is_empty() {
       let limitations: Vec<String> = reading
         .limitations
@@ -577,7 +590,7 @@ pub fn tables(
   if verbose && !found.is_empty() {
     text += "\n";
     for (path, checked) in &found {
-      text += &readout(path, checked, profiled, colour, width);
+      text += &readout(path, checked, profiled, true, colour, width);
     }
   }
   text
@@ -641,14 +654,14 @@ mod tests {
   #[test]
   fn a_readout_lines_up_its_values_and_wraps_them_under_themselves() {
     let (_, fake) = honest_and_fake();
-    let text = readout(Path::new("album/fake.flac"), &fake, false, false, 60);
+    let text = readout(Path::new("album/fake.flac"), &fake, false, true, false, 60);
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines[0], "album/fake.flac");
     assert!(
       lines.contains(&"  Verdict         likely transcode"),
       "{text}"
     );
-    assert!(lines.contains(&"  Encoder guess   mp3 ~128 kbps"), "{text}");
+    assert!(lines.contains(&"  Encoder guess   MP3 ~128 kbps"), "{text}");
     assert!(
       lines
         .iter()
@@ -666,7 +679,7 @@ mod tests {
     );
     assert!(lines.iter().all(|line| line.len() <= 60), "{text}");
 
-    let coloured = readout(Path::new("album/fake.flac"), &fake, false, true, 60);
+    let coloured = readout(Path::new("album/fake.flac"), &fake, false, true, true, 60);
     assert!(
       coloured.contains("\u{1b}[31mlikely transcode\u{1b}[0m"),
       "{coloured}"
@@ -718,7 +731,7 @@ mod tests {
     let flagged = cells("likely transcode   MP3");
     assert_eq!(
       flagged[3..],
-      ["mp3 ~128 kbps", "album/ev\\u{1b}[31mil\\n.flac"]
+      ["MP3 ~128 kbps", "album/ev\\u{1b}[31mil\\n.flac"]
     );
     assert!(!text.contains('\u{1b}'), "{text}");
     let unread = lines.iter().position(|line| *line == "Not read").unwrap();
