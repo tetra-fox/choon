@@ -163,6 +163,38 @@ fn a_canceled_analysis_and_one_out_of_time_before_it_opens_report_nothing() {
 }
 
 #[test]
+fn an_analysis_canceled_at_any_ask_reports_nothing() {
+  use std::sync::atomic::{AtomicUsize, Ordering};
+  // sampled, so that the grid's stretches are sought to, in a container whose reader says a
+  // seek cut short by the cancel is out of range
+  let bytes = fixtures::ogg_flac(&music_for(8, 1, 44_100, pink), 16);
+  let asked_until = |until: usize| {
+    let asked = Arc::new(AtomicUsize::new(0));
+    let canceled = {
+      let asked = asked.clone();
+      Arc::new(move || asked.fetch_add(1, Ordering::Relaxed) >= until)
+    };
+    let settings = Settings {
+      coverage: sampled(4.0, 3),
+      canceled: Some(canceled),
+      ..settings()
+    };
+    let result = measure_bytes(bytes.clone(), &settings);
+    (result, asked.load(Ordering::Relaxed))
+  };
+  let (whole, asks) = asked_until(usize::MAX);
+  assert!(whole.unwrap().grid.is_some());
+  for until in 0..asks {
+    let (result, _) = asked_until(until);
+    assert!(
+      matches!(result, Err(Error::Canceled)),
+      "canceled at ask {until} of {asks}: {:?}",
+      result.map(|measured| measured.problems)
+    );
+  }
+}
+
+#[test]
 fn measuring_uses_the_thresholds_it_is_given() {
   let dir = tempfile::tempdir().unwrap();
   // every window is quieter than full scale, so every one is silent

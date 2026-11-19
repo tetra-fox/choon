@@ -575,7 +575,13 @@ fn read_segments(
       if halted(settings)? {
         return Ok(());
       }
-      match decoder.seek_frame(first) {
+      let sought = decoder.seek_frame(first);
+      // a seek the analysis's own stop cut short only says its source gave no more bytes,
+      // which a reader can take for a frame out of range
+      if !matches!(sought, Ok(true)) && halted(settings)? {
+        return Ok(());
+      }
+      match sought {
         Ok(true) => {}
         Ok(false) => {
           debug!(
@@ -585,11 +591,8 @@ fn read_segments(
           return Ok(());
         }
         Err(problem) => {
-          // a seek the analysis's own stop cut short only says its source gave no more bytes
-          if !halted(settings)? {
-            debug!(problem, frame = first, "seeking to a grid segment failed");
-            measured.problems.push(Limitation::Decoder(problem));
-          }
+          debug!(problem, frame = first, "seeking to a grid segment failed");
+          measured.problems.push(Limitation::Decoder(problem));
           return Ok(());
         }
       }
