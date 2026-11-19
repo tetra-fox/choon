@@ -7,15 +7,15 @@ _Proper lossless, innit?_
 [![ci](https://github.com/tetra-fox/choon/actions/workflows/ci.yml/badge.svg)](https://github.com/tetra-fox/choon/actions/workflows/ci.yml)
 [![license](https://img.shields.io/crates/l/choon)](#license)
 
-Detect lossless audio files made from lossy ones, such as a FLAC transcoded from an MP3. A
-command-line tool and a Rust library.
+Check that lossless audio is actually lossless. A command-line tool and a Rust library.
 
 ## Features
 
-- Spots lossless files decoded from MP3 or AAC by the frame grid the encoder leaves, tuned on
-  LAME at 96 to 320 kbps and V0 to V9 and on ffmpeg's AAC at 96 to 256 kbps
+- Shows when a lossless file's samples were decoded from MP3 or AAC, by the frame grid the
+  encoder leaves, tuned on LAME at 96 to 320 kbps and V0 to V9 and on ffmpeg's AAC at 96 to
+  256 kbps
 - Finds that grid after a conversion between 44.1 and 48 kHz
-- Spots lossless files decoded from Opus by the band energies its encoder quantizes, tuned on
+- Shows when they were decoded from Opus, by the band energies its encoder quantizes, tuned on
   libopus at 16 to 256 kbps
 - Finds an Opus decode at 48 kHz or converted to 44.1 kHz, with or without a gain after the
   decode, in CELT and hybrid modes, in frames of 2.5 to 60 ms
@@ -223,9 +223,9 @@ cargo install choon
 
 ```console
 $ choon check music/
-likely transcode  (MP3 grid, cutoff 16.8 kHz, MP3 ~128 kbps)  music/fake-128.flac
+likely transcode  (MP3 grid, cutoff 16.8 kHz, MP3 ~128 kbps)  music/lame-128.flac
 possibly lossy    (cutoff 19.4 kHz, MP3 ~224 kbps, no grid)  music/cut-19.flac
-likely transcode  (MP3 grid, cutoff 20.2 kHz, MP3 ~320 kbps or AAC)  music/fake-320.flac
+likely transcode  (MP3 grid, cutoff 20.2 kHz, MP3 ~320 kbps or AAC)  music/lame-320.flac
 
 Verdict            Files
 ------------------ -------
@@ -243,8 +243,8 @@ Files per minute     255
 Verdict            Grid            Cutoff     Encoder guess          Path
 ------------------ --------------- ---------- ---------------------- ---------------------
 possibly lossy                     19.4 kHz   MP3 ~224 kbps          music/cut-19.flac
-likely transcode   MP3, offset 1   16.8 kHz   MP3 ~128 kbps          music/fake-128.flac
-likely transcode   MP3, offset 1   20.2 kHz   MP3 ~320 kbps or AAC   music/fake-320.flac
+likely transcode   MP3, offset 1   16.8 kHz   MP3 ~128 kbps          music/lame-128.flac
+likely transcode   MP3, offset 1   20.2 kHz   MP3 ~320 kbps or AAC   music/lame-320.flac
 ```
 
 A terminal shows a progress bar per file and one for the run, each flagged file as it is found,
@@ -254,8 +254,8 @@ then these tables. One file alone gets its reading in detail, with its summary i
 ```console
 $ fd -e flac . music/ | choon check - | sort
 music/cut-19.flac: possibly lossy (cutoff 19.4 kHz, MP3 ~224 kbps, no grid)
-music/fake-128.flac: likely transcode (MP3 grid, cutoff 16.8 kHz, MP3 ~128 kbps)
-music/fake-320.flac: likely transcode (MP3 grid, cutoff 20.2 kHz, MP3 ~320 kbps or AAC)
+music/lame-128.flac: likely transcode (MP3 grid, cutoff 16.8 kHz, MP3 ~128 kbps)
+music/lame-320.flac: likely transcode (MP3 grid, cutoff 20.2 kHz, MP3 ~320 kbps or AAC)
 music/honest.flac: consistent (confidence 0.73)
 ```
 
@@ -293,7 +293,7 @@ music/honest.flac: consistent (confidence 0.73)
 | 2         | a file that could not be read, or a wrong argument    |
 
 ```sh
-for f in *.flac; do choon check "$f" > /dev/null || mv "$f" suspect/; done
+for f in *.flac; do choon check "$f" > /dev/null || mv "$f" flagged/; done
 ```
 
 ### Library

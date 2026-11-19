@@ -1,6 +1,6 @@
 [package]
 name = "choon"
-description = "Detect lossless audio files made from lossy ones, such as a FLAC transcoded from an MP3"
+description = "Check that lossless audio is actually lossless"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"
