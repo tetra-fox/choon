@@ -18,8 +18,10 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 HERE = Path(__file__).parent
-# a hang is anything past a minute for under ten minutes of audio
+# a hang is anything past a minute for under ten minutes of audio; the hours-long files get
+# twenty
 TIMEOUT = 60
+LONG_TIMEOUT = 1200
 SAMPLED = ["--max-full-minutes", "0.2", "--sampled-windows", "20"]
 MODES = {"line": [], "json": ["--json"], "sampled": ["--json", *SAMPLED]}
 LOSSY = {"likely_transcode", "mixed_sources"}
@@ -49,7 +51,7 @@ def run(binary, mode, file):
             [binary, "check", *MODES[mode], "--", file], cwd=HERE, stdout=out, stderr=err,
             stdin=subprocess.DEVNULL,
         )
-        deadline = started + TIMEOUT
+        deadline = started + (LONG_TIMEOUT if file.startswith("D-hours") else TIMEOUT)
         status = None
         while True:
             pid, raw, usage = os.wait4(child.pid, os.WNOHANG)
@@ -100,7 +102,7 @@ def said(read):
     if "error" in read:
         return "not read: " + read["error"]
     grid = f", {read['codec']} grid" + (f" ({read['family']})" if read["family"] else "") if read["codec"] else ""
-    cutoff = f", cutoff {read['cutoff'] / 1000:.1f} kHz" if read["cutoff"] else ""
+    cutoff = f", cutoff {read['cutoff'] / 1000:.1f} kHz" if read["cutoff"] is not None else ""
     flags = "".join(f", {flag}" for flag in read["flags"])
     return f"{read['verdict']}{grid}{cutoff}{flags}"
 
@@ -166,7 +168,7 @@ def judge(expect, status, read, line, reference):
         if not alike(read, reference):
             return "worse", f"differs from {rest}: {said(reference)}"
         if (read["cutoff"] is None) != (reference.get("cutoff") is None) or (
-            read["cutoff"] and abs(read["cutoff"] - reference["cutoff"]) > 300
+            read["cutoff"] is not None and abs(read["cutoff"] - reference["cutoff"]) > 300
         ):
             return "worse", f"cutoff differs from {rest}"
         return "as documented", ""
@@ -185,7 +187,10 @@ def main():
     results, named = sys.argv[1], sys.argv[2:]
     binaries = [str(Path(binary).resolve()) for binary in named]
     label = dict(zip(binaries, named))
-    cases = [line.rstrip("\n").split("\t") for line in open(HERE / "manifest.tsv")]
+    listed = [line.rstrip("\n").split("\t") for line in open(HERE / "manifest.tsv")]
+    cases = [case for case in listed if (HERE / case[0]).exists()]
+    if len(cases) < len(listed):
+        print(f"{len(listed) - len(cases)} cases left out, their files not made")
     jobs = [(case[0], binary, mode) for case in cases for binary in binaries for mode in MODES]
     with ThreadPoolExecutor(4) as pool:
         ran = dict(zip(jobs, pool.map(lambda job: run(job[1], job[2], job[0]), jobs)))

@@ -422,6 +422,8 @@ for base in honest lame128; do
   ff -i "$src" -c:a pcm_s16be "C-$base.caf"
   wrap "C-$base.caf" $ref "CAF"
 done
+ff -i "$work/s44.wav" -c:a alac C-honest-alac.caf
+wrap C-honest-alac.caf C-honest_16-44.flac "ALAC in CAF"
 cp "$work/opus128.opus" C-opus.opus
 note C-opus.opus "consistent" "$table: consistent with its bitrate" "opusenc --bitrate 128"
 for file in C-opus-in-webm.webm C-opus-in-matroska.mka C-opus-in-mp4.mp4; do
@@ -654,11 +656,18 @@ from short-decode lame128 "atrim=end=4"
 lossless "$work/short-decode.wav" D-short-decode_16-44.flac
 note D-short-decode_16-44.flac open "$little; nothing says whether a grid in 4 s is a likely transcode" "4 s of the MP3 decode"
 
+# the hours-long files are in the manifest whether or not they were made, and the runner
+# leaves out what is not there
+for hours in 1 6 24; do
+  note "D-hours-${hours}_16-44.flac" honest "rustdoc Coverage::Full: time and measures grow with the length" "$hours hours of a tone under noise"
+done
+for gb in 2 4; do
+  note "D-wav-past-${gb}gb.wav" limited "a WAV's sizes are 32 bits: past them the header cannot state the length" "8-bit mono WAV of $gb GB, sparse"
+done
 if [ "$long" = long ]; then
-  # a tone under quiet noise packs small, so the hours cost little disk
+  # a tone under quiet noise, on both channels
   for hours in 1 6 24; do
     ff -f lavfi -i "sine=f=440:r=44100:d=$((hours * 3600))" -af "volume=2,aeval='val(0)+0.001*(random(0)*2-1)':c=same,pan=stereo|c0=c0|c1=c0" -c:a flac "D-hours-${hours}_16-44.flac"
-    note "D-hours-${hours}_16-44.flac" honest "rustdoc Coverage::Full: time and measures grow with the length" "$hours hours of a tone under noise"
   done
   # 8-bit mono at 44.1 kHz past 2 GB and past 4 GB, the samples a hole in the file
   for gb in 2 4; do
@@ -669,9 +678,8 @@ if [ "$long" = long ]; then
     # the sizes a writer that counts in 32 bits leaves
     poke "$file" 4 "$(le32 $((($(size "$file") - 8) & 0xffffffff)))"
     poke "$file" $((at + 4)) "$(le32 $((($(size "$file") - at - 8) & 0xffffffff)))"
-    note "$file" limited "a WAV's sizes are 32 bits: past them the header cannot state the length" "8-bit mono WAV of $gb GB, sparse"
   done
 fi
 
-sort -o "$manifest" "$manifest"
+LC_ALL=C sort -o "$manifest" "$manifest"
 echo "$(wc -l < "$manifest") cases in $manifest"
