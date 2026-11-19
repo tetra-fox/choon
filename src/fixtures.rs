@@ -280,14 +280,7 @@ pub fn music_for(
 impl Audio {
   /// Scales the audio to an RMS level of `dbfs`.
   pub fn set_level(&mut self, dbfs: f64) {
-    let count: usize = self.channels.iter().map(Vec::len).sum();
-    let squares: f64 = self
-      .channels
-      .iter()
-      .flatten()
-      .map(|s| f64::from(*s).powi(2))
-      .sum();
-    let gain = (10f64.powf(dbfs / 20.0) / (squares / count as f64).sqrt()) as f32;
+    let gain = (10f64.powf(dbfs / 20.0) / self.mean_square().sqrt()) as f32;
     for sample in self.channels.iter_mut().flatten() {
       *sample *= gain;
     }
@@ -380,6 +373,11 @@ impl Audio {
   }
 
   fn level(&self) -> f64 {
+    10.0 * self.mean_square().log10()
+  }
+
+  /// the mean of the squares of every channel's samples
+  fn mean_square(&self) -> f64 {
     let count: usize = self.channels.iter().map(Vec::len).sum();
     let squares: f64 = self
       .channels
