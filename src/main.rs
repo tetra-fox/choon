@@ -578,14 +578,31 @@ fn label(verdict: Verdict) -> &'static str {
   }
 }
 
-/// the encoder setting a reading names. beside a verdict that finds no lossy audio, a named
-/// encoder would read as a finding
-fn named_guess(reading: &Reading) -> Option<&str> {
-  reading
+/// the encoder a reading names: without a grid the setting its cutoff matches, with one the
+/// grid's codec, its encoder family in parentheses and the setting. `None` where a grid has
+/// neither a family nor a setting to name, and beside a verdict that finds no lossy audio,
+/// where a named encoder would read as a finding
+fn encoder(reading: &Reading) -> Option<String> {
+  let guess = reading
     .encoder_guess
     .as_ref()
     .filter(|_| flagged(reading.verdict))
-    .map(|guess| guess.profile.as_str())
+    .map(|guess| guess.profile.as_str());
+  let Some(grid) = &reading.grid else {
+    return guess.map(str::to_string);
+  };
+  let codec = grid.codec;
+  // the shipped profiles are LAME's cutoffs: a setting is named beside LAME or no named
+  // encoder, from a profile named for the grid's codec
+  let setting = guess
+    .filter(|_| matches!(grid.family, None | Some(Family::Lame | Family::Untagged)))
+    .and_then(|name| name.strip_prefix(&format!("{codec} ")));
+  match (grid.family.and_then(family_words), setting) {
+    (None, None) => None,
+    (None, Some(setting)) => Some(format!("{codec} {setting}")),
+    (Some(family), None) => Some(format!("{codec} ({family})")),
+    (Some(family), Some(setting)) => Some(format!("{codec} ({family}) {setting}")),
+  }
 }
 
 /// the minutes `text` names, refusing an endless length and one of no time, under which a file
@@ -764,15 +781,15 @@ fn khz(hz: f64) -> String {
   format!("{:.1} kHz", hz / 1000.0)
 }
 
-/// what a reading found, a few words each: the grid and its encoder family, the cutoff and the
-/// encoder setting it matches, the flags, the confidence
+/// what a reading found, a few words each: the grid, the cutoff, the encoder, the flags, the
+/// confidence
 fn found(reading: &Reading) -> Vec<String> {
   let mut found = Vec::new();
   let cutoff = reading.cutoff_hz.map_or_else(
     || "no cutoff".to_string(),
     |hz| format!("cutoff {}", khz(hz)),
   );
-  let guess = named_guess(reading).map(str::to_string);
+  let guess = encoder(reading);
   if let Some(grid) = &reading.grid {
     let codec = grid.codec;
     found.push(match &grid.evidence {
@@ -787,7 +804,6 @@ fn found(reading: &Reading) -> Vec<String> {
       Evidence::Hybrid { .. } => format!("{codec} hybrid grid"),
       Evidence::Short { short } => format!("{codec} grid, {} ms frames", short.milliseconds()),
     });
-    found.extend(grid.family.and_then(family_words).map(str::to_string));
     found.push(cutoff);
     found.extend(guess);
     return found;

@@ -14,7 +14,7 @@ use comfy_table::{CellAlignment, ContentArrangement, LineStyle, Table, TableStyl
 use console::{Alignment, Term};
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 
-use crate::{Checked, family_words, flag_words, flagged, khz, label, named_guess};
+use crate::{Checked, encoder, flag_words, flagged, khz, label};
 
 /// the verdicts in the order the summary counts them
 const VERDICTS: [Verdict; 5] = [
@@ -350,18 +350,14 @@ pub fn readout(
       painted(Some(reading.verdict), label(reading.verdict), colour),
     );
     add("Grid", grid(checked, reading));
-    let family = reading.grid.as_ref().and_then(|found| found.family);
-    if let Some(family) = family.and_then(family_words) {
-      add("Encoder family", family.to_string());
-    }
     add(
       "Cutoff",
       reading
         .cutoff_hz
         .map_or_else(|| "none found".to_string(), khz),
     );
-    if let Some(guess) = named_guess(reading) {
-      add("Encoder guess", guess.to_string());
+    if let Some(encoder) = encoder(reading) {
+      add("Encoder", encoder);
     }
     if reading.verdict != Verdict::Inconclusive {
       add("Confidence", format!("{:.2}", reading.confidence));
@@ -545,7 +541,7 @@ pub fn tables(
   if !found.is_empty() {
     let mut list = table(width);
     list.set_content_arrangement(ContentArrangement::Disabled);
-    let mut header = vec!["Verdict", "Grid", "Cutoff", "Encoder guess"];
+    let mut header = vec!["Verdict", "Grid", "Cutoff", "Encoder"];
     if profiled {
       header.push("Profile");
     }
@@ -563,7 +559,7 @@ pub fn tables(
             format!("{}, offset {}", found.codec, found.evidence.offset())
           }),
           reading.cutoff_hz.map_or_else(String::new, khz),
-          named_guess(reading).unwrap_or_default().to_string(),
+          encoder(reading).unwrap_or_default(),
         ];
         if profiled {
           row.push(read.profile.clone());
@@ -606,10 +602,11 @@ mod tests {
   use std::time::Duration;
 
   use choon::fixtures::{self, Bitrate, music, pink};
+  use choon::grid::{Codec, Family};
   use choon::{CancelCheck, Coverage};
 
   use super::{Row, legible, readout, room, tables};
-  use crate::{Checked, Thresholds, analyzed};
+  use crate::{Checked, Thresholds, analyzed, encoder};
 
   /// what the shipped thresholds make of an honest FLAC and of one made from a 128 kbps MP3
   fn honest_and_fake() -> (Box<Checked>, Box<Checked>) {
@@ -640,6 +637,36 @@ mod tests {
   }
 
   #[test]
+  fn an_encoder_is_the_grids_codec_its_family_and_the_cutoffs_setting() {
+    let (_, fake) = honest_and_fake();
+    let reading = &fake.readings[0].reading;
+    let named = |codec, family| {
+      let mut reading = reading.clone();
+      let grid = reading.grid.as_mut().expect("the fake carries a grid");
+      (grid.codec, grid.family) = (codec, family);
+      encoder(&reading)
+    };
+    let mp3 = |family| named(Codec::Mp3, family);
+    assert_eq!(mp3(None).as_deref(), Some("MP3 ~128 kbps"));
+    assert_eq!(
+      mp3(Some(Family::Untagged)).as_deref(),
+      Some("MP3 ~128 kbps")
+    );
+    assert_eq!(
+      mp3(Some(Family::Lame)).as_deref(),
+      Some("MP3 (LAME) ~128 kbps")
+    );
+    // the profiles are LAME's cutoffs, so another encoder is named without a setting
+    assert_eq!(mp3(Some(Family::Helix)).as_deref(), Some("MP3 (Helix)"));
+    // a profile named for another codec than the grid's names no setting
+    assert_eq!(
+      named(Codec::Aac, Some(Family::Apple)).as_deref(),
+      Some("AAC (Apple)")
+    );
+    assert_eq!(named(Codec::Aac, None), None);
+  }
+
+  #[test]
   fn a_control_character_in_a_name_is_written_as_its_escape() {
     assert_eq!(
       legible(Path::new("a\nb\u{1b}[31m \u{e9}.flac")),
@@ -654,14 +681,14 @@ mod tests {
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines[0], "album/fake.flac");
     assert!(
-      lines.contains(&"  Verdict         likely transcode"),
+      lines.contains(&"  Verdict       likely transcode"),
       "{text}"
     );
-    assert!(lines.contains(&"  Encoder guess   MP3 ~128 kbps"), "{text}");
+    assert!(lines.contains(&"  Encoder       MP3 ~128 kbps"), "{text}");
     assert!(
       lines
         .iter()
-        .any(|line| line.starts_with("  Grid            MP3 at offset ")),
+        .any(|line| line.starts_with("  Grid          MP3 at offset ")),
       "{text}"
     );
     // the summary is longer than a line: what follows its first line starts under its value
@@ -669,10 +696,7 @@ mod tests {
       .iter()
       .position(|line| line.starts_with("  Summary"))
       .unwrap();
-    assert!(
-      lines[summary + 1].starts_with("                  "),
-      "{text}"
-    );
+    assert!(lines[summary + 1].starts_with("                "), "{text}");
     assert!(lines.iter().all(|line| line.len() <= 60), "{text}");
 
     let coloured = readout(Path::new("album/fake.flac"), &fake, false, true, true, 60);
@@ -721,7 +745,7 @@ mod tests {
     assert_eq!(cells("Files per minute"), ["Files per minute", "6"]);
     assert_eq!(
       cells("Verdict            Grid"),
-      ["Verdict", "Grid", "Cutoff", "Encoder guess", "Path"]
+      ["Verdict", "Grid", "Cutoff", "Encoder", "Path"]
     );
     // the one flagged file, its name on one line with nothing a terminal would act on
     let flagged = cells("likely transcode   MP3");

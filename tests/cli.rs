@@ -290,11 +290,10 @@ fn an_opus_file_and_a_flac_decoded_from_it_say_opus() {
   assert_eq!(status(&output), 1, "{output:?}");
   let line = String::from_utf8(output.stdout).unwrap();
   assert!(
-    line.starts_with(&format!(
-      "{fake}: likely transcode (Opus grid, libopus, cutoff 20."
-    )),
+    line.starts_with(&format!("{fake}: likely transcode (Opus grid, cutoff 20.")),
     "{line}"
   );
+  assert!(line.trim_end().ends_with(", Opus (libopus))"), "{line}");
 
   let output = choon(&["--json", &opus, &fake]);
   assert_eq!(status(&output), 1, "{output:?}");
@@ -337,10 +336,11 @@ fn a_flac_decoded_from_opus_and_made_quieter_says_opus_at_another_level() {
   let line = String::from_utf8(output.stdout).unwrap();
   assert!(
     line.starts_with(&format!(
-      "{fake}: likely transcode (Opus grid at another level, libopus, cutoff 20."
+      "{fake}: likely transcode (Opus grid at another level, cutoff 20."
     )),
     "{line}"
   );
+  assert!(line.trim_end().ends_with(", Opus (libopus))"), "{line}");
 
   let output = choon(&["--json", &fake]);
   let line: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
