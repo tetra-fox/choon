@@ -138,8 +138,8 @@ fn paths_help() -> String {
   format!(
     "Audio files and directories to read, or - for the paths listed on stdin\n\n\
      A directory is read with the directories under it. Hidden files and directories are left \
-     out, and of the others those with an audio extension are read, in any case: {}. A file \
-     named here or on stdin is read whatever its name. Stdin lists one path per line.",
+     out. Of the others, files with one of these extensions are read, in upper or lower case: \
+     {}. A file named here or on stdin is read whatever its name. Stdin lists one path per line.",
     EXTENSIONS.join(", ")
   )
 }
@@ -763,7 +763,6 @@ fn words(reading: &Reading) -> (&'static str, String) {
   (verdict, rest)
 }
 
-/// `flag` in words
 fn flag_words(flag: Flag) -> &'static str {
   match flag {
     Flag::Upsampled => "upsampled",

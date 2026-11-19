@@ -373,7 +373,7 @@ fn a_directory_is_read_through_for_its_audio_files() {
     std::fs::create_dir_all(at(made)).unwrap();
   }
   std::fs::rename(&honest, at("music/honest.flac")).unwrap();
-  // an extension counts in any case
+  // an extension counts in upper or lower case
   std::fs::copy(&fake, at("music/album/fake.FLAC")).unwrap();
   std::fs::copy(&fake, at("music/.hidden/fake.flac")).unwrap();
   std::fs::copy(&fake, at("music/.fake.flac")).unwrap();
