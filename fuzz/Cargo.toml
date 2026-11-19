@@ -1,0 +1,83 @@
+[package]
+name = "choon-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+choon = { path = "..", default-features = false, features = ["serde"] }
+libfuzzer-sys = "0.4"
+# the pool of one thread the targets run the grid scan on
+rayon = "1.12.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+
+# its own workspace: cargo-fuzz builds with nightly and the main crate stays on stable
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "any_bytes"
+path = "fuzz_targets/any_bytes.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wavpack"
+path = "fuzz_targets/wavpack.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ape"
+path = "fuzz_targets/ape.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dsd"
+path = "fuzz_targets/dsd.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "aac"
+path = "fuzz_targets/aac.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "opus"
+path = "fuzz_targets/opus.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "samples"
+path = "fuzz_targets/samples.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "measured_json"
+path = "fuzz_targets/measured_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "thresholds_json"
+path = "fuzz_targets/thresholds_json.rs"
+test = false
+doc = false
+bench = false
