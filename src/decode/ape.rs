@@ -32,7 +32,7 @@ use symphonia::core::packet::{Packet, PacketRef};
 use symphonia::core::units::{Duration, TimeBase, Timestamp};
 use tracing::{debug, trace, warn};
 
-use super::refused;
+use super::{refused, seek_timestamp};
 
 /// the first version whose range coder the decoder has; older files fail their checksums in it
 const OLDEST_VERSION: u16 = 3990;
@@ -254,18 +254,7 @@ impl FormatReader for ApeReader<'_> {
 
   /// moves to the frame that holds the timestamp. every frame is decoded on its own
   fn seek(&mut self, _: SeekMode, to: SeekTo) -> Result<SeekedTo> {
-    if !self.reader.is_seekable() {
-      return seek_error(SeekErrorKind::Unseekable);
-    }
-    let required_ts = match to {
-      SeekTo::Timestamp { ts, .. } => ts,
-      SeekTo::Time { time, .. } => {
-        let base = self.tracks[0].time_base;
-        base
-          .and_then(|base| base.calc_timestamp(time))
-          .ok_or(Error::SeekError(SeekErrorKind::OutOfRange))?
-      }
-    };
+    let required_ts = seek_timestamp(self.reader.is_seekable(), self.tracks[0].time_base, to)?;
     let frame_blocks = u64::from(self.info.header.blocks_per_frame);
     let frame = u64::try_from(required_ts.get())
       .ok()

@@ -29,7 +29,7 @@ use symphonia::core::packet::{Packet, PacketRef};
 use symphonia::core::units::{Duration, TimeBase, Timestamp};
 use tracing::{debug, trace};
 
-use super::refused;
+use super::{refused, seek_timestamp};
 
 /// the bytes of a block's header
 const HEADER: usize = 32;
@@ -251,18 +251,7 @@ impl FormatReader for WavPackReader<'_> {
   /// moves to the block that holds the timestamp, reading the headers of the blocks on the way
   /// from the last one handed out, or from the first when the timestamp is before that
   fn seek(&mut self, _: SeekMode, to: SeekTo) -> Result<SeekedTo> {
-    if !self.reader.is_seekable() {
-      return seek_error(SeekErrorKind::Unseekable);
-    }
-    let required_ts = match to {
-      SeekTo::Timestamp { ts, .. } => ts,
-      SeekTo::Time { time, .. } => {
-        let base = self.tracks[0].time_base;
-        base
-          .and_then(|base| base.calc_timestamp(time))
-          .ok_or(Error::SeekError(SeekErrorKind::OutOfRange))?
-      }
-    };
+    let required_ts = seek_timestamp(self.reader.is_seekable(), self.tracks[0].time_base, to)?;
     let Ok(wanted) = u64::try_from(required_ts.get()) else {
       return seek_error(SeekErrorKind::OutOfRange);
     };

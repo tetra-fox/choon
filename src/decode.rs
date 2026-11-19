@@ -95,6 +95,24 @@ fn refused<T>(why: &'static str) -> symphonia::core::errors::Result<T> {
   Err(Error::IoError(std::io::Error::other(Refused(why))))
 }
 
+/// the timestamp a reader here is asked to seek to, on its one track with time base `base`:
+/// an error when the source cannot seek, or when a time has no timestamp on the track
+fn seek_timestamp(
+  seekable: bool,
+  base: Option<TimeBase>,
+  to: SeekTo,
+) -> symphonia::core::errors::Result<Timestamp> {
+  if !seekable {
+    return Err(Error::SeekError(SeekErrorKind::Unseekable));
+  }
+  match to {
+    SeekTo::Timestamp { ts, .. } => Ok(ts),
+    SeekTo::Time { time, .. } => base
+      .and_then(|base| base.calc_timestamp(time))
+      .ok_or(Error::SeekError(SeekErrorKind::OutOfRange)),
+  }
+}
+
 /// the containers the analyzer reads: symphonia's own, WavPack, Monkey's Audio, DSF and DSDIFF
 fn probe() -> &'static Probe {
   static PROBE: LazyLock<Probe> = LazyLock::new(|| {

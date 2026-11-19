@@ -29,7 +29,7 @@ use symphonia::core::meta::{Metadata, MetadataLog};
 use symphonia::core::packet::{Packet, PacketRef};
 use symphonia::core::units::{Duration, TimeBase, Timestamp};
 
-use super::refused;
+use super::{refused, seek_timestamp};
 use crate::kaiser;
 
 /// the codec of one-bit samples, which symphonia names no id for
@@ -406,18 +406,7 @@ impl FormatReader for DsdReader<'_> {
 
   /// moves to the packet that holds the timestamp
   fn seek(&mut self, _: SeekMode, to: SeekTo) -> Result<SeekedTo> {
-    if !self.reader.is_seekable() {
-      return seek_error(SeekErrorKind::Unseekable);
-    }
-    let required_ts = match to {
-      SeekTo::Timestamp { ts, .. } => ts,
-      SeekTo::Time { time, .. } => {
-        let base = self.tracks[0].time_base;
-        base
-          .and_then(|base| base.calc_timestamp(time))
-          .ok_or(Error::SeekError(SeekErrorKind::OutOfRange))?
-      }
-    };
+    let required_ts = seek_timestamp(self.reader.is_seekable(), self.tracks[0].time_base, to)?;
     let packets = self.channel_bytes().div_ceil(BLOCK as u64);
     let packet = u64::try_from(required_ts.get())
       .ok()
