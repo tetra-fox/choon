@@ -223,7 +223,7 @@ pub struct ReadingThresholds {
   /// the four segments. A frame of lossless audio lands on the lattice by chance at some
   /// offset in some files, never at the same offset often.
   pub opus_grid_frames: usize,
-  /// Fewest frames on Opus's lattice in the windows measured, for an Opus grid.
+  /// Fewest frames on Opus's lattice in the windows, for an Opus grid.
   ///
   /// It is compared with [`OpusScan::uncut_frames`](crate::grid::OpusScan::uncut_frames), the
   /// count on the one grid a decode has when nothing was cut from its start.
@@ -234,7 +234,7 @@ pub struct ReadingThresholds {
   /// over the four segments, where neither count at the decoder's own level makes an Opus
   /// grid. The search for the level gives chance more frames than `opus_grid_frames` meets.
   pub opus_shifted_frames: usize,
-  /// Fewest frames on Opus's lattice at another level in the windows measured.
+  /// Fewest frames on Opus's lattice at another level in the windows.
   ///
   /// It is compared with
   /// [`OpusShifted::uncut_frames`](crate::grid::OpusShifted::uncut_frames), as
@@ -246,14 +246,14 @@ pub struct ReadingThresholds {
   /// length, the count over the four segments, where no count of 20 ms frames makes an Opus
   /// grid.
   pub opus_short_frames: usize,
-  /// Fewest frames under 20 ms on Opus's lattice in the windows measured.
+  /// Fewest frames under 20 ms on Opus's lattice in the windows.
   ///
   /// It is compared with [`OpusShort::uncut_frames`](crate::grid::OpusShort::uncut_frames)
   /// of each length, as `opus_short_frames` is with its count.
   pub opus_short_uncut_frames: usize,
   /// Weights that read an MP3 grid at offset 1 as Fraunhofer's encoder.
   pub fraunhofer_steps: FraunhoferSteps,
-  /// Fewest different pairs of steps among Opus's hybrid frames, for an Opus grid.
+  /// Fewest different pairs of steps among Opus's hybrid frames.
   ///
   /// It is compared with [`OpusHybrid::steps`](crate::grid::OpusHybrid::steps) and with
   /// [`OpusHybrid::uncut_steps`](crate::grid::OpusHybrid::uncut_steps), where no other count
@@ -287,13 +287,21 @@ pub struct FraunhoferSteps {
   pub min_pairs: usize,
   /// Fewest pairs in each region.
   pub min_region_pairs: usize,
-  /// Weight of the pairs whose higher band is two quarter powers finer, as a share of all.
+  /// Weight of the pairs whose higher band is two quarter powers finer.
+  ///
+  /// The pairs count as a share of all.
   pub two_finer: f64,
-  /// Weight of the pairs whose higher band is two quarter powers coarser, as a share of all.
+  /// Weight of the pairs whose higher band is two quarter powers coarser.
+  ///
+  /// The pairs count as a share of all.
   pub two_coarser: f64,
-  /// Weight of each region's pairs with one step, as a share of the region's.
+  /// Weight of each region's pairs with one step.
+  ///
+  /// The pairs count as a share of the region's.
   pub same: [f64; 3],
-  /// Weight of each region's pairs whose higher band is finer, as a share of the region's.
+  /// Weight of each region's pairs whose higher band is finer.
+  ///
+  /// The pairs count as a share of the region's.
   pub finer: [f64; 3],
   /// Weight of the mean logarithm of the largest value in bands 0 to 5.
   pub low_log: f64,
