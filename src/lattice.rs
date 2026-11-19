@@ -418,14 +418,24 @@ fn tested_and_on(steps: [f64; BANDS], before: Option<&Bands>, bands: &Bands) -> 
   (tested, hits)
 }
 
+/// what the bands of [`HYBRID_TESTED`] show in one channel of a frame
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Hybrid {
+  /// one of the bands is not loud in the frame and the frame before
+  Untested,
+  /// one of them is off the lattice
+  Off,
+  /// the lattice points the two sit on
+  On([i32; 2]),
+}
+
 /// the lattice points a frame after the frame `before` sits on in the bands of
 /// [`HYBRID_TESTED`], as the hybrid mode codes them: the sum over the lower bands starts at
-/// [`HYBRID_FROM`]. `None` when one of the bands is not loud in both frames, `Some(None)` when
-/// one is off the lattice
-fn hybrid(before: &Bands, bands: &Bands) -> Option<Option<[i32; 2]>> {
+/// [`HYBRID_FROM`]
+fn hybrid(before: &Bands, bands: &Bands) -> Hybrid {
   let loud = |band: &usize| bands.loud[*band] && before.loud[*band];
   if !HYBRID_TESTED.iter().all(loud) {
-    return None;
+    return Hybrid::Untested;
   }
   let mut lower = 0.0;
   let mut steps = [0.0; BANDS];
@@ -437,7 +447,11 @@ fn hybrid(before: &Bands, bands: &Bands) -> Option<Option<[i32; 2]>> {
   let tested = HYBRID_TESTED.map(|band| steps[band]);
   // a step is within a few thousand lattice points of none, so its point fits
   let points = tested.map(|step| nearest(step * LATTICE) as i32);
-  Some(tested.iter().all(|step| on_point(*step)).then_some(points))
+  if tested.iter().all(|step| on_point(*step)) {
+    Hybrid::On(points)
+  } else {
+    Hybrid::Off
+  }
 }
 
 /// whether a channel with `tested` bands, `hits` of them on the lattice, is judged, and whether
@@ -691,20 +705,21 @@ fn counted(
   let mut points = std::collections::HashSet::new();
   for (run, frame) in pairs() {
     // the first tested channel's points, while every tested channel sits on the lattice
-    let mut sits = None;
+    let mut sits = Hybrid::Untested;
     for channel in 0..channels {
       let before = bands(run, channel, frame - 1, Blocks::Long);
       match hybrid(&before, &bands(run, channel, frame, Blocks::Long)) {
-        Some(Some(on)) => sits = sits.or(Some(Some(on))),
-        Some(None) => {
-          sits = Some(None);
+        Hybrid::On(_) if sits != Hybrid::Untested => {}
+        on @ Hybrid::On(_) => sits = on,
+        Hybrid::Off => {
+          sits = Hybrid::Off;
           break;
         }
-        None => {}
+        Hybrid::Untested => {}
       }
     }
-    hybrid_tested += usize::from(sits.is_some());
-    if let Some(Some(on)) = sits {
+    hybrid_tested += usize::from(sits != Hybrid::Untested);
+    if let Hybrid::On(on) = sits {
       hybrid_frames += 1;
       points.insert(on);
     }
@@ -1227,17 +1242,17 @@ mod tests {
       bands.energy[band] = ALPHA * before.energy[band] + lower + coarse + 0.25;
       lower += (1.0 - BETA) * coarse;
     }
-    assert!(matches!(hybrid(&before, &bands), Some(Some(_))));
+    assert!(matches!(hybrid(&before, &bands), Hybrid::On(_)));
     // the voice coder's output in band 17 moves its energy a little, and nothing else
     let mut reached = bands;
     reached.energy[HYBRID_FROM] += 0.1;
     assert_eq!(hybrid(&before, &reached), hybrid(&before, &bands));
     let mut off = bands;
     off.energy[19] += 0.01;
-    assert_eq!(hybrid(&before, &off), Some(None));
+    assert_eq!(hybrid(&before, &off), Hybrid::Off);
     let mut faint = bands;
     faint.loud[18] = false;
-    assert_eq!(hybrid(&before, &faint), None);
+    assert_eq!(hybrid(&before, &faint), Hybrid::Untested);
     // frames that land on the same points over and over, as a steady tone's do, are one pair
     let run = [before, bands, before, bands, before, bands];
     let counted = counted(&[6], 1, |_, _, frame, _| run[frame]);
