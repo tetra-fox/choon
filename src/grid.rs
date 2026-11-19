@@ -112,6 +112,7 @@ const NOISE16: f64 = 8.809_710_218_959_115e-6;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+#[non_exhaustive]
 pub enum Codec {
   /// AAC, read with a long block's transform under either of its windows.
   ///

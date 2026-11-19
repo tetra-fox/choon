@@ -834,18 +834,20 @@ fn found(reading: &Reading) -> Vec<String> {
   found
 }
 
-/// the encoder family of a grid in a word or two; `None` for the family that names no encoder
+/// the encoder family of a grid in a word or two; `None` for the family that names no encoder,
+/// and for one this program has no word for
 fn family_words(family: Family) -> Option<&'static str> {
   match family {
     Family::Lame => Some("LAME"),
     Family::Helix => Some("Helix"),
-    Family::Untagged => None,
     Family::Apple => Some("Apple"),
     Family::Faac => Some("FAAC"),
     Family::Nero => Some("Nero"),
     Family::FfmpegOrFdk => Some("ffmpeg or fdk-aac"),
     Family::Fraunhofer => Some("Fraunhofer"),
     Family::Libopus => Some("libopus"),
+    // Untagged, and what the library's enum, which is non-exhaustive, may hold besides
+    _ => None,
   }
 }
 

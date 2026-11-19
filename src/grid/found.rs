@@ -84,6 +84,7 @@ impl Evidence {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+#[non_exhaustive]
 pub enum Family {
   /// LAME, whose tag states its delay of 576 samples.
   Lame,
