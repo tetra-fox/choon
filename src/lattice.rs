@@ -491,6 +491,11 @@ fn named(before: &Bands, bands: &Bands) -> Option<f64> {
       *place = scaled - nearest(scaled);
     }
     let places = &mut places[..count];
+    // a transform value past what an f32 holds leaves its band and the bands over it without
+    // a step, in every cell alike
+    if places.iter().any(|place| !place.is_finite()) {
+      return None;
+    }
     // bands that gather within less than a quarter of the period sit in three eighths of it
     // in a row, which is cheaper to rule out than the gathering itself
     let mut eighths = [0; 8];

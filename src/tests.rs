@@ -1325,6 +1325,37 @@ fn a_wave_header_that_states_thousands_of_channels_is_refused_without_a_panic() 
   ));
 }
 
+#[test]
+fn float_samples_near_the_largest_an_f32_holds_are_read_without_a_panic() {
+  // two seconds of 32-bit float stereo at 48 kHz: a tone of 1e37 over noise of 1e30, so every
+  // band is loud and the tone's transform value is past an f32
+  let (rate, frames) = (48_000u32, 96_000u32);
+  let mut wave = Vec::new();
+  wave.extend_from_slice(b"RIFF");
+  wave.extend_from_slice(&(36 + frames * 8).to_le_bytes());
+  wave.extend_from_slice(b"WAVEfmt ");
+  wave.extend_from_slice(&16u32.to_le_bytes());
+  wave.extend_from_slice(&3u16.to_le_bytes());
+  wave.extend_from_slice(&2u16.to_le_bytes());
+  wave.extend_from_slice(&rate.to_le_bytes());
+  wave.extend_from_slice(&(rate * 8).to_le_bytes());
+  wave.extend_from_slice(&8u16.to_le_bytes());
+  wave.extend_from_slice(&32u16.to_le_bytes());
+  wave.extend_from_slice(b"data");
+  wave.extend_from_slice(&(frames * 8).to_le_bytes());
+  let mut state = 1u32;
+  for frame in 0..frames {
+    state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+    let noise = f64::from(state) / f64::from(u32::MAX) * 2.0 - 1.0;
+    let turn = 2.0 * std::f64::consts::PI * 300.0 * f64::from(frame) / f64::from(rate);
+    let sample = (1e37 * turn.sin() + 1e30 * noise) as f32;
+    wave.extend_from_slice(&sample.to_le_bytes());
+    wave.extend_from_slice(&(sample * 0.9).to_le_bytes());
+  }
+  let measured = measure_bytes(wave, &settings()).expect("a float WAVE file is read");
+  read(&measured);
+}
+
 proptest::proptest! {
   #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
 
