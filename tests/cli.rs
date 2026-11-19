@@ -146,10 +146,9 @@ fn json_is_a_line_per_file_with_a_reading_per_profile() {
   assert_eq!(lines[0]["readings"][0]["profile"], "default");
   assert_eq!(lines[0]["readings"][0]["verdict"], "consistent");
   assert_eq!(lines[1]["readings"][0]["verdict"], "likely_transcode");
-  assert_eq!(
-    lines[1]["readings"][0]["encoderGuess"]["profile"],
-    "MP3 ~128 kbps"
-  );
+  let profile = &lines[1]["readings"][0]["encoderGuess"]["profile"];
+  assert_eq!(profile["codec"], "MP3");
+  assert_eq!(profile["setting"], "~128 kbps");
   // the file's grid scan, and the grid its reading found
   assert_eq!(lines[1]["grid"]["mp3"]["segmentsAgreeing"], 4);
   assert_eq!(

@@ -583,20 +583,21 @@ fn label(verdict: Verdict) -> &'static str {
 /// neither a family nor a setting to name, and beside a verdict that finds no lossy audio,
 /// where a named encoder would read as a finding
 fn encoder(reading: &Reading) -> Option<String> {
-  let guess = reading
+  let profile = reading
     .encoder_guess
     .as_ref()
     .filter(|_| flagged(reading.verdict))
-    .map(|guess| guess.profile.as_str());
+    .map(|guess| &guess.profile);
   let Some(grid) = &reading.grid else {
-    return guess.map(str::to_string);
+    return profile.map(ToString::to_string);
   };
   let codec = grid.codec;
   // the shipped profiles are LAME's cutoffs: a setting is named beside LAME or no named
-  // encoder, from a profile named for the grid's codec
-  let setting = guess
+  // encoder, from a profile of the grid's codec
+  let setting = profile
     .filter(|_| matches!(grid.family, None | Some(Family::Lame | Family::Untagged)))
-    .and_then(|name| name.strip_prefix(&format!("{codec} ")));
+    .filter(|profile| profile.codec == codec.to_string())
+    .map(|profile| profile.setting.as_str());
   match (grid.family.and_then(family_words), setting) {
     (None, None) => None,
     (None, Some(setting)) => Some(format!("{codec} {setting}")),

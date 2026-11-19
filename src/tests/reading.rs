@@ -53,7 +53,7 @@ fn reads_as_a_transcode_of(bitrate: Bitrate, profile: &str) {
   assert_eq!(reading.verdict, Verdict::LikelyTranscode, "{reading:#?}");
   assert!(reading.confidence >= 0.6, "{reading:#?}");
   let guess = reading.encoder_guess.as_ref().unwrap();
-  assert_eq!(guess.profile, profile, "{reading:#?}");
+  assert_eq!(guess.profile.to_string(), profile, "{reading:#?}");
   assert!(reading.cutoff_hz.is_some());
 }
 
@@ -314,7 +314,7 @@ fn a_320_kbps_stem_under_a_bed_reads_as_that_cut(gain: f32, grid: Option<Codec>)
   );
   let guess = reading.encoder_guess.as_ref().unwrap();
   assert_eq!(
-    (guess.profile.as_str(), guess.confidence),
+    (guess.profile.to_string().as_str(), guess.confidence),
     ("MP3 ~320 kbps or AAC", 0.4)
   );
   assert!(
@@ -699,7 +699,7 @@ fn a_cutoff_at_a_lower_rates_band_edge_is_not_read_as_a_transcode(
   assert_eq!(reading.verdict, Verdict::Inconclusive, "{name}: {why}");
   assert!(reading.flags.is_empty(), "{name}: {reading:#?}");
   assert_eq!(
-    reading.encoder_guess.as_ref().unwrap().profile,
+    reading.encoder_guess.as_ref().unwrap().profile.to_string(),
     profile,
     "{name}"
   );

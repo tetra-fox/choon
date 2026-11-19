@@ -664,6 +664,22 @@ mod tests {
       Some("AAC (Apple)")
     );
     assert_eq!(named(Codec::Aac, None), None);
+    // a cutoff two codecs share names the other one only where no grid says which it was
+    let shared = |grid: bool| {
+      let mut reading = reading.clone();
+      let guess = reading
+        .encoder_guess
+        .as_mut()
+        .expect("the fake has a guess");
+      guess.profile.setting = "~320 kbps".to_string();
+      guess.profile.also = Some("AAC".to_string());
+      if !grid {
+        reading.grid = None;
+      }
+      encoder(&reading)
+    };
+    assert_eq!(shared(true).as_deref(), Some("MP3 ~320 kbps"));
+    assert_eq!(shared(false).as_deref(), Some("MP3 ~320 kbps or AAC"));
   }
 
   #[test]

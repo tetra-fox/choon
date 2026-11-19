@@ -55,7 +55,10 @@ fn explain(measured: &Measured, reading: &Reading) -> String {
      bitrate {:?} kbps\n",
     reading.verdict,
     reading.confidence,
-    reading.encoder_guess.as_ref().map(|g| &g.profile),
+    reading
+      .encoder_guess
+      .as_ref()
+      .map(|g| g.profile.to_string()),
     reading.flags,
     reading.summary,
     reading.limitations,

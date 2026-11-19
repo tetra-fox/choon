@@ -1,5 +1,7 @@
 //! thresholds the analyzer measures and reads with, all data the caller passes
 
+use std::fmt;
+
 /// a cutoff at or above this fraction of the band's top counts as reaching it, when a window is
 /// measured and when it is read
 const FULL_BAND: f64 = 0.9;
@@ -356,18 +358,36 @@ pub struct RateEdge {
 pub struct EncoderProfile {
   /// Cutoff at 44.1 and 48 kHz, in Hz.
   pub hz: f64,
-  /// Name a reading gives it.
-  pub name: String,
+  /// Codec that cuts here, spelled as a grid's codec is written.
+  pub codec: String,
+  /// Setting of that codec that cuts here, in words.
+  pub setting: String,
+  /// Another codec that cuts here too.
+  #[cfg_attr(feature = "serde", serde(default))]
+  pub also: Option<String>,
   /// Highest nominal bitrate cut here, in kbit/s.
   pub kbps: u32,
 }
 
 impl EncoderProfile {
-  fn new(hz: f64, name: &str, kbps: u32) -> Self {
+  fn mp3(hz: f64, setting: &str, kbps: u32) -> Self {
     Self {
       hz,
-      name: name.to_string(),
+      codec: "MP3".to_string(),
+      setting: setting.to_string(),
+      also: None,
       kbps,
+    }
+  }
+}
+
+/// Writes the profile's name: the codec, its setting, then the other codec after "or".
+impl fmt::Display for EncoderProfile {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "{} {}", self.codec, self.setting)?;
+    match &self.also {
+      Some(also) => write!(f, " or {also}"),
+      None => Ok(()),
     }
   }
 }
@@ -409,18 +429,21 @@ impl Default for ReadingThresholds {
       // LAME's defaults are the commonest; other MP3 encoders and AAC cut a little lower at the
       // same bitrate
       profiles: vec![
-        EncoderProfile::new(11_000.0, "MP3 ~64 kbps", 64),
-        EncoderProfile::new(13_500.0, "MP3 ~80 kbps", 80),
-        EncoderProfile::new(15_100.0, "MP3 ~96 kbps", 96),
-        EncoderProfile::new(16_000.0, "MP3 ~128 kbps", 128),
-        EncoderProfile::new(17_000.0, "MP3 ~128 kbps", 128),
-        EncoderProfile::new(17_500.0, "MP3 ~160 kbps", 160),
-        EncoderProfile::new(18_600.0, "MP3 ~192 kbps", 192),
-        EncoderProfile::new(19_400.0, "MP3 ~224 kbps", 224),
+        EncoderProfile::mp3(11_000.0, "~64 kbps", 64),
+        EncoderProfile::mp3(13_500.0, "~80 kbps", 80),
+        EncoderProfile::mp3(15_100.0, "~96 kbps", 96),
+        EncoderProfile::mp3(16_000.0, "~128 kbps", 128),
+        EncoderProfile::mp3(17_000.0, "~128 kbps", 128),
+        EncoderProfile::mp3(17_500.0, "~160 kbps", 160),
+        EncoderProfile::mp3(18_600.0, "~192 kbps", 192),
+        EncoderProfile::mp3(19_400.0, "~224 kbps", 224),
         // LAME 3.100 cuts 224 kbps here too, so the name says both
-        EncoderProfile::new(19_530.0, "MP3 ~224-256 kbps", 256),
-        EncoderProfile::new(20_000.0, "MP3 ~320 kbps or AAC", 320),
-        EncoderProfile::new(20_500.0, "MP3 ~320 kbps", 320),
+        EncoderProfile::mp3(19_530.0, "~224-256 kbps", 256),
+        EncoderProfile {
+          also: Some("AAC".to_string()),
+          ..EncoderProfile::mp3(20_000.0, "~320 kbps", 320)
+        },
+        EncoderProfile::mp3(20_500.0, "~320 kbps", 320),
       ],
       // the tuning's lossless files reach z 8.24 for AAC, and 11.57 for MP3 apart from one with
       // an MP3 section in one segment, which the agreement keeps out
@@ -508,7 +531,7 @@ mod tests {
     refused::<MeasureThresholds>(r#"{"cutoffRange": 50.0}"#);
     refused::<ReadingThresholds>(r#"{"sharpShelf": 40.0}"#);
     refused::<ReadingThresholds>(
-      r#"{"profiles": [{"hz": 16000.0, "name": "a", "kbps": 128, "guid": "A"}]}"#,
+      r#"{"profiles": [{"hz": 16000.0, "codec": "a", "setting": "b", "kbps": 128, "guid": "A"}]}"#,
     );
     refused::<ReadingThresholds>(
       r#"{"otherRateEdges": [{"hz": 15000.0, "rate": "30 kHz", "source": "a"}]}"#,

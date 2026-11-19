@@ -228,7 +228,7 @@ cargo install choon
 $ choon check music/
 likely transcode  (MP3 grid, cutoff 16.8 kHz, MP3 ~128 kbps)  music/lame-128.flac
 possibly lossy    (cutoff 19.4 kHz, MP3 ~224 kbps, no grid)  music/cut-19.flac
-likely transcode  (MP3 grid, cutoff 20.2 kHz, MP3 ~320 kbps or AAC)  music/lame-320.flac
+likely transcode  (MP3 grid, cutoff 20.2 kHz, MP3 ~320 kbps)  music/lame-320.flac
 
 Verdict            Files
 ------------------ -------
@@ -243,11 +243,11 @@ Files not read         0
 Wall time          0.9 s
 Files per minute     255
 
-Verdict            Grid            Cutoff     Encoder                Path
------------------- --------------- ---------- ---------------------- ---------------------
-possibly lossy                     19.4 kHz   MP3 ~224 kbps          music/cut-19.flac
-likely transcode   MP3, offset 1   16.8 kHz   MP3 ~128 kbps          music/lame-128.flac
-likely transcode   MP3, offset 1   20.2 kHz   MP3 ~320 kbps or AAC   music/lame-320.flac
+Verdict            Grid            Cutoff     Encoder         Path
+------------------ --------------- ---------- --------------- ---------------------
+possibly lossy                     19.4 kHz   MP3 ~224 kbps   music/cut-19.flac
+likely transcode   MP3, offset 1   16.8 kHz   MP3 ~128 kbps   music/lame-128.flac
+likely transcode   MP3, offset 1   20.2 kHz   MP3 ~320 kbps   music/lame-320.flac
 ```
 
 A terminal shows a progress bar per file and one for the run, each flagged file as it is found,
@@ -258,7 +258,7 @@ then these tables. One file alone gets its reading in detail, with its summary i
 $ fd -e flac . music/ | choon check - | sort
 music/cut-19.flac: possibly lossy (cutoff 19.4 kHz, MP3 ~224 kbps, no grid)
 music/lame-128.flac: likely transcode (MP3 grid, cutoff 16.8 kHz, MP3 ~128 kbps)
-music/lame-320.flac: likely transcode (MP3 grid, cutoff 20.2 kHz, MP3 ~320 kbps or AAC)
+music/lame-320.flac: likely transcode (MP3 grid, cutoff 20.2 kHz, MP3 ~320 kbps)
 music/honest.flac: consistent (confidence 0.73)
 ```
 

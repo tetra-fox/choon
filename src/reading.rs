@@ -63,8 +63,8 @@ pub enum Verdict {
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct EncoderGuess {
-  /// Setting's name, as its profile gives it.
-  pub profile: String,
+  /// Profile whose cutoff the file's is nearest.
+  pub profile: EncoderProfile,
   /// How sure the analyzer is of the match, from 0 to 1.
   pub confidence: f64,
 }
@@ -300,7 +300,7 @@ impl Measured {
         verdict: Verdict::Inconclusive,
         confidence: 0.4,
         encoder_guess: Some(EncoderGuess {
-          profile: profile.name.clone(),
+          profile: profile.clone(),
           confidence: 0.4,
         }),
         summary: format!(
@@ -311,7 +311,7 @@ impl Measured {
           format!("{:.2}", edge * 2.0 / 1000.0)
             .trim_end_matches('0')
             .trim_end_matches('.'),
-          profile.name
+          profile
         ),
         limitations: Vec::new(),
         cutoff_hz: Some(edge),
@@ -552,7 +552,7 @@ fn verdict(
     reading.verdict = Verdict::LikelyTranscode;
     reading.confidence = confidence;
     reading.encoder_guess = Some(EncoderGuess {
-      profile: profile.name.clone(),
+      profile: profile.clone(),
       confidence: (clustered * (0.5 + 0.5 * sharp_share)).min(t.confidence_cap),
     });
     reading.cutoff_hz = Some(median);
@@ -560,7 +560,7 @@ fn verdict(
       "{} of the time stops at {} with a sharp shelf, where an encoder at {} cuts off.",
       percent(clustered),
       khz(median),
-      profile.name
+      profile
     );
     return reading;
   }
@@ -572,7 +572,7 @@ fn verdict(
     reading.cutoff_hz = Some(median);
     // past the transcode rule, this is a sharp cutoff where the highest bitrates cut
     reading.encoder_guess = Some(EncoderGuess {
-      profile: profile.name.clone(),
+      profile: profile.clone(),
       confidence: 0.4,
     });
     reading.limitations.push(Limitation::FilteredAt20Khz);
@@ -581,7 +581,7 @@ fn verdict(
        a recording was filtered when it was made.",
       percent(clustered),
       khz(median),
-      profile.name
+      profile
     );
     return reading;
   }
@@ -599,7 +599,7 @@ fn verdict(
     reading.verdict = Verdict::MixedSources;
     reading.confidence = 0.5 + 0.35 * (limited_share.min(full) / 0.5).min(1.0);
     reading.encoder_guess = t.profile_at(at).map(|p| EncoderGuess {
-      profile: p.name.clone(),
+      profile: p.clone(),
       confidence: 0.5,
     });
     reading.cutoff_hz = Some(at);
@@ -623,7 +623,7 @@ fn verdict(
     reading.verdict = Verdict::MixedSources;
     reading.confidence = 0.5 + 0.35 * layered_share.min(1.0);
     reading.encoder_guess = t.profile_at(at).map(|p| EncoderGuess {
-      profile: p.name.clone(),
+      profile: p.clone(),
       confidence: 0.5,
     });
     reading.cutoff_hz = Some(at);
@@ -646,14 +646,13 @@ fn verdict(
         .is_some_and(|p| p.kbps >= t.high_bitrate_kbps)
     })
     .collect();
-  if high_steps.len() as f64 / count as f64 >= t.mixed_share {
-    let at = middle(&high_steps);
-    // every step here is at a profile
-    let profile = t
-      .profile_at(at)
-      .map_or("a high bitrate", |p| p.name.as_str());
+  // the middle step is one of the steps, each at a profile, so only no steps leave it without one
+  let at = middle(&high_steps);
+  if high_steps.len() as f64 / count as f64 >= t.mixed_share
+    && let Some(profile) = t.profile_at(at)
+  {
     reading.encoder_guess = Some(EncoderGuess {
-      profile: profile.to_string(),
+      profile: profile.clone(),
       confidence: 0.4,
     });
     reading.cutoff_hz = Some(at);
@@ -744,7 +743,7 @@ fn verdict(
             "The content stops at about {}, where an encoder at {} cuts off, at or above what \
              a file of its bitrate keeps.",
             khz(edge),
-            profile.name
+            profile
           ),
           None => format!(
             "The content reaches about {}, the top of what a file of its bitrate keeps.",
@@ -755,11 +754,11 @@ fn verdict(
       }
       reading.confidence = 0.4;
       reading.encoder_guess = profile.map(|p| EncoderGuess {
-        profile: p.name.clone(),
+        profile: p.clone(),
         confidence: 0.4,
       });
       let at = profile.map_or(String::new(), |p| {
-        format!(", where an encoder at {} cuts off", p.name)
+        format!(", where an encoder at {p} cuts off")
       });
       reading.summary = format!(
         "The content stops at about {}{at}: below what a file of its bitrate keeps, but not \
@@ -902,7 +901,7 @@ mod tests {
     assert_eq!(found.confidence, 0.4);
     let guess = found.encoder_guess.unwrap();
     assert_eq!(
-      (guess.profile.as_str(), guess.confidence),
+      (guess.profile.to_string().as_str(), guess.confidence),
       ("MP3 ~128 kbps", 0.4)
     );
     assert!(
