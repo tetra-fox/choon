@@ -101,8 +101,8 @@ pub enum Family {
   Faac,
   /// Nero's AAC encoder: the Kaiser-Bessel-derived window and a delay of 2624 samples.
   ///
-  /// A Vorbis decode reads as AAC, and at this offset about one time in thirteen. It shows no
-  /// steps of AAC's quantizer ([`Found::quantizer`]).
+  /// Named only where the steps of AAC's quantizer show ([`Found::quantizer`]). A Vorbis decode
+  /// reads as AAC, at this offset about one time in thirteen, and shows none.
   Nero,
   /// ffmpeg's AAC encoder or fdk-aac: the Kaiser-Bessel-derived window, their delay cut whole.
   FfmpegOrFdk,
@@ -181,11 +181,12 @@ pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found
     (_, Codec::Aac) => aac_stepped(scan, thresholds),
   };
   let family = match (&evidence, codec) {
-    // the steps show under the encoder's window alone, so they name it where they show
+    // the steps show under the encoder's window alone, so they name it where they show. a
+    // Vorbis decode's count sits at Nero's offset too often for the count alone to name Nero
     (Evidence::Count(count) | Evidence::CountAt { scan: count, .. }, Codec::Aac) => {
       match &stepped {
         Some((window, _)) => Family::of_aac(window.offset, window.sine),
-        None => Family::of_aac(count.offset, sine),
+        None => Family::of_aac(count.offset, sine).filter(|family| *family != Family::Nero),
       }
     }
     (_, Codec::Aac) => stepped
@@ -447,6 +448,10 @@ mod tests {
     // without steps the count's own window names the family, and no encoder's is the sine at 448
     let unnamed = found(&scan(78.0, 93.0, under, under), &thresholds).expect("the count is over");
     assert_eq!((unnamed.family, unnamed.quantizer), (None, None));
+    // nor does a count at Nero's offset and window name Nero, as a Vorbis decode's can sit there
+    let vorbis = found(&scan(93.0, 78.0, under, under), &thresholds).expect("the count is over");
+    assert_eq!(vorbis.evidence, Evidence::Count(count(448, 93.0)));
+    assert_eq!((vorbis.family, vorbis.quantizer), (None, None));
     // no count over its threshold: the steps show the grid, and one stretch is enough
     let quiet = scan(4.0, 5.0, 2_500, under);
     let by_steps = found(&quiet, &thresholds).expect("the steps show");

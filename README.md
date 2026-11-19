@@ -131,7 +131,7 @@ for its long blocks, so a grid's offset and window fit an encoder family:
 | MP3   | 1      |               | Fraunhofer, where its steps show it |
 | AAC   | 960    | sine          | Apple                               |
 | AAC   | 0      | sine          | FAAC                                |
-| AAC   | 448    | Kaiser-Bessel | Nero                                |
+| AAC   | 448    | Kaiser-Bessel | Nero, where AAC's steps show        |
 | AAC   | 0      | Kaiser-Bessel | ffmpeg or fdk-aac                   |
 | Opus  | 228    |               | libopus                             |
 
@@ -152,7 +152,8 @@ for its long blocks, so a grid's offset and window fit an encoder family:
 - The weights were fitted on the codec Windows ships. They name 361 of 445 of its decodes, none
   of 468 decodes of the other four, and 3 of 2,521 LAME and Helix decodes, which sit at their
   own offsets
-- About one Vorbis decode in thirteen reads as AAC at Nero's offset, without AAC's steps
+- About one Vorbis decode in thirteen reads as AAC at Nero's offset, without AAC's steps, so
+  Nero is named only where those steps show
 
 ### Verdicts
 
