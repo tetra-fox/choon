@@ -278,14 +278,12 @@ enum Curve {
   OpusShort(Vec<[usize; 2]>),
 }
 
-/// the first of `counts` with the most, and its index; the uncut decode's offset when none
+/// the first of `counts` with the most, each an offset and its count; `none` when no offset
 /// counts any
-fn most(counts: impl Iterator<Item = usize>) -> (usize, usize) {
-  counts
-    .enumerate()
-    .fold((OPUS_UNCUT_OFFSET, 0), |(at, most), (o, count)| {
-      if count > most { (o, count) } else { (at, most) }
-    })
+fn most(none: usize, counts: impl Iterator<Item = (usize, usize)>) -> (usize, usize) {
+  counts.fold((none, 0), |(at, most), (o, count)| {
+    if count > most { (o, count) } else { (at, most) }
+  })
 }
 
 /// the scan for Opus from what the segments' frames count at each offset of the file's grid,
@@ -304,14 +302,13 @@ fn opus_scan(
     .zip(uncut_short)
     .map(|((length, counted), uncut)| {
       let grids = length.uncut_offsets();
-      // the first with the most, the first grid's where none counts any
-      let most = |counts: &mut dyn Iterator<Item = (usize, usize)>| {
-        counts.fold((grids[0], 0), |(at, most), (o, count)| {
-          if count > most { (o, count) } else { (at, most) }
-        })
-      };
-      let (offset, frames) = most(&mut counted.iter().copied().map(with_alone).enumerate());
-      let (uncut_offset, uncut_frames) = most(&mut grids.into_iter().zip(uncut.map(with_alone)));
+      // the first grid's offset where none counts any
+      let (offset, frames) = most(
+        grids[0],
+        counted.iter().copied().map(with_alone).enumerate(),
+      );
+      let (uncut_offset, uncut_frames) =
+        most(grids[0], grids.into_iter().zip(uncut.map(with_alone)));
       OpusShort {
         length: length.length,
         offset,
@@ -321,9 +318,18 @@ fn opus_scan(
       }
     })
     .collect();
-  let (offset, frames) = most(counted.iter().map(|c| c.frames.iter().sum()));
-  let (shifted_offset, shifted_frames) = most(counted.iter().map(|c| c.shifted));
-  let (hybrid_offset, hybrid_frames) = most(counted.iter().map(|c| c.hybrid));
+  let (offset, frames) = most(
+    OPUS_UNCUT_OFFSET,
+    counted.iter().map(|c| c.frames.iter().sum()).enumerate(),
+  );
+  let (shifted_offset, shifted_frames) = most(
+    OPUS_UNCUT_OFFSET,
+    counted.iter().map(|c| c.shifted).enumerate(),
+  );
+  let (hybrid_offset, hybrid_frames) = most(
+    OPUS_UNCUT_OFFSET,
+    counted.iter().map(|c| c.hybrid).enumerate(),
+  );
   OpusScan {
     offset,
     frames,
