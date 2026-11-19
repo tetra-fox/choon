@@ -1360,8 +1360,6 @@ fn float_samples_near_the_largest_an_f32_holds_are_read_without_a_panic() {
 proptest::proptest! {
   #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
 
-  /// a WavPack or Monkey's Audio file with bytes overwritten and its end cut off is read
-  /// without a panic
   #[test]
   fn a_damaged_wavpack_or_ape_file_is_read_without_panicking(
     damage in proptest::collection::vec((0.0f64..1.0, proptest::prelude::any::<u8>()), 0..64),
@@ -1379,7 +1377,6 @@ proptest::proptest! {
     }
   }
 
-  /// a DSD file with bytes overwritten and its end cut off is read without a panic
   #[test]
   fn a_damaged_dsd_file_is_read_without_panicking(
     damage in proptest::collection::vec((0.0f64..0.01, proptest::prelude::any::<u8>()), 0..64),
@@ -1400,8 +1397,7 @@ proptest::proptest! {
     }
   }
 
-  /// an HE-AAC file with bytes overwritten and its end cut off is read without a panic. ADTS
-  /// and MP4 have no checksums, so the damage reaches the AAC decoder
+  /// ADTS and MP4 have no checksums, so the damage reaches the AAC decoder
   #[test]
   fn a_damaged_he_aac_file_is_read_without_panicking(
     damage in proptest::collection::vec((0.0f64..1.0, proptest::prelude::any::<u8>()), 0..64),
@@ -1439,8 +1435,7 @@ proptest::proptest! {
     }
   }
 
-  /// an Opus file with bytes overwritten and its end cut off is read without a panic. WebM has
-  /// no checksums, so the damage reaches the Opus decoder
+  /// WebM has no checksums, so the damage reaches the Opus decoder
   #[test]
   fn a_damaged_opus_file_is_read_without_panicking(
     damage in proptest::collection::vec((0.0f64..1.0, proptest::prelude::any::<u8>()), 0..64),

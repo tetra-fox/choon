@@ -1,12 +1,17 @@
 //! Audio the analyzer is tested on.
 //!
-//! It is made in the test from a fixed seed: noise shaped like music's spectrum, written as
-//! FLAC, the same noise through the LAME MP3 encoder and back for the transcodes, and through
-//! libopus for Opus streams in Ogg, MP4 and WebM, as WavPack and Monkey's Audio, and tones as
-//! the one-bit samples of DSF and DSDIFF. The files
-//! kept as bytes are a short ALAC tone and five short HE-AAC files, which nothing here can
-//! encode, and a clip from the WavPack and Monkey's Audio reference encoders with the samples it
-//! was made from.
+//! It is made in the test from a fixed seed:
+//!
+//! - noise shaped like music's spectrum, written as FLAC, WavPack and Monkey's Audio
+//! - the same noise through the LAME MP3 encoder and back, for the transcodes
+//! - the same noise through libopus, as Opus streams in Ogg, MP4 and WebM
+//! - tones as the one-bit samples of DSF and DSDIFF
+//!
+//! The files kept as bytes:
+//!
+//! - a short ALAC tone and five short HE-AAC files, which nothing here can encode
+//! - a clip from the WavPack and Monkey's Audio reference encoders, with the samples it was
+//!   made from
 //!
 //! As test support, every function here panics when encoding, writing or decoding fails.
 
@@ -30,31 +35,46 @@ pub use mp3lame_encoder::Bitrate;
 /// data.
 pub const TONE: &[u8] = include_bytes!("fixtures/tone.m4a");
 
-/// HE-AAC files, each three seconds of stereo pink noise at 44.1 kHz with its core at 22.05 kHz.
+/// HE-AAC file that states its band replication after the core's config.
 ///
-/// They were made by fdkaac 1.0.9 from generated noise, at 48 kbit/s and, for HE-AAC v2, at
+/// Each HE-AAC file here is three seconds of stereo pink noise at 44.1 kHz with its core at
+/// 22.05 kHz, made by fdkaac 1.0.9 from generated noise, at 48 kbit/s and, for HE-AAC v2, at
 /// 32 kbit/s. Nothing here can encode them. Each states its band replication in another way:
-/// after the core's config, in place of it, not at all in an MP4 whose track states the
-/// output rate, and not at all in an ADTS stream.
+///
+/// - after the core's config (this file)
+/// - in place of it ([`HE_AAC_HIERARCHICAL`])
+/// - nowhere, in an MP4 whose track states the output rate ([`HE_AAC_IMPLICIT`])
+/// - nowhere, in an ADTS stream ([`HE_AAC_ADTS`])
 pub const HE_AAC: &[u8] = include_bytes!("fixtures/he-aac.m4a");
-/// See [`HE_AAC`]: the config states HE-AAC first.
+/// HE-AAC file whose config states HE-AAC first.
+///
+/// It is made as [`HE_AAC`] is.
 pub const HE_AAC_HIERARCHICAL: &[u8] = include_bytes!("fixtures/he-aac-hierarchical.m4a");
-/// See [`HE_AAC`]: an MP4 whose config states the core alone.
+/// HE-AAC file in an MP4 whose config states the core alone.
+///
+/// It is made as [`HE_AAC`] is.
 pub const HE_AAC_IMPLICIT: &[u8] = include_bytes!("fixtures/he-aac-implicit.m4a");
-/// See [`HE_AAC`]: an ADTS stream, whose headers state the core alone.
+/// HE-AAC file as an ADTS stream, whose headers state the core alone.
+///
+/// It is made as [`HE_AAC`] is.
 pub const HE_AAC_ADTS: &[u8] = include_bytes!("fixtures/he-aac.aac");
-/// See [`HE_AAC`]: HE-AAC v2, one coded channel made two by parametric stereo.
+/// HE-AAC v2 file, one coded channel made two by parametric stereo.
+///
+/// It is made as [`HE_AAC`] is.
 pub const HE_AAC_V2: &[u8] = include_bytes!("fixtures/he-aac-v2.m4a");
 
-/// Quarter of a second of 16-bit stereo noise and tones at 44.1 kHz, as little-endian samples.
+/// Quarter of a second of 16-bit stereo noise and tones at 44.1 kHz.
 ///
-/// It is what [`WAVPACK`], [`APE_NORMAL`] and [`APE_INSANE`] were made from, and what the
-/// reference decoders give back for them.
+/// The samples are little-endian. It is what [`WAVPACK`], [`APE_NORMAL`] and [`APE_INSANE`]
+/// were made from, and what the reference decoders give back for them.
 pub const CLIP_PCM: &[u8] = include_bytes!("fixtures/clip.pcm");
-/// [`CLIP_PCM`] as WavPack, made by `wavpack -hx3` 5.9.0, with joint stereo and the extra modes
-/// the encoder here does not write.
+/// [`CLIP_PCM`] as WavPack, made by `wavpack -hx3` 5.9.0.
+///
+/// It has joint stereo and the extra modes the encoder here does not write.
 pub const WAVPACK: &[u8] = include_bytes!("fixtures/clip.wv");
-/// [`CLIP_PCM`] as hybrid WavPack at 320 kbit/s without its correction file, which is lossy.
+/// [`CLIP_PCM`] as hybrid WavPack at 320 kbit/s without its correction file.
+///
+/// Without the correction file the stream is lossy.
 pub const WAVPACK_HYBRID: &[u8] = include_bytes!("fixtures/clip-hybrid.wv");
 
 /// [`CLIP_PCM`] as Monkey's Audio at its normal level, made by `mac` 13.45.
@@ -419,8 +439,10 @@ pub fn wavpack(audio: &Audio, bits: u32) -> Vec<u8> {
   wavicle::encode_int(params, &interleaved).unwrap()
 }
 
-/// Returns `audio` as a Monkey's Audio file of `bits`-bit samples, 16 or 24, the ones [`flac`]
-/// writes, at the fast level or the extra high one.
+/// Returns `audio` as a Monkey's Audio file of `bits`-bit samples.
+///
+/// `bits` is 16 or 24, and the samples are the ones [`flac`] writes. The level is extra high
+/// with `extra_high` and fast without.
 pub fn ape(audio: &Audio, bits: u32, extra_high: bool) -> Vec<u8> {
   let planes = audio.quantized(bits, 7);
   let width = (bits / 8) as usize;
@@ -463,10 +485,10 @@ pub struct OneBit {
   pub channels: Vec<Vec<u8>>,
 }
 
-/// Returns `seconds` of tones at half of full scale as one-bit samples at 64 times 44.1 kHz.
+/// Returns `seconds` of tones as one-bit samples at 64 times 44.1 kHz.
 ///
-/// Each channel holds the tone of its entry in `hz`, made at the one-bit rate and put through
-/// a second-order sigma-delta modulator.
+/// Each channel holds the tone of its entry in `hz` at half of full scale, made at the one-bit
+/// rate and put through a second-order sigma-delta modulator.
 pub fn one_bit_tones(hz: &[f64], seconds: usize) -> OneBit {
   let rate = 64 * 44_100u32;
   let samples = seconds * rate as usize;
@@ -747,7 +769,6 @@ pub fn through_mp3(audio: &Audio, bitrate: Bitrate, dir: &Path) -> Audio {
   decoded(&mp3)
 }
 
-/// one ISO media box: its size, its type, then `body`
 /// Window of the long blocks [`through_transform`] codes with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LongWindow {
@@ -866,6 +887,7 @@ fn transform_coded(
   }
 }
 
+/// one ISO media box: its size, its type, then `body`
 fn mp4_box(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
   let mut out = ((8 + body.len()) as u32).to_be_bytes().to_vec();
   out.extend_from_slice(kind);
@@ -981,7 +1003,9 @@ pub struct OpusSettings {
   pub bitrate: u32,
   /// Length of a frame in sample frames: 120, 240, 480, 960, 1920 or 2880.
   pub frame: usize,
-  /// Whether the encoder is set for voice, not for music.
+  /// Whether the encoder is set for voice.
+  ///
+  /// It is set for music otherwise.
   pub voice: bool,
   /// Output gain the stream's header states, in 1/256 dB.
   pub gain: i16,
@@ -1016,7 +1040,7 @@ pub struct OpusStream {
 
 /// Returns `audio`, one or two channels at 48 kHz, encoded by libopus with `settings`.
 pub fn opus(audio: &Audio, settings: OpusSettings) -> OpusStream {
-  assert_eq!(audio.rate, 48_000, "opus is encoded at 48 kHz");
+  assert_eq!(audio.rate, 48_000, "the audio is at 48 kHz");
   let channels = match audio.channels.len() {
     1 => opus::Channels::Mono,
     _ => opus::Channels::Stereo,
