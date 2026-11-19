@@ -23,7 +23,7 @@ Check that lossless audio is actually lossless. A command-line tool and a Rust l
 - Reads Opus files, with the coding mode and audio bandwidth their packets state
 - Reads WavPack, Monkey's Audio and DSD files, and HE-AAC with the band its decoder rebuilds
 - Reads the encoder's cutoff in the spectrum, which alone raises a doubt
-- Guesses the encoder setting behind a transcode, such as `MP3 ~128 kbps`
+- Guesses the encoder and setting behind a transcode, such as `MP3 (LAME) ~128 kbps`
 - Flags upsampled audio, bit-padded samples and two channels holding the same audio
 - Finds lossy parts mixed into lossless audio (an intro, a stem)
 - Checks a whole library in one run: directories, a list of paths on stdin, files in parallel
@@ -138,6 +138,9 @@ for its long blocks, so a grid's offset and window fit an encoder family:
 - The offsets are those of a decode whose start was not cut, from a decoder that cuts the delay
   the file states, as ffmpeg does
 - A LAME file decoded without that cut sits at offset 1
+- The program names the family after the grid's codec, as `MP3 (LAME) ~128 kbps` or
+  `AAC (Apple)`. The setting is the one the cutoff matches. The cutoffs are LAME's, so it is
+  left out beside another named encoder and beside a grid of another codec
 - Opus frames under 20 ms sit at 468 or 180 (10 ms), 108 or 60 (5 ms) and 48 or 0 (2.5 ms),
   by libopus's two delays
 - Versions of one encoder share its delay and read alike
@@ -240,7 +243,7 @@ Files not read         0
 Wall time          0.9 s
 Files per minute     255
 
-Verdict            Grid            Cutoff     Encoder guess          Path
+Verdict            Grid            Cutoff     Encoder                Path
 ------------------ --------------- ---------- ---------------------- ---------------------
 possibly lossy                     19.4 kHz   MP3 ~224 kbps          music/cut-19.flac
 likely transcode   MP3, offset 1   16.8 kHz   MP3 ~128 kbps          music/lame-128.flac
