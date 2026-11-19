@@ -65,6 +65,7 @@ mod decode;
 mod engine;
 mod flags;
 pub mod grid;
+mod kaiser;
 mod limitation;
 pub mod picture;
 mod reading;

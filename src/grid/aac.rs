@@ -8,6 +8,7 @@ use super::scan::active;
 use super::segments::Segment;
 use super::steps::{BandScratch, WHOLE_STEP, band_step};
 use super::{AAC_HOP, NOISE16};
+use crate::kaiser;
 
 /// the tasks a job's offsets are split into at most, so that one file's scan can fill the pool
 const TASKS: usize = 32;
@@ -217,7 +218,7 @@ fn kbd_window(length: usize, alpha: f64) -> Vec<f64> {
   let kaiser: Vec<f64> = (0..points)
     .map(|n| {
       let r = 2.0 * n as f64 / (points - 1) as f64 - 1.0;
-      bessel_i0(beta * (1.0 - r * r).sqrt()) / bessel_i0(beta)
+      kaiser::window(beta, r)
     })
     .collect();
   let total: f64 = kaiser.iter().sum();
@@ -230,21 +231,6 @@ fn kbd_window(length: usize, alpha: f64) -> Vec<f64> {
   let mirrored: Vec<f64> = half.iter().rev().copied().collect();
   half.extend(mirrored);
   half
-}
-
-/// the modified Bessel function of the first kind of order 0, from its power series
-pub(crate) fn bessel_i0(x: f64) -> f64 {
-  let quarter = x * x / 4.0;
-  let mut term = 1.0;
-  let mut sum = 1.0;
-  for k in 1..100 {
-    term *= quarter / (k * k) as f64;
-    sum += term;
-    if term < sum * 1e-17 {
-      break;
-    }
-  }
-  sum
 }
 
 #[cfg(test)]

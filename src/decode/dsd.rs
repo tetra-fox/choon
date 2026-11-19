@@ -30,6 +30,7 @@ use symphonia::core::packet::{Packet, PacketRef};
 use symphonia::core::units::{Duration, TimeBase, Timestamp};
 
 use super::refused;
+use crate::kaiser;
 
 /// the codec of one-bit samples, which symphonia names no id for
 pub(crate) const CODEC_ID_DSD: AudioCodecId = AudioCodecId::new(FourCc::new(*b"DSD "));
@@ -503,38 +504,16 @@ impl FormatReader for DsdReader<'_> {
   }
 }
 
-/// the modified Bessel function of the first kind of order 0, from its power series
-fn bessel_i0(x: f64) -> f64 {
-  let (mut sum, mut term, mut k) = (1.0, 1.0, 1.0);
-  while term > sum * 1e-17 {
-    term *= (x / (2.0 * k)) * (x / (2.0 * k));
-    sum += term;
-    k += 1.0;
-  }
-  sum
-}
-
 /// the taps a Kaiser window needs for [`ATTENUATION_DB`] over a transition `width`, a fraction
 /// of the sample rate
 fn taps_for(width: f64) -> usize {
   ((ATTENUATION_DB - 7.95) / (14.36 * width)).ceil() as usize + 1
 }
 
-/// a lowpass of `taps` taps cut at `cutoff`, a fraction of the sample rate, under a Kaiser
-/// window
+/// a lowpass of `taps` taps cut at `cutoff`, a fraction of the sample rate, under the Kaiser
+/// window of [`ATTENUATION_DB`]
 fn lowpass(taps: usize, cutoff: f64) -> Vec<f64> {
-  let beta = 0.1102 * (ATTENUATION_DB - 8.7);
-  let middle = (taps - 1) as f64 / 2.0;
-  (0..taps)
-    .map(|i| {
-      let t = i as f64 - middle;
-      let x = std::f64::consts::PI * 2.0 * cutoff * t;
-      let sinc = if x == 0.0 { 1.0 } else { x.sin() / x };
-      let r = t / middle;
-      let window = bessel_i0(beta * (1.0 - r * r).max(0.0).sqrt()) / bessel_i0(beta);
-      2.0 * cutoff * sinc * window
-    })
-    .collect()
+  kaiser::lowpass(taps, cutoff, 0.1102 * (ATTENUATION_DB - 8.7))
 }
 
 /// the first stage: bytes of one-bit samples to one float a byte

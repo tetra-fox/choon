@@ -4,7 +4,7 @@
 
 use std::sync::LazyLock;
 
-use super::aac::bessel_i0;
+use crate::kaiser;
 
 /// samples of the lower rate on each side of an output sample that the filter reads
 const HALF: usize = 64;
@@ -44,18 +44,7 @@ impl Resampler {
     // Kaiser window, HALF samples of the lower rate to each side
     let lower = up.max(down);
     let reach = HALF * lower;
-    let cutoff = 1.0 / lower as f64;
-    let taps: Vec<f64> = (0..=2 * reach)
-      .map(|n| {
-        let m = n as f64 - reach as f64;
-        let x = std::f64::consts::PI * cutoff * m;
-        let sinc = if m == 0.0 { 1.0 } else { x.sin() / x };
-        let r = m / reach as f64;
-        let kaiser =
-          bessel_i0(KAISER_BETA * (1.0 - r * r).max(0.0).sqrt()) / bessel_i0(KAISER_BETA);
-        cutoff * sinc * kaiser
-      })
-      .collect();
+    let taps = kaiser::lowpass(2 * reach + 1, 0.5 / lower as f64, KAISER_BETA);
     // unity gain for the `up` phases together
     let gain = up as f64 / taps.iter().sum::<f64>();
     // y_j is the sum over i of x_i h[j down + reach - i up]: tap `phase + k up` meets the
