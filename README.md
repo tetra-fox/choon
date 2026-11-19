@@ -64,6 +64,13 @@ step. Three stretches with enough of them are an MP3 grid where the count stands
 Steps finer than the rounding noise of 16-bit samples, as most are at 320 kbps, leave nothing to
 count.
 
+An AAC encoder quantizes a long block's scalefactor bands the same way, and the scan counts the
+bands on one step under each window, with the frames where that window's count puts them. They
+show under the window the encoder used, which names the window where the two counts are close.
+One stretch with enough of them is an AAC grid where the count stands out too little. A Vorbis
+or HE-AAC decode shows none, so a reading whose AAC grid has them drops the note that a Vorbis
+decode reads as AAC.
+
 A decode converted between 44.1 and 48 kHz carries its grid at the rate it was decoded at. A
 file at either rate is scanned a second time with its stretches brought to the other, by a long
 filter that keeps the sample times the two rates share.
@@ -119,7 +126,7 @@ for its long blocks, so a grid's offset and window fit an encoder family:
   twelve shares of the neighbouring bands' steps over a threshold. The weights were fitted on
   the codec Windows ships. They name 361 of 445 of its decodes, none of 468 decodes of the
   other four, and 3 of 2,521 LAME and Helix decodes, which sit at their own offsets
-- About one Vorbis decode in thirteen reads as AAC at Nero's offset
+- About one Vorbis decode in thirteen reads as AAC at Nero's offset, without AAC's steps
 
 | Verdict          | Description                                                                 |
 | ---------------- | --------------------------------------------------------------------------- |
@@ -333,6 +340,8 @@ Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
 - FAAC at 256 kbps codes nearly every frame as short blocks, which the scan does not analyse
 - An HE-AAC decode's core was coded at half the sample rate under the decoder's filterbank
 - A Vorbis decode is found by the AAC scan, whose windows are not Vorbis's
+- AAC's quantizer steps show in 828 of the 880 AAC-LC decodes, 6 of which the count misses, in
+  none of the 680 Vorbis decodes and none of the 280 HE-AAC ones
 - Fraunhofer's MP3 encoder, as the codec Windows ships, was checked on 44 other recordings at
   96 to 320 kbps: every decode is found, at offset 1. Other versions of it were not tested
 
@@ -341,7 +350,8 @@ Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
 - A lossless master filtered sharply where an encoder cuts (16 or 19 kHz) reads as possibly lossy
 - An MP3 or AAC decode converted to another rate is found between 44.1 and 48 kHz only; after
   any other conversion it reads as possibly lossy at most
-- A Vorbis decode's grid mostly reads as AAC's
+- A Vorbis decode's grid mostly reads as AAC's; an AAC grid with AAC's quantizer steps is not
+  Vorbis's
 - Opus is found in frames with the pitch post-filter off; a decode made mostly of filtered
   frames and one in SILK voice mode read as possibly lossy at most
 - An Opus decode of frames under 20 ms whose level was changed afterwards is not found
