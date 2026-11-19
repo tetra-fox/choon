@@ -60,8 +60,7 @@ const SIGNED_8_BIT: u16 = 1 << 11;
 const FLOAT: u16 = 1 << 12;
 /// what a file of float samples starts with
 const FLOAT_MAGIC: &[u8; 4] = b"MACF";
-const UNREAD_SAMPLES: &str =
-  "ape: float and 32-bit samples are not ones the decoder hands back as the file holds them";
+const UNREAD_SAMPLES: &str = "ape: float and 32-bit samples are not read";
 
 const FORMAT: FormatInfo = FormatInfo {
   // symphonia names no format for Monkey's Audio
@@ -135,7 +134,7 @@ impl<'s> ApeReader<'s> {
       Ok(info) => info,
       Err(e) => {
         debug!(error = %e, "ape header not read");
-        return refused("ape: the header is not one the reader takes");
+        return refused("ape: the header is not read");
       }
     };
     let header = &info.header;
