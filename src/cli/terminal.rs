@@ -443,7 +443,10 @@ fn grid(checked: &Checked, reading: &Reading) -> String {
     },
     (None, Some(scan)) => {
       let opus = scan.opus.as_ref().map_or_else(String::new, |opus| {
-        format!(", Opus frames {} and {}", opus.frames, opus.uncut_frames)
+        format!(
+          ", Opus frames {} in the stretches, {} in the windows",
+          opus.frames, opus.uncut_frames
+        )
       });
       // AAC's grid under whichever of its windows shows it more
       let aac = scan
