@@ -192,10 +192,11 @@ pub struct Measured {
   pub duration: f64,
   /// Lossy file's bitrate in kbit/s, from its decoded packets.
   pub bitrate_kbps: Option<u32>,
-  /// Modes and bandwidths an Opus file's packets state, the one with the most time first.
+  /// Modes and bandwidths an Opus file's packets state.
   ///
-  /// Each packet states its own, so they are read, never measured. Only the packets decoded
-  /// count, which in a sampled file are those around its windows. Empty for other codecs.
+  /// The one with the most time comes first. Each packet states its own, so the analyzer reads
+  /// them without measuring. Only the packets decoded count, which in a sampled file are those
+  /// around its windows. Empty for other codecs.
   #[cfg_attr(feature = "serde", serde(default))]
   pub opus: Vec<OpusUse>,
   /// What an HE-AAC file's decoder rebuilt beside its core, `None` for any other file.

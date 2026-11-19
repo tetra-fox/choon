@@ -46,11 +46,11 @@ pub struct MeasureThresholds {
   pub holes_to_hz: f64,
   /// Depth in dB under its neighbors at which a bin is a gap.
   pub hole_depth_db: f64,
-  /// Whether a file at 44.1 or 48 kHz is scanned for MP3 and AAC at the other rate too.
+  /// Whether MP3 and AAC are scanned for at the other rate too.
   ///
-  /// The scan at the other rate finds a decode that was converted between the two rates
-  /// ([`OtherRate`](crate::grid::OtherRate)). It takes about as long as the scan for MP3 and
-  /// AAC at the file's own rate.
+  /// It applies to a file at 44.1 or 48 kHz. The scan at the other of the two rates finds a
+  /// decode that was converted between them ([`OtherRate`](crate::grid::OtherRate)). It takes
+  /// about as long as the scan for MP3 and AAC at the file's own rate.
   pub scan_other_rate: bool,
 }
 
@@ -201,37 +201,38 @@ pub struct ReadingThresholds {
   /// `aac_grid_segments_agreeing` asks for. Decodes of other codecs dip further at the other
   /// rate than lossless files do at their own, so it stands over `aac_grid_z`.
   pub other_rate_aac_z: f64,
-  /// Fewest scalefactor bands on whole quantizer steps in a segment that shows an MP3 grid.
+  /// Fewest scalefactor bands on whole steps in a segment, for an MP3 grid.
   ///
   /// It is compared with each of
-  /// [`Mp3Steps::segment_whole`](crate::grid::Mp3Steps::segment_whole), where no count stands
-  /// out enough for a grid: as many segments as `mp3_grid_segments_agreeing` must reach it,
-  /// one at least. A band of lossless audio lands on a whole step by chance a few times in a
-  /// file.
+  /// [`Mp3Steps::segment_whole`](crate::grid::Mp3Steps::segment_whole), the bands on whole
+  /// steps of MP3's quantizer, where no count stands out enough for a grid: as many segments
+  /// as `mp3_grid_segments_agreeing` must reach it, one at least. A band of lossless audio
+  /// lands on a whole step by chance a few times in a file.
   pub mp3_whole_steps: usize,
-  /// Fewest scalefactor bands on whole quantizer steps in a segment that shows an AAC grid.
+  /// Fewest scalefactor bands on whole steps in a segment, for an AAC grid.
   ///
   /// It is compared with each of
-  /// [`AacSteps::segment_whole`](crate::grid::AacSteps::segment_whole), under each window: as
-  /// many segments as `aac_grid_segments_agreeing` must reach it, one at least. The steps show
-  /// a grid no count stands out enough for, and name the window of one a count found.
+  /// [`AacSteps::segment_whole`](crate::grid::AacSteps::segment_whole), the bands on whole
+  /// steps of AAC's quantizer, under each window: as many segments as
+  /// `aac_grid_segments_agreeing` must reach it, one at least. The steps show a grid no count
+  /// stands out enough for, and name the window of one a count found.
   pub aac_whole_steps: usize,
-  /// Fewest frames on Opus's lattice at one offset of the four segments, for an Opus grid.
+  /// Fewest frames on Opus's lattice at one offset, for an Opus grid.
   ///
-  /// It is compared with [`OpusScan::frames`](crate::grid::OpusScan::frames). A frame of
-  /// lossless audio lands on the lattice by chance at some offset in some files, never at the
-  /// same offset often.
+  /// It is compared with [`OpusScan::frames`](crate::grid::OpusScan::frames), the count over
+  /// the four segments. A frame of lossless audio lands on the lattice by chance at some
+  /// offset in some files, never at the same offset often.
   pub opus_grid_frames: usize,
   /// Fewest frames on Opus's lattice in the windows measured, for an Opus grid.
   ///
   /// It is compared with [`OpusScan::uncut_frames`](crate::grid::OpusScan::uncut_frames), the
   /// count on the one grid a decode has when nothing was cut from its start.
   pub opus_uncut_frames: usize,
-  /// Fewest frames on Opus's lattice at another level, at one offset of the four segments.
+  /// Fewest frames on Opus's lattice at another level, at one offset.
   ///
-  /// It is compared with [`OpusShifted::frames`](crate::grid::OpusShifted::frames), where
-  /// neither count at the decoder's own level makes an Opus grid. The search for the level
-  /// gives chance more frames than `opus_grid_frames` meets.
+  /// It is compared with [`OpusShifted::frames`](crate::grid::OpusShifted::frames), the count
+  /// over the four segments, where neither count at the decoder's own level makes an Opus
+  /// grid. The search for the level gives chance more frames than `opus_grid_frames` meets.
   pub opus_shifted_frames: usize,
   /// Fewest frames on Opus's lattice at another level in the windows measured.
   ///
@@ -239,15 +240,16 @@ pub struct ReadingThresholds {
   /// [`OpusShifted::uncut_frames`](crate::grid::OpusShifted::uncut_frames), as
   /// `opus_shifted_frames` is with its count.
   pub opus_shifted_uncut_frames: usize,
-  /// Fewest frames of one length under 20 ms on Opus's lattice at one offset of the segments.
+  /// Fewest frames under 20 ms on Opus's lattice at one offset.
   ///
   /// It is compared with [`OpusShort::frames`](crate::grid::OpusShort::frames) of each
-  /// length, where no count of 20 ms frames makes an Opus grid.
+  /// length, the count over the four segments, where no count of 20 ms frames makes an Opus
+  /// grid.
   pub opus_short_frames: usize,
-  /// Fewest frames of one length under 20 ms on Opus's lattice in the windows measured.
+  /// Fewest frames under 20 ms on Opus's lattice in the windows measured.
   ///
-  /// It is compared with [`OpusShort::uncut_frames`](crate::grid::OpusShort::uncut_frames),
-  /// as `opus_short_frames` is with its count.
+  /// It is compared with [`OpusShort::uncut_frames`](crate::grid::OpusShort::uncut_frames)
+  /// of each length, as `opus_short_frames` is with its count.
   pub opus_short_uncut_frames: usize,
   /// Weights that read an MP3 grid at offset 1 as Fraunhofer's encoder.
   pub fraunhofer_steps: FraunhoferSteps,
@@ -269,9 +271,11 @@ pub struct ReadingThresholds {
 /// Encoders that state no delay all leave their grid at offset 1. They differ in how they
 /// move a band's quantizer step from the band under it, which
 /// [`Mp3Neighbours`](crate::grid::Mp3Neighbours) counts. Each weight multiplies one share of
-/// those counts, and a decode whose sum is over `over` reads as Fraunhofer's. The weights
-/// were fitted on decodes of the codec Windows ships against Shine, BladeEnc, GOGO, Apple,
-/// Helix and LAME; another version of Fraunhofer's encoder may fall under the threshold.
+/// those counts, and a decode whose sum is over `over` reads as Fraunhofer's.
+///
+/// The weights were fitted on decodes of the codec Windows ships against Shine, BladeEnc,
+/// GOGO, Apple, Helix and LAME. Another version of Fraunhofer's encoder may fall under the
+/// threshold.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
