@@ -15,8 +15,7 @@ use symphonia::core::formats::probe::Hint;
 use symphonia::core::io::MediaSource;
 use tracing::debug;
 
-use crate::decode::{self, Claimed, Decoder, Filled, HeAac};
-use crate::dsd;
+use crate::decode::{self, Claimed, Decoder, Filled, HeAac, dsd};
 use crate::grid::{self, Scan, Segments};
 use crate::lattice::{self, Uncut};
 use crate::limitation::Limitation;

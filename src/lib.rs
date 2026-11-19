@@ -60,11 +60,8 @@
 //! - `testing` adds `fixtures`, the generated audio and the sample files the analyzer is tested
 //!   on.
 
-mod aac;
 mod aggregate;
-mod ape;
 mod decode;
-mod dsd;
 mod engine;
 mod flags;
 pub mod grid;
@@ -76,7 +73,6 @@ mod reading;
 mod resample;
 mod thresholds;
 mod totals;
-mod wavpack;
 mod window;
 
 #[cfg(any(test, feature = "testing"))]

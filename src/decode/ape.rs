@@ -32,7 +32,7 @@ use symphonia::core::packet::{Packet, PacketRef};
 use symphonia::core::units::{Duration, TimeBase, Timestamp};
 use tracing::{debug, trace, warn};
 
-use crate::decode::refused;
+use super::refused;
 
 /// the first version whose range coder the decoder has; older files fail their checksums in it
 const OLDEST_VERSION: u16 = 3990;

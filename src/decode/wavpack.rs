@@ -29,7 +29,7 @@ use symphonia::core::packet::{Packet, PacketRef};
 use symphonia::core::units::{Duration, TimeBase, Timestamp};
 use tracing::{debug, trace};
 
-use crate::decode::refused;
+use super::refused;
 
 /// the bytes of a block's header
 const HEADER: usize = 32;

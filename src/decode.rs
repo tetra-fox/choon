@@ -27,12 +27,15 @@ use symphonia::core::units::{TimeBase, Timestamp};
 use symphonia_common::apple::audio::alac::MagicCookie;
 use tracing::{debug, trace, warn};
 
-use crate::aac;
-use crate::ape;
-use crate::dsd::{self, CODEC_ID_DSD};
 use crate::engine;
 use crate::opus::{self, OpusUse};
-use crate::wavpack;
+
+mod aac;
+mod ape;
+pub(crate) mod dsd;
+mod wavpack;
+
+use dsd::CODEC_ID_DSD;
 
 /// the most channels the analyzer reads; the rest of a surround file is left out
 const ANALYZED_CHANNELS: usize = 2;
@@ -87,7 +90,7 @@ impl fmt::Display for Refused {
 impl std::error::Error for Refused {}
 
 /// the error of a reader here that knows the file and says `why` it does not read it
-pub(crate) fn refused<T>(why: &'static str) -> symphonia::core::errors::Result<T> {
+fn refused<T>(why: &'static str) -> symphonia::core::errors::Result<T> {
   Err(Error::IoError(std::io::Error::other(Refused(why))))
 }
 

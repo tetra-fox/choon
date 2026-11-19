@@ -29,7 +29,7 @@ use symphonia::core::meta::{Metadata, MetadataLog};
 use symphonia::core::packet::{Packet, PacketRef};
 use symphonia::core::units::{Duration, TimeBase, Timestamp};
 
-use crate::decode::refused;
+use super::refused;
 
 /// the codec of one-bit samples, which symphonia names no id for
 pub(crate) const CODEC_ID_DSD: AudioCodecId = AudioCodecId::new(FourCc::new(*b"DSD "));
