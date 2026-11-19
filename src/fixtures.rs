@@ -385,7 +385,7 @@ impl Audio {
       .flatten()
       .map(|s| f64::from(*s).powi(2))
       .sum();
-    10.0 * (squares / count as f64).log10()
+    squares / count as f64
   }
 
   /// the audio as integers of `bits`, with triangular dither, the same dither in every
@@ -745,11 +745,19 @@ pub fn add_cover(path: &Path, bytes: usize) {
 pub fn decoded(path: &Path) -> Audio {
   let file = std::fs::File::open(path).unwrap();
   let mut decoder = Decoder::from_source(Box::new(file), &hint_of(path)).unwrap();
-  let rate = decoder.claimed.sample_rate;
+  Audio {
+    rate: decoder.claimed.sample_rate,
+    channels: rest(&mut decoder),
+  }
+}
+
+/// every sample `decoder` still has to give, a second at a time
+pub(crate) fn rest(decoder: &mut Decoder) -> Vec<Vec<f32>> {
+  let rate = decoder.claimed.sample_rate as usize;
   let mut channels = vec![Vec::new(); decoder.channels];
   let mut window = vec![Vec::new(); decoder.channels];
   loop {
-    let filled = decoder.fill(&mut window, rate as usize);
+    let filled = decoder.fill(&mut window, rate);
     for (all, part) in channels.iter_mut().zip(&window) {
       all.extend_from_slice(part);
     }
@@ -757,7 +765,7 @@ pub fn decoded(path: &Path) -> Audio {
       break;
     }
   }
-  Audio { rate, channels }
+  channels
 }
 
 /// Returns `audio` through an MP3 encoder at `bitrate` and decoded again.

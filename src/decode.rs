@@ -866,18 +866,7 @@ mod tests {
   fn decoded(bytes: Vec<u8>) -> (Claimed, Vec<Vec<f32>>) {
     let mut decoder = Decoder::from_source(Box::new(std::io::Cursor::new(bytes)), &Hint::new())
       .expect("the fixture opens");
-    let rate = decoder.claimed.sample_rate as usize;
-    let mut channels = vec![Vec::new(); decoder.channels];
-    let mut window = vec![Vec::new(); decoder.channels];
-    loop {
-      let filled = decoder.fill(&mut window, rate);
-      for (all, part) in channels.iter_mut().zip(&window) {
-        all.extend_from_slice(part);
-      }
-      if filled != Filled::Full {
-        break;
-      }
-    }
+    let channels = fixtures::rest(&mut decoder);
     assert_eq!(decoder.stopped, None);
     (decoder.claimed.clone(), channels)
   }
