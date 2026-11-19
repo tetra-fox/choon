@@ -27,7 +27,7 @@ cli = [
 ]
 # `Serialize` and `Deserialize` on the thresholds and the measures, `Serialize` on the reading
 serde = ["dep:serde"]
-# the generated audio and the sample file the analyzer is tested on, for the program's tests here
+# the generated audio and the sample files the analyzer is tested on, for the program's tests here
 # and the tests of the crates that use this one
 testing = [
   "dep:flacenc",
@@ -61,7 +61,7 @@ ape-decoder = "=0.3.2"
 # decodes WavPack. pinned to the release checked sample for sample against wvunpack and fuzzed
 wavicle = "=0.1.0"
 serde = { version = "1.0.229", features = ["derive"], optional = true }
-# decodes every audio format the analyzer reads, streamed
+# decodes FLAC, ALAC, PCM, MP3 and Vorbis, and reads the containers of the other decoders' codecs
 symphonia = { version = "0.6.1", features = ["all"] }
 symphonia-common = "0.6.1"
 # decodes Opus, which symphonia does not. pinned to the release checked against the Opus test
@@ -69,7 +69,7 @@ symphonia-common = "0.6.1"
 symphonia-opus = "=0.1.3"
 tracing = "0.1.44"
 
-# the program's own: arguments, the walk of a directory, the terminal's progress, colour and tables
+# for the program: arguments, the walk of a directory, the terminal's progress, colour and tables
 anstream = { version = "1.0.0", optional = true }
 anstyle = { version = "1.0.14", optional = true }
 clap = { version = "4.6.7", features = ["derive"], optional = true }

@@ -57,7 +57,7 @@
 //!   user turns default features off.
 //! - `serde` derives `Serialize` and `Deserialize` on the thresholds and on [`Measured`], and
 //!   `Serialize` on [`Reading`].
-//! - `testing` adds `fixtures`, the generated audio and the sample file the analyzer is tested
+//! - `testing` adds `fixtures`, the generated audio and the sample files the analyzer is tested
 //!   on.
 
 mod aac;
