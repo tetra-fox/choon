@@ -19,7 +19,7 @@ use realfft::RealFftPlanner;
 use realfft::num_complex::Complex;
 
 use crate::decode::{Decoder, Filled, hint_of};
-use crate::grid::{AAC_HOP, DctIv, Window, fold};
+use crate::grid::{AAC_HOP, DctIv, Window, aac_bands, fold};
 
 /// Bitrate an MP3 is written at.
 pub use mp3lame_encoder::Bitrate;
@@ -765,6 +765,55 @@ pub enum LongWindow {
 /// `delay` samples before the audio, so the decode's frame grid is at an offset of
 /// 1024 less `delay`.
 pub fn through_transform(audio: &Audio, window: LongWindow, delay: usize) -> Audio {
+  transform_coded(audio, window, delay, |lines| {
+    for band in lines.chunks_mut(16) {
+      let step = 0.7 * level(band);
+      for line in band.iter_mut().filter(|_| step > 0.0) {
+        *line = (*line / step).round() * step;
+      }
+    }
+  })
+}
+
+/// Returns `audio` through the coder of [`through_transform`] with AAC's quantizer.
+///
+/// The lines under 16 kHz are rounded by scalefactor band, with the bands of a long block at
+/// 44.1 and 48 kHz: each to a whole number to the power 4/3 times the band's step, the whole
+/// power of the fourth root of two nearest 0.7 times the band's level.
+pub fn through_stepped_transform(audio: &Audio, window: LongWindow, delay: usize) -> Audio {
+  let bands = aac_bands(audio.rate).expect("the rate is 44.1 or 48 kHz");
+  transform_coded(audio, window, delay, |lines| {
+    for band in bands.windows(2) {
+      let Some(band) = lines.get_mut(band[0]..band[1]) else {
+        break;
+      };
+      let level = level(band);
+      if level == 0.0 {
+        continue;
+      }
+      let step = 2.0f32.powf((4.0 * (0.7 * level).log2()).round() / 4.0);
+      for line in band {
+        let whole = (line.abs() / step).powf(0.75).round();
+        *line = line.signum() * whole.powf(4.0 / 3.0) * step;
+      }
+    }
+  })
+}
+
+/// the root mean square of `lines`
+fn level(lines: &[f32]) -> f32 {
+  (lines.iter().map(|l| l * l).sum::<f32>() / lines.len() as f32).sqrt()
+}
+
+/// `audio` through a 2048-point MDCT at a hop of 1024 under `window` and back, the first block
+/// `delay` samples before the audio: `quantize` rounds each block's lines under 16 kHz, and
+/// the lines above are dropped
+fn transform_coded(
+  audio: &Audio,
+  window: LongWindow,
+  delay: usize,
+  quantize: impl Fn(&mut [f32]),
+) -> Audio {
   assert!(delay <= AAC_HOP, "the delay is at most a hop");
   let window = match window {
     LongWindow::KaiserBessel => Window::Kbd,
@@ -793,13 +842,7 @@ pub fn through_transform(audio: &Audio, window: LongWindow, delay: usize) -> Aud
         fold(&frame, &mut folded);
         dct.process(&folded, &mut lines);
         lines[kept.min(AAC_HOP)..].fill(0.0);
-        for band in lines[..kept.min(AAC_HOP)].chunks_mut(16) {
-          let level = (band.iter().map(|l| l * l).sum::<f32>() / band.len() as f32).sqrt();
-          let step = 0.7 * level;
-          for line in band.iter_mut().filter(|_| step > 0.0) {
-            *line = (*line / step).round() * step;
-          }
-        }
+        quantize(&mut lines[..kept.min(AAC_HOP)]);
         // the orthonormal DCT-IV is its own inverse, and the transpose of the fold puts its
         // output back over the block's four quarters
         dct.process(&lines, &mut folded);

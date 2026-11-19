@@ -277,6 +277,89 @@ fn a_transform_decode_carries_the_aac_grid_under_the_window_it_was_coded_with() 
   }
 }
 
+#[test]
+fn a_decode_of_aacs_quantizer_shows_its_steps_under_the_window_it_was_coded_with() {
+  let dir = tempfile::tempdir().unwrap();
+  let source = music(1, 44_100, pink);
+  let thresholds = ReadingThresholds::default();
+  let showing = |steps: &grid::AacSteps| {
+    let segments = steps.segment_whole.iter();
+    segments
+      .filter(|whole| **whole >= thresholds.aac_whole_steps)
+      .count()
+  };
+  for (name, window, family) in [
+    (
+      "kaiser-bessel",
+      LongWindow::KaiserBessel,
+      grid::Family::Nero,
+    ),
+    ("sine", LongWindow::Sine, grid::Family::Faac),
+  ] {
+    // the delays Nero's decodes and FAAC's leave
+    let delay = if window == LongWindow::Sine {
+      1024
+    } else {
+      576
+    };
+    let through = fixtures::through_stepped_transform(&source, window, delay);
+    let path = flac(dir.path(), &format!("{name}.flac"), &through, 16);
+    let measured = measure(path, &settings()).unwrap();
+    let scan = measured.grid.as_ref().expect("a lossless file is scanned");
+    let kbd = scan.aac_steps.as_ref().expect("read at 44.1 kHz");
+    let sine = scan.aac_sine_steps.as_ref().expect("read at 44.1 kHz");
+    let (own, other) = match window {
+      LongWindow::KaiserBessel => (kbd, sine),
+      LongWindow::Sine => (sine, kbd),
+    };
+    assert_eq!(showing(own), grid::SEGMENTS, "{name}: {scan:?}");
+    assert_eq!(showing(other), 0, "{name}: {scan:?}");
+    let reading = read(&measured);
+    let vorbis = Limitation::VorbisReadsAsAac;
+    assert!(!reading.limitations.contains(&vorbis), "{reading:#?}");
+    let on_steps = format!("{} scalefactor bands sit on whole steps", own.whole);
+    assert!(reading.summary.contains(&on_steps), "{}", reading.summary);
+    let found = reading.grid.expect("the decode carries its grid");
+    assert_eq!(found.codec, Codec::Aac, "{name}: {scan:?}");
+    assert_eq!(found.family, Some(family), "{name}: {scan:?}");
+    assert_eq!(found.quantizer.as_ref(), Some(own), "{name}");
+    // with no count over its threshold, the steps alone show the grid
+    let uncounted = ReadingThresholds {
+      aac_grid_z: 1e9,
+      ..ReadingThresholds::default()
+    };
+    let found = grid::found(scan, &uncounted).expect("the steps show the grid");
+    let evidence = Evidence::AacSteps {
+      offset: 1024 - delay,
+      steps: own.clone(),
+    };
+    assert_eq!(found.evidence, evidence, "{name}");
+    assert_eq!(found.family, Some(family), "{name}");
+  }
+  // a quantizer that is not AAC's leaves a grid and no steps under either window
+  let through = fixtures::through_transform(&source, LongWindow::KaiserBessel, 64);
+  let measured = measure(flac(dir.path(), "even.flac", &through, 16), &settings()).unwrap();
+  let scan = measured.grid.as_ref().expect("a lossless file is scanned");
+  for steps in [&scan.aac_steps, &scan.aac_sine_steps] {
+    let steps = steps.as_ref().expect("read at 44.1 kHz");
+    assert_eq!(showing(steps), 0, "{scan:?}");
+  }
+  // so its reading says what else leaves such a grid
+  let reading = read(&measured);
+  assert_eq!(reading.grid.as_ref().map(|g| g.codec), Some(Codec::Aac));
+  assert!(
+    reading.limitations.contains(&Limitation::VorbisReadsAsAac),
+    "{reading:#?}"
+  );
+  // and audio that was never coded none
+  let measured = measure(flac(dir.path(), "source.flac", &source, 16), &settings()).unwrap();
+  let scan = measured.grid.as_ref().expect("a lossless file is scanned");
+  for steps in [&scan.aac_steps, &scan.aac_sine_steps] {
+    let steps = steps.as_ref().expect("read at 44.1 kHz");
+    assert_eq!(showing(steps), 0, "{scan:?}");
+  }
+}
+
 /// `source`, at 48 kHz, through Opus at `kbps` kbit/s and decoded again
 fn through_opus(source: &Audio, kbps: u32, dir: &Path) -> Audio {
   let path = dir.join(format!("through-{kbps}.opus"));

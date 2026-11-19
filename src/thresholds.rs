@@ -209,6 +209,13 @@ pub struct ReadingThresholds {
   /// one at least. A band of lossless audio lands on a whole step by chance a few times in a
   /// file.
   pub mp3_whole_steps: usize,
+  /// Fewest scalefactor bands on whole quantizer steps in a segment that shows an AAC grid.
+  ///
+  /// It is compared with each of
+  /// [`AacSteps::segment_whole`](crate::grid::AacSteps::segment_whole), under each window: as
+  /// many segments as `aac_grid_segments_agreeing` must reach it, one at least. The steps show
+  /// a grid no count stands out enough for, and name the window of one a count found.
+  pub aac_whole_steps: usize,
   /// Fewest frames on Opus's lattice at one offset of the four segments, for an Opus grid.
   ///
   /// It is compared with [`OpusScan::frames`](crate::grid::OpusScan::frames). A frame of
@@ -414,6 +421,9 @@ impl Default for ReadingThresholds {
       other_rate_aac_z: 13.0,
       // three stretches of the tuning's files that were never MP3 reach seven whole steps
       mp3_whole_steps: 20,
+      // a stretch of the tuning's Vorbis decodes reaches 138 whole steps under one window, and of
+      // its files that were never AAC 11
+      aac_whole_steps: 200,
       // the tuning's files that were never Opus reach one frame in the stretches and one in
       // the windows
       opus_grid_frames: 3,

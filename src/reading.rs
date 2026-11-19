@@ -391,7 +391,9 @@ fn weighed(
   if let Some(grid) = grid {
     let name = grid.codec;
     let mut limitations = found.limitations;
-    if grid.codec == Codec::Aac {
+    // a Vorbis decode's values do not sit on AAC's steps
+    let stepped = grid.quantizer.is_some() || matches!(grid.evidence, Evidence::AacSteps { .. });
+    if grid.codec == Codec::Aac && !stepped {
       limitations.push(Limitation::VorbisReadsAsAac);
     }
     let evidence = match &grid.evidence {
@@ -415,6 +417,11 @@ fn weighed(
       Evidence::Steps { offset, steps } => format!(
         "With granules at offset {offset}, the values of {} scalefactor bands sit on whole \
          steps of MP3's quantizer, as in audio decoded from MP3.",
+        steps.whole,
+      ),
+      Evidence::AacSteps { offset, steps } => format!(
+        "With frames at offset {offset}, the values of {} scalefactor bands sit on whole steps \
+         of AAC's quantizer, as in audio decoded from AAC.",
         steps.whole,
       ),
       // the frames of whichever count passed its threshold
@@ -460,10 +467,16 @@ fn weighed(
       ),
       _ => format!(" The offset is the one {family} leaves in a decode whose start was not cut."),
     });
+    let quantizer = grid.quantizer.as_ref().map_or_else(String::new, |steps| {
+      format!(
+        " The values of {} scalefactor bands sit on whole steps of AAC's quantizer.",
+        steps.whole
+      )
+    });
     return CutoffReading {
       verdict: Verdict::LikelyTranscode,
       confidence: thresholds.confidence_cap,
-      summary: format!("{evidence}{family} {}", found.summary),
+      summary: format!("{evidence}{quantizer}{family} {}", found.summary),
       limitations,
       ..found
     };

@@ -382,14 +382,19 @@ pub fn readout(path: &Path, checked: &Checked, profiled: bool, colour: bool, wid
 fn grid(checked: &Checked, reading: &Reading) -> String {
   match (&reading.grid, &checked.grid) {
     (Some(found), _) => match &found.evidence {
-      Evidence::Count(scan) => format!(
-        "{} at offset {}, z {:.0}, {} of {} stretches agree",
-        found.codec,
-        scan.offset,
-        scan.z,
-        scan.segments_agreeing,
-        scan.segment_z.len()
-      ),
+      Evidence::Count(scan) => {
+        let quantizer = found.quantizer.as_ref().map_or_else(String::new, |steps| {
+          format!(", {} bands on whole quantizer steps", steps.whole)
+        });
+        format!(
+          "{} at offset {}, z {:.0}, {} of {} stretches agree{quantizer}",
+          found.codec,
+          scan.offset,
+          scan.z,
+          scan.segments_agreeing,
+          scan.segment_z.len()
+        )
+      }
       Evidence::CountAt { rate, scan } => format!(
         "{} at offset {} once at {} kHz, z {:.0}, {} of {} stretches agree",
         found.codec,
@@ -400,6 +405,10 @@ fn grid(checked: &Checked, reading: &Reading) -> String {
         scan.segment_z.len()
       ),
       Evidence::Steps { offset, steps } => format!(
+        "{} at offset {offset}, {} of {} bands on whole quantizer steps",
+        found.codec, steps.whole, steps.tested
+      ),
+      Evidence::AacSteps { offset, steps } => format!(
         "{} at offset {offset}, {} of {} bands on whole quantizer steps",
         found.codec, steps.whole, steps.tested
       ),

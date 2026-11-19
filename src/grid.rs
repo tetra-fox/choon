@@ -32,6 +32,11 @@
 //! band's step. With the granules at the count's offset, the bands whose values sit on one
 //! step are counted too ([`Mp3Steps`]), which shows a grid whose count stands out too little.
 //!
+//! An AAC encoder keeps its values the same way. With the frames at each window's count
+//! offset, the bands of a long block whose values sit on one step are counted under that
+//! window ([`AacSteps`]). They show under the window the encoder used and not under the other,
+//! and a Vorbis decode, whose grid the count finds too, does not show them.
+//!
 //! # Opus
 //!
 //! Opus's CELT layer codes the energy of each of its 21 bands, in each frame, as a step from a
@@ -63,7 +68,8 @@
 //!   conversion it is not found. Opus's energies are still found after a conversion from 48 to
 //!   44.1 kHz.
 //! - Clipping hides a grid frame by frame.
-//! - Vorbis's grid shows through the AAC scan, so a Vorbis decode reads as AAC.
+//! - Vorbis's grid shows through the AAC scan, so a Vorbis decode reads as AAC by the count.
+//!   Its values do not sit on AAC's steps.
 //! - Opus frames of 2.5, 5 and 10 ms, frames the pitch post-filter ran over, and its SILK
 //!   mode are not found.
 //! - A gain after an Opus decode moves the lattice, and the scan searches for one move a
@@ -79,7 +85,7 @@ use crate::thresholds::{FraunhoferSteps, ReadingThresholds};
 use rayon::prelude::*;
 use rustfft::num_complex::Complex;
 use rustfft::num_traits::Float;
-use rustfft::{Fft, FftPlanner};
+use rustfft::{Fft, FftNum, FftPlanner};
 
 /// AAC's hop, the length of its long frames' new samples
 pub(crate) const AAC_HOP: usize = 1024;
@@ -360,6 +366,17 @@ pub struct Scan {
   /// of the analyzer that did not look for them.
   #[cfg_attr(feature = "serde", serde(default))]
   pub mp3_steps: Option<Mp3Steps>,
+  /// AAC's quantizer steps on the grid of `aac`, with the Kaiser-Bessel-derived window.
+  ///
+  /// `None` at a sample rate other than 44.1 and 48 kHz, and in measures kept by a version of
+  /// the analyzer that did not look for them.
+  #[cfg_attr(feature = "serde", serde(default))]
+  pub aac_steps: Option<AacSteps>,
+  /// AAC's quantizer steps on the grid of `aac_sine`, with the sine window.
+  ///
+  /// `None` where `aac_steps` is.
+  #[cfg_attr(feature = "serde", serde(default))]
+  pub aac_sine_steps: Option<AacSteps>,
   /// Opus's frames, `None` at a sample rate other than 44.1 and 48 kHz.
   #[cfg_attr(feature = "serde", serde(default))]
   pub opus: Option<OpusScan>,
@@ -511,6 +528,33 @@ impl Mp3Neighbours {
   }
 }
 
+/// How many scalefactor bands of a file hold values on AAC's quantizer.
+///
+/// An AAC encoder keeps each value of a scalefactor band as a whole number to the power 4/3
+/// times the band's step, and a step is a whole power of the fourth root of two, as in MP3
+/// ([`Mp3Steps`]). With the frames at an AAC scan's [`CodecScan::offset`] and under the window
+/// the encoder used, a long block's kept values come back on that lattice. Each band is taken
+/// as left and right or as mid and side, whichever puts more of the two on whole steps.
+///
+/// A band is tested as an MP3 band is. Under the other window the values come back off the
+/// lattice. Bands coded with temporal noise shaping, noise substitution or intensity stereo
+/// are off it too, and so is every band of a short block.
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct AacSteps {
+  /// Number of bands tested, over the four segments.
+  pub tested: usize,
+  /// Number of bands whose values all sit on the lattice of one step.
+  pub stepped: usize,
+  /// Number of those whose step is a whole power of the fourth root of two.
+  ///
+  /// A gain after the decode moves every step by the same amount off the whole powers.
+  pub whole: usize,
+  /// Each segment's share of `whole`, in file order.
+  pub segment_whole: [usize; SEGMENTS],
+}
+
 /// Scan for MP3 and AAC of a file's samples brought to the other of 44.1 and 48 kHz.
 ///
 /// Offsets are where frames start at `rate`, counted from the file's first sample. A stretch
@@ -552,6 +596,13 @@ pub enum Evidence {
     /// Counts of the bands.
     steps: Mp3Steps,
   },
+  /// Scalefactor bands whose values sit on the quantizer's steps, for AAC.
+  AacSteps {
+    /// Offset of the frames the bands were read at, in samples.
+    offset: usize,
+    /// Counts of the bands, under the window that shows them.
+    steps: AacSteps,
+  },
   /// Frames whose band energies sit on the quantizer's lattice, for Opus.
   Lattice(OpusScan),
   /// Frames whose band energies sit on that lattice once a change of level is taken off.
@@ -578,7 +629,7 @@ impl Evidence {
   pub fn offset(&self) -> usize {
     match self {
       Self::Count(scan) | Self::CountAt { scan, .. } => scan.offset,
-      Self::Steps { offset, .. } => *offset,
+      Self::Steps { offset, .. } | Self::AacSteps { offset, .. } => *offset,
       Self::Lattice(scan) => scan.most().0,
       Self::Shifted { shifted } => shifted.most().0,
       Self::Hybrid { hybrid } => hybrid.most().0,
@@ -614,7 +665,8 @@ pub enum Family {
   Faac,
   /// Nero's AAC encoder: the Kaiser-Bessel-derived window and a delay of 2624 samples.
   ///
-  /// A Vorbis decode reads as AAC, and at this offset about one time in thirteen.
+  /// A Vorbis decode reads as AAC, and at this offset about one time in thirteen. It shows no
+  /// steps of AAC's quantizer ([`Found::quantizer`]).
   Nero,
   /// ffmpeg's AAC encoder or fdk-aac: the Kaiser-Bessel-derived window, their delay cut whole.
   FfmpegOrFdk,
@@ -677,6 +729,11 @@ pub struct Found {
   /// What shows the grid.
   #[cfg_attr(feature = "serde", serde(flatten))]
   pub evidence: Evidence,
+  /// Bands on AAC's quantizer steps beside an AAC count at the file's own rate.
+  ///
+  /// `None` where they do not show under either window. A Vorbis decode, whose grid the AAC
+  /// count finds too, does not show them, and neither does an HE-AAC decode.
+  pub quantizer: Option<AacSteps>,
 }
 
 /// the grid `scan` shows under `thresholds`, with the encoder family its offset fits
@@ -690,11 +747,22 @@ pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found
         .as_ref()
         .is_some_and(|other| &other.aac_sine == count)
   };
+  // AAC's steps, which are read at the file's own rate
+  let stepped = match (&evidence, codec) {
+    (Evidence::CountAt { .. }, _) | (_, Codec::Mp3 | Codec::Opus) => None,
+    (_, Codec::Aac) => aac_stepped(scan, thresholds),
+  };
   let family = match (&evidence, codec) {
+    // the steps show under the encoder's window alone, so they name it where they show
     (Evidence::Count(count) | Evidence::CountAt { scan: count, .. }, Codec::Aac) => {
-      Family::of_aac(count.offset, sine(count))
+      match &stepped {
+        Some((window, _)) => Family::of_aac(window.offset, window.sine),
+        None => Family::of_aac(count.offset, sine(count)),
+      }
     }
-    (_, Codec::Aac) => None,
+    (_, Codec::Aac) => stepped
+      .as_ref()
+      .and_then(|(window, _)| Family::of_aac(window.offset, window.sine)),
     // the steps were read on the grid of the file's own rate
     (Evidence::CountAt { .. }, Codec::Mp3) => Family::of_mp3(evidence.offset()),
     (_, Codec::Mp3) => {
@@ -719,18 +787,61 @@ pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found
       .then_some(Family::Libopus),
     (_, Codec::Opus) => (evidence.offset() == OPUS_UNCUT_OFFSET).then_some(Family::Libopus),
   };
+  let quantizer = stepped
+    .filter(|_| matches!(evidence, Evidence::Count(_)))
+    .map(|(_, steps)| steps.clone());
   Some(Found {
     codec,
     family,
     evidence,
+    quantizer,
   })
+}
+
+/// the AAC window `steps` were read under: the offset of its count, and whether it is the sine
+struct StepsWindow {
+  offset: usize,
+  sine: bool,
+}
+
+/// the window under which AAC's steps show in enough segments of `scan`, with its counts: the
+/// one with more whole steps when both do
+fn aac_stepped<'a>(
+  scan: &'a Scan,
+  thresholds: &ReadingThresholds,
+) -> Option<(StepsWindow, &'a AacSteps)> {
+  let window = |count: &CodecScan, sine| StepsWindow {
+    offset: count.offset,
+    sine,
+  };
+  [
+    scan
+      .aac_steps
+      .as_ref()
+      .map(|steps| (window(&scan.aac, false), steps)),
+    scan
+      .aac_sine_steps
+      .as_ref()
+      .zip(scan.aac_sine.as_ref())
+      .map(|(steps, count)| (window(count, true), steps)),
+  ]
+  .into_iter()
+  .flatten()
+  .filter(|(_, steps)| {
+    let segments = steps.segment_whole.iter();
+    let showing = segments
+      .filter(|whole| **whole >= thresholds.aac_whole_steps)
+      .count();
+    showing >= thresholds.aac_grid_segments_agreeing.max(1)
+  })
+  .max_by_key(|(_, steps)| steps.whole)
 }
 
 /// the codec whose grid `scan` shows under `thresholds`, and what shows it. in turn:
 ///
 /// - MP3 or AAC over its z threshold with as many segments agreeing as its own threshold asks,
 ///   the one furthest over its z threshold when several are. AAC is read under each window
-/// - MP3 by its quantizer's steps in enough segments
+/// - MP3 by its quantizer's steps in enough segments, then AAC by its own
 /// - Opus with enough frames on its lattice in the segments or in the windows: at the
 ///   decoder's level, at another, or as the hybrid mode codes them
 /// - MP3 or AAC at the other rate
@@ -782,6 +893,14 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
       };
       (Codec::Mp3, evidence)
     })
+  };
+  let stepped_aac = || {
+    let (window, steps) = aac_stepped(scan, thresholds)?;
+    let evidence = Evidence::AacSteps {
+      offset: window.offset,
+      steps: steps.clone(),
+    };
+    Some((Codec::Aac, evidence))
   };
   // a grid at the other rate was laid before the conversion, so one on the file's own
   // samples was laid after it and is named first
@@ -845,7 +964,11 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
     };
     Some((Codec::Opus, evidence))
   };
-  own.or_else(stepped).or_else(opus).or_else(converted)
+  own
+    .or_else(stepped)
+    .or_else(stepped_aac)
+    .or_else(opus)
+    .or_else(converted)
 }
 
 /// one stretch of the file the grid is scanned in, filled as its samples are decoded
@@ -1103,6 +1226,11 @@ pub(crate) fn scan(
       aac_sine: codec_scan(&other_sine),
       mp3: codec_scan(&other_mp3),
     });
+  let (aac, sine) = (codec_scan(&aac), codec_scan(&sine));
+  let aac_steps = |window, count: &CodecScan| {
+    aac_bands(rate).map(|bands| AacStepper::new(window).steps(segments, count.offset, bands))
+  };
+  let (aac_steps, aac_sine_steps) = (aac_steps(Window::Kbd, &aac), aac_steps(Window::Sine, &sine));
   let mp3 = codec_scan(&mp3);
   let mp3_steps = mp3_bands(rate).map(|bands| {
     let analysis = Mp3::new();
@@ -1125,10 +1253,12 @@ pub(crate) fn scan(
   });
   Some(Scan {
     other_rate,
-    aac: codec_scan(&aac),
-    aac_sine: Some(codec_scan(&sine)),
+    aac,
+    aac_sine: Some(sine),
     mp3,
     mp3_steps,
+    aac_steps,
+    aac_sine_steps,
     opus: opus.map(|opus| opus_scan(&frames, &opus.uncut, &short, opus.uncut_short)),
   })
 }
@@ -1331,14 +1461,16 @@ pub(crate) enum Window {
 impl Window {
   /// the window over the 2048 samples of a long block
   pub(crate) fn samples(self) -> Vec<f32> {
+    self.exact().into_iter().map(|w| w as f32).collect()
+  }
+
+  /// the same in double precision
+  fn exact(self) -> Vec<f64> {
     let length = 2 * AAC_HOP;
     match self {
-      Self::Kbd => kbd_window(length, 4.0)
-        .into_iter()
-        .map(|w| w as f32)
-        .collect(),
+      Self::Kbd => kbd_window(length, 4.0),
       Self::Sine => (0..length)
-        .map(|n| (std::f64::consts::PI * (n as f64 + 0.5) / length as f64).sin() as f32)
+        .map(|n| (std::f64::consts::PI * (n as f64 + 0.5) / length as f64).sin())
         .collect(),
     }
   }
@@ -1419,6 +1551,102 @@ impl Aac {
   }
 }
 
+/// the edges of a long block's scalefactor bands in lines at `rate`, for the rates the steps
+/// are read at
+pub(crate) fn aac_bands(rate: u32) -> Option<&'static [usize; 50]> {
+  matches!(rate, 44_100 | 48_000).then_some(&[
+    0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 80, 88, 96, 108, 120, 132, 144, 160,
+    176, 196, 216, 240, 264, 292, 320, 352, 384, 416, 448, 480, 512, 544, 576, 608, 640, 672, 704,
+    736, 768, 800, 832, 864, 896, 928, 1024,
+  ])
+}
+
+/// the AAC analysis the steps are read with: a long block's window and an orthonormal MDCT in
+/// double precision, whose rounding stays far under the samples'
+struct AacStepper {
+  window: Vec<f64>,
+  dct: DctIv<f64>,
+  frame: Vec<f64>,
+  folded: Vec<f64>,
+}
+
+impl AacStepper {
+  fn new(window: Window) -> Self {
+    Self {
+      window: window.exact(),
+      dct: DctIv::new(AAC_HOP),
+      frame: vec![0.0; 2 * AAC_HOP],
+      folded: vec![0.0; AAC_HOP],
+    }
+  }
+
+  /// the bands of `segments`' long frames on the grid at `offset` from the file's first
+  /// sample, each band as left and right or as mid and side, whichever has more whole steps.
+  ///
+  /// in this transform's scale a step is a whole power of the fourth root of two as it is
+  /// coded, and a mid or side value is the coded one times the square root of two, two such
+  /// powers.
+  fn steps(&mut self, segments: &Segments, offset: usize, bands: &[usize; 50]) -> AacSteps {
+    let half = std::f64::consts::FRAC_1_SQRT_2;
+    let mut steps = AacSteps {
+      tested: 0,
+      stepped: 0,
+      whole: 0,
+      segment_whole: [0; SEGMENTS],
+    };
+    let mut lines = [const { Vec::new() }; 4];
+    for (segment, in_segment) in segments.0.iter().zip(&mut steps.segment_whole) {
+      // below the hop, so it fits
+      let start = (segment.start % AAC_HOP as u64) as usize;
+      let offset = (offset + AAC_HOP - start) % AAC_HOP;
+      // the frames every offset holds, as the count takes them
+      let frames = (segment.left.len() + 1 - 2 * AAC_HOP) / AAC_HOP;
+      for frame in 0..frames {
+        let at = offset + frame * AAC_HOP;
+        let [l, r, m, s] = &mut lines;
+        self.mdct(&segment.left[at..at + 2 * AAC_HOP], l);
+        self.mdct(&segment.right[at..at + 2 * AAC_HOP], r);
+        m.clear();
+        m.extend(l.iter().zip(r.iter()).map(|(l, r)| (l + r) * half));
+        s.clear();
+        s.extend(l.iter().zip(r.iter()).map(|(l, r)| (l - r) * half));
+        for band in bands.windows(2) {
+          // tested, stepped and whole, over the two channels of a pair
+          let count = |pair: [&Vec<f64>; 2]| {
+            pair.iter().fold([0; 3], |[tested, stepped, whole], lines| {
+              let step = band_step(&lines[band[0]..band[1]], NOISE16);
+              let fourths = step.flatten().map(|step| 4.0 * step.log2());
+              [
+                tested + usize::from(step.is_some()),
+                stepped + usize::from(fourths.is_some()),
+                whole + usize::from(fourths.is_some_and(|f| (f - f.round()).abs() < WHOLE_STEP)),
+              ]
+            })
+          };
+          let [l, r, m, s] = &lines;
+          let (apart, joint) = (count([l, r]), count([m, s]));
+          let [tested, stepped, whole] = if joint[2] > apart[2] { joint } else { apart };
+          steps.tested += tested;
+          steps.stepped += stepped;
+          steps.whole += whole;
+          *in_segment += whole;
+        }
+      }
+    }
+    steps
+  }
+
+  /// the orthonormal MDCT of `input`, 2048 samples, windowed, into `lines`
+  fn mdct(&mut self, input: &[f64], lines: &mut Vec<f64>) {
+    for ((f, x), w) in self.frame.iter_mut().zip(input).zip(&self.window) {
+      *f = x * w;
+    }
+    fold(&self.frame, &mut self.folded);
+    lines.resize(AAC_HOP, 0.0);
+    self.dct.process(&self.folded, lines);
+  }
+}
+
 /// the input of the DCT-IV whose output is the MDCT of `frame`, 2N windowed samples:
 /// (-c_r - d, a - b_r) for its quarters a, b, c, d, so that the DCT-IV gives
 /// X_k = sqrt(2/N) sum_n x_n cos(pi/N (n + 1/2 + N/2)(k + 1/2))
@@ -1486,22 +1714,23 @@ pub(crate) fn bessel_i0(x: f64) -> f64 {
 
 /// the orthonormal DCT-IV of length N through a complex FFT of length N/2:
 /// X_k = sqrt(2/N) sum_n u_n cos(pi/N (n + 1/2)(k + 1/2))
-pub(crate) struct DctIv {
-  fft: Arc<dyn Fft<f32>>,
+pub(crate) struct DctIv<T = f32> {
+  fft: Arc<dyn Fft<T>>,
   /// exp(-i pi n / N), for the input
-  pre: Vec<Complex<f32>>,
+  pre: Vec<Complex<T>>,
   /// sqrt(2/N) exp(-i pi (k + 1/4) / N), for the output
-  post: Vec<Complex<f32>>,
-  buffer: Vec<Complex<f32>>,
-  scratch: Vec<Complex<f32>>,
+  post: Vec<Complex<T>>,
+  buffer: Vec<Complex<T>>,
+  scratch: Vec<Complex<T>>,
 }
 
-impl DctIv {
+impl<T: FftNum + Float> DctIv<T> {
   pub(crate) fn new(n: usize) -> Self {
     let half = n / 2;
     let fft = FftPlanner::new().plan_fft_forward(half);
+    let narrowed = |value: f64| T::from_f64(value).expect("a float holds a number of size one");
     let turn = |angle: f64, scale: f64| {
-      Complex::new((scale * angle.cos()) as f32, (scale * angle.sin()) as f32)
+      Complex::new(narrowed(scale * angle.cos()), narrowed(scale * angle.sin()))
     };
     let step = std::f64::consts::PI / n as f64;
     let scale = (2.0 / n as f64).sqrt();
@@ -1510,8 +1739,8 @@ impl DctIv {
       post: (0..half)
         .map(|k| turn(-step * (k as f64 + 0.25), scale))
         .collect(),
-      buffer: vec![Complex::default(); half],
-      scratch: vec![Complex::default(); fft.get_inplace_scratch_len()],
+      buffer: vec![Complex::new(T::zero(), T::zero()); half],
+      scratch: vec![Complex::new(T::zero(), T::zero()); fft.get_inplace_scratch_len()],
       fft,
     }
   }
@@ -1520,7 +1749,7 @@ impl DctIv {
   ///
   /// with z_n = u_2n + i u_(N-1-2n) and Y_k = sum_n z_n exp(-i pi (2n + 1/2)(2k + 1/2) / N),
   /// X_2k is the real part of Y_k and X_(N-1-2k) minus its imaginary part.
-  pub(crate) fn process(&mut self, input: &[f32], output: &mut [f32]) {
+  pub(crate) fn process(&mut self, input: &[T], output: &mut [T]) {
     // pair i holds u_2i and u_(2i+1), so u_(N-1-2n) is the second of pair N/2-1-n
     let (pairs, _) = input.as_chunks::<2>();
     let turned = self.buffer.iter_mut().zip(&self.pre);
@@ -1531,7 +1760,13 @@ impl DctIv {
       .fft
       .process_with_scratch(&mut self.buffer, &mut self.scratch);
     let (pairs, _) = output.as_chunks_mut::<2>();
-    let turned = || self.buffer.iter().zip(&self.post).map(|(b, post)| b * post);
+    let turned = || {
+      self
+        .buffer
+        .iter()
+        .zip(&self.post)
+        .map(|(b, post)| *b * *post)
+    };
     for (pair, y) in pairs.iter_mut().zip(turned()) {
       pair[0] = y.re;
     }
@@ -1768,11 +2003,10 @@ fn mp3_bands(rate: u32) -> Option<&'static [usize; 23]> {
   }
 }
 
-/// the step of a band whose lines are `lines`: `None` when the band is not tested, `Some(None)`
-/// when no step puts every value over the noise on its lattice. the smallest such value is
-/// taken as 1, 2 and so on times the step in turn
-fn band_step(lines: &[f64]) -> Option<Option<f64>> {
-  let sigma = NOISE16 * MP3_NOISE_GAIN;
+/// the step of a band whose lines are `lines`, each with rounding noise of `sigma`: `None` when
+/// the band is not tested, `Some(None)` when no step puts every value over the noise on its
+/// lattice. the smallest such value is taken as 1, 2 and so on times the step in turn
+fn band_step(lines: &[f64], sigma: f64) -> Option<Option<f64>> {
   let values: Vec<f64> = lines
     .iter()
     .map(|line| line.abs())
@@ -1837,7 +2071,7 @@ impl Mp3 {
           let mut under = None;
           for (at, band) in bands.windows(2).enumerate() {
             let lines = &lines[band[0]..band[1]];
-            let step = band_step(lines);
+            let step = band_step(lines, NOISE16 * MP3_NOISE_GAIN);
             tested += usize::from(step.is_some());
             let fourths = step.flatten().and_then(|step| {
               stepped += 1;
@@ -1984,6 +2218,63 @@ mod tests {
   }
 
   #[test]
+  fn aacs_steps_name_the_window_and_show_a_grid_no_count_does() {
+    let thresholds = ReadingThresholds::default();
+    let count = |offset: usize, z: f64| CodecScan {
+      offset,
+      z,
+      segments_agreeing: 4,
+      segment_z: [z; SEGMENTS],
+    };
+    let steps = |whole: usize| AacSteps {
+      tested: 12_000,
+      stepped: 4 * whole,
+      whole: 4 * whole,
+      segment_whole: [whole; SEGMENTS],
+    };
+    let scan = |kbd: f64, sine: f64, kbd_steps: usize, sine_steps: usize| Scan {
+      aac: count(448, kbd),
+      aac_sine: Some(count(448, sine)),
+      mp3: count(0, 2.0),
+      opus: None,
+      other_rate: None,
+      mp3_steps: None,
+      aac_steps: Some(steps(kbd_steps)),
+      aac_sine_steps: Some(steps(sine_steps)),
+    };
+    let under = thresholds.aac_whole_steps - 1;
+    // the count stands out further under the sine window, and the steps show under the other
+    let nero = found(&scan(78.0, 93.0, 2_500, under), &thresholds).expect("the count is over");
+    assert_eq!(nero.evidence, Evidence::Count(count(448, 93.0)));
+    assert_eq!(nero.family, Some(Family::Nero));
+    assert_eq!(nero.quantizer, Some(steps(2_500)));
+    // without steps the count's own window names the family, and no encoder's is the sine at 448
+    let unnamed = found(&scan(78.0, 93.0, under, under), &thresholds).expect("the count is over");
+    assert_eq!((unnamed.family, unnamed.quantizer), (None, None));
+    // no count over its threshold: the steps show the grid, and one stretch is enough
+    let quiet = scan(4.0, 5.0, 2_500, under);
+    let by_steps = found(&quiet, &thresholds).expect("the steps show");
+    let evidence = Evidence::AacSteps {
+      offset: 448,
+      steps: steps(2_500),
+    };
+    assert_eq!((by_steps.codec, by_steps.evidence), (Codec::Aac, evidence));
+    assert_eq!(
+      (by_steps.family, by_steps.quantizer),
+      (Some(Family::Nero), None)
+    );
+    let one = Scan {
+      aac_steps: Some(AacSteps {
+        segment_whole: [0, thresholds.aac_whole_steps, 0, 0],
+        ..steps(0)
+      }),
+      ..quiet.clone()
+    };
+    assert_eq!(found(&one, &thresholds).map(|f| f.codec), Some(Codec::Aac));
+    assert_eq!(found(&scan(4.0, 5.0, under, under), &thresholds), None);
+  }
+
+  #[test]
   fn each_codec_asks_for_its_own_agreement() {
     let thresholds = ReadingThresholds {
       aac_grid_z: 9.0,
@@ -2005,6 +2296,8 @@ mod tests {
       opus: None,
       other_rate: None,
       mp3_steps: None,
+      aac_steps: None,
+      aac_sine_steps: None,
     };
     let codec = |scan: &Scan| found(scan, &thresholds).map(|f| f.codec);
     // an MP3 dip in one segment is no grid, an AAC dip the segments place differently is one

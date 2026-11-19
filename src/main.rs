@@ -713,11 +713,15 @@ fn words(reading: &Reading) -> (&'static str, String) {
   if let Some(grid) = &reading.grid {
     let at = guess.map_or_else(String::new, |g| format!(", where {g} cuts"));
     let how = match &grid.evidence {
-      Evidence::Count(scan) => format!("z {:.0}", scan.z),
+      Evidence::Count(scan) => match &grid.quantizer {
+        Some(steps) => format!("z {:.0}, {} bands on quantizer steps", scan.z, steps.whole),
+        None => format!("z {:.0}", scan.z),
+      },
       Evidence::CountAt { rate, scan } => {
         format!("z {:.0} at {} kHz", scan.z, f64::from(*rate) / 1000.0)
       }
       Evidence::Steps { steps, .. } => format!("{} bands on quantizer steps", steps.whole),
+      Evidence::AacSteps { steps, .. } => format!("{} bands on quantizer steps", steps.whole),
       Evidence::Lattice(scan) => format!("{} frames", scan.most().1),
       Evidence::Shifted { shifted } => format!("{} frames at another level", shifted.most().1),
       Evidence::Hybrid { hybrid } => format!("{} hybrid frames", hybrid.most().1),
