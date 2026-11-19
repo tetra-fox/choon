@@ -13,13 +13,13 @@ command-line tool and a Rust library.
 ## Features
 
 - Spots lossless files decoded from MP3 or AAC by the frame grid the encoder leaves, tuned on
-  LAME at 96 to 320 kbps and V0 to V9 and on ffmpeg's AAC at 96 to 256 kbps, also after a
-  conversion between 44.1 and 48 kHz
-- Spots lossless files decoded from Opus by the band energies its encoder quantizes, at 48 kHz
-  and after a conversion to 44.1 kHz, with or without a gain after the decode, in its CELT and
-  hybrid modes and in frames of 2.5 to 60 ms, tuned on libopus at 16 to 256 kbps
-- Names the encoder family a grid's offset fits: LAME, Helix, Fraunhofer, Apple, FAAC, Nero,
-  ffmpeg or fdk-aac, libopus
+  LAME at 96 to 320 kbps and V0 to V9 and on ffmpeg's AAC at 96 to 256 kbps
+- Finds that grid after a conversion between 44.1 and 48 kHz
+- Spots lossless files decoded from Opus by the band energies its encoder quantizes, tuned on
+  libopus at 16 to 256 kbps
+- Finds an Opus decode at 48 kHz or converted to 44.1 kHz, with or without a gain after the
+  decode, in CELT and hybrid modes, in frames of 2.5 to 60 ms
+- Names the [encoder family](#encoder-family) a grid's offset fits, such as LAME, Apple or libopus
 - Reads Opus files, with the coding mode and audio bandwidth their packets state
 - Reads WavPack, Monkey's Audio and DSD files, and HE-AAC with the band its decoder rebuilds
 - Reads the encoder's cutoff in the spectrum, which alone raises a doubt
@@ -32,6 +32,8 @@ command-line tool and a Rust library.
 
 ## Methodology
 
+### Spectrum
+
 Each one-second window of the file is measured:
 
 - its loudness
@@ -42,6 +44,8 @@ Each one-second window of the file is measured:
 A lossy encoder cuts the top of the band with a steep low-pass at a frequency set by its bitrate,
 and decoding to FLAC or WAV does not bring it back. The cutoff reading comes from how the cutoffs
 spread across all windows.
+
+### Frame grid
 
 In a file that claims a lossless format, four stretches of the samples are also scanned for the
 frame grid of an MP3 or AAC encoder. The encoder transforms its input in frames on a fixed grid
@@ -57,63 +61,79 @@ offset that counts far fewer than the rest; an MP3 grid also needs at least thre
 agreeing on it. It does not depend on where the encoder cut, so MP3 at 320 kbps or V0 and AAC at
 256 kbps show one too.
 
+### Quantizer steps
+
 The values an MP3 encoder kept are quantized too: each is a whole number to the power 4/3 times
 its scalefactor band's step, and a step is a whole power of the fourth root of two. With the
 granules where the count puts them, the scan counts the bands whose values all sit on one such
-step. Three stretches with enough of them are an MP3 grid where the count stands out too little.
-Steps finer than the rounding noise of 16-bit samples, as most are at 320 kbps, leave nothing to
-count.
+step.
 
-An AAC encoder quantizes a long block's scalefactor bands the same way, and the scan counts the
-bands on one step under each window, with the frames where that window's count puts them. They
-show under the window the encoder used, which names the window where the two counts are close.
-One stretch with enough of them is an AAC grid where the count stands out too little. A Vorbis
-or HE-AAC decode shows none, so a reading whose AAC grid has them drops the note that a Vorbis
-decode reads as AAC.
+- Three stretches with enough such bands are an MP3 grid where the count stands out too little
+- Steps finer than the rounding noise of 16-bit samples, as most are at 320 kbps, leave nothing
+  to count
+
+An AAC encoder quantizes a long block's scalefactor bands the same way. The scan counts the
+bands on one step under each window, with the frames where that window's count puts them.
+
+- The bands show under the window the encoder used, which names the window where the two counts
+  are close
+- One stretch with enough such bands is an AAC grid where the count stands out too little
+- A Vorbis or HE-AAC decode shows none, so a reading whose AAC grid has them drops the note
+  that a Vorbis decode reads as AAC
+
+### Sample rate conversion
 
 A decode converted between 44.1 and 48 kHz carries its grid at the rate it was decoded at. A
 file at either rate is scanned a second time with its stretches brought to the other, by a long
 filter that keeps the sample times the two rates share.
 
+### Opus
+
 Opus zeroes few values. Its CELT layer codes the energy of each of 21 bands in each 20 ms frame
 as a step from a prediction, a whole number of 6 dB refined by a few bits. With Opus's transform
-run again on the grid, each band's energy comes back and its step sits on that lattice. The scan
-counts the frames whose bands do, at every offset of the grid in the four stretches, and in up
-to 60 of the windows on the one grid a decode has when nothing was cut from its start. Samples
-at 44.1 kHz are brought back to the 48 kHz Opus runs at first. It does not depend on the
-bitrate.
+run again on the grid, each band's energy comes back and its step sits on that lattice.
+
+The scan counts the frames whose bands do, at every offset of the grid in the four stretches,
+and in up to 60 of the windows on the one grid a decode has when nothing was cut from its start.
+Samples at 44.1 kHz are first brought back to the 48 kHz Opus runs at. The count does not depend
+on the bitrate.
 
 A frame is read as one long block after another. Where one frame at least sits on the lattice
 that way, the frames coded as eight short blocks, the frames after one, and the frames coded
-without the frame before them are counted with it. Opus's hybrid mode codes only the bands from
-8 kHz up with CELT, over a voice coder; its frames are counted on the two bands from 9.6 to
-15.6 kHz, as a share of the frames tested.
+without the frame before them are counted with it.
+
+Opus's hybrid mode codes only the bands from 8 kHz up with CELT, over a voice coder. Its frames
+are counted on the two bands from 9.6 to 15.6 kHz, as a share of the frames tested.
 
 Frames of 10, 5 and 2.5 ms hold the same bands in a half, a quarter and an eighth of the
 transform values, and predict each band with other shares of the frame before and of the lower
 bands. Each length is counted on its own grid, a frame as one block after the frame before it
-or without it. libopus delays its input by 312 samples, or by 120 in its low-delay mode, which
-ffmpeg sets for frames under 10 ms; the windows are counted on the grid each delay leaves.
+or without it.
+
+libopus delays its input by 312 samples, or by 120 in its low-delay mode, which ffmpeg sets for
+frames under 10 ms. The windows are counted on the grid each delay leaves.
 
 A gain after the decode moves every step by the same amount, half the gain, so the lattice is
 still there, moved. The scan takes the move that the most frames of a channel name and counts
 the frames on the lattice once it is taken off. Moves 9.6 dB of gain apart fit most frames
-alike, so the count shows a decode and does not tell what the gain was.
+alike, so the count shows a decode and cannot tell what the gain was.
+
+### Encoder family
 
 An encoder delays its input by a fixed number of samples, and an AAC encoder keeps to one window
 for its long blocks, so a grid's offset and window fit an encoder family:
 
-| Codec | Offset | Window         | Family                            |
-| ----- | ------ | -------------- | --------------------------------- |
-| MP3   | 48     |                | LAME                              |
-| MP3   | 96     |                | Helix                             |
-| MP3   | 1      |                | no delay stated: Shine, BladeEnc, GOGO, Apple |
-| MP3   | 1      |                | Fraunhofer, where its steps show it |
-| AAC   | 960    | sine           | Apple                             |
-| AAC   | 0      | sine           | FAAC                              |
-| AAC   | 448    | Kaiser-Bessel  | Nero                              |
-| AAC   | 0      | Kaiser-Bessel  | ffmpeg or fdk-aac                 |
-| Opus  | 228    |                | libopus                           |
+| Codec | Offset | Window        | Family                              |
+| ----- | ------ | ------------- | ----------------------------------- |
+| MP3   | 48     |               | LAME                                |
+| MP3   | 96     |               | Helix                               |
+| MP3   | 1      |               | Shine, BladeEnc, GOGO or Apple      |
+| MP3   | 1      |               | Fraunhofer, where its steps show it |
+| AAC   | 960    | sine          | Apple                               |
+| AAC   | 0      | sine          | FAAC                                |
+| AAC   | 448    | Kaiser-Bessel | Nero                                |
+| AAC   | 0      | Kaiser-Bessel | ffmpeg or fdk-aac                   |
+| Opus  | 228    |               | libopus                             |
 
 - The offsets are those of a decode whose start was not cut, from a decoder that cuts the delay
   the file states, as ffmpeg does
@@ -121,12 +141,17 @@ for its long blocks, so a grid's offset and window fit an encoder family:
 - Opus frames under 20 ms sit at 468 or 180 (10 ms), 108 or 60 (5 ms) and 48 or 0 (2.5 ms),
   by libopus's two delays
 - Versions of one encoder share its delay and read alike
-- The MP3 encoders that state no delay share offset 1. Fraunhofer's is told from the others by
-  how it moves the quantizer's step from one scalefactor band to the next: a weighted sum of
-  twelve shares of the neighbouring bands' steps over a threshold. The weights were fitted on
-  the codec Windows ships. They name 361 of 445 of its decodes, none of 468 decodes of the
-  other four, and 3 of 2,521 LAME and Helix decodes, which sit at their own offsets
+- Shine, BladeEnc, GOGO, Apple and Fraunhofer state no delay in their MP3 files and share
+  offset 1
+- Fraunhofer's is told from the other four by how it moves the quantizer's step from one
+  scalefactor band to the next: a weighted sum of twelve shares of the neighbouring bands' steps
+  over a threshold
+- The weights were fitted on the codec Windows ships. They name 361 of 445 of its decodes, none
+  of 468 decodes of the other four, and 3 of 2,521 LAME and Helix decodes, which sit at their
+  own offsets
 - About one Vorbis decode in thirteen reads as AAC at Nero's offset, without AAC's steps
+
+### Verdicts
 
 | Verdict          | Description                                                                 |
 | ---------------- | --------------------------------------------------------------------------- |
@@ -150,34 +175,36 @@ A reading also holds:
 
 ## Supported formats
 
-| Codecs                                          | Containers                                   |
-| ----------------------------------------------- | -------------------------------------------- |
-| FLAC, ALAC, WAV, AIFF, CAF, MP3, Vorbis, Opus   | their own files, MP4/M4A, Ogg, Matroska/WebM |
-| AAC-LC, HE-AAC, HE-AAC v2                       | MP4/M4A, ADTS (`.aac`)                       |
-| WavPack                                         | `.wv`                                        |
-| Monkey's Audio                                  | `.ape`                                       |
-| DSD at 64 to 512 times 44.1 or 48 kHz           | DSF (`.dsf`), DSDIFF (`.dff`)                |
+| Codecs                                        | Containers                                   |
+| --------------------------------------------- | -------------------------------------------- |
+| FLAC, ALAC, WAV, AIFF, CAF, MP3, Vorbis, Opus | their own files, MP4/M4A, Ogg, Matroska/WebM |
+| AAC-LC, HE-AAC, HE-AAC v2                     | MP4/M4A, ADTS (`.aac`)                       |
+| WavPack                                       | `.wv`                                        |
+| Monkey's Audio                                | `.ape`                                       |
+| DSD at 64 to 512 times 44.1 or 48 kHz         | DSF (`.dsf`), DSDIFF (`.dff`)                |
 
-| Decoder                                                                          | Codecs         |
-| -------------------------------------------------------------------------------- | -------------- |
-| [symphonia](https://github.com/pdeljanov/Symphonia)                              | all but these  |
-| [symphonia-opus](https://github.com/jiztastamablastamarang/symphonia-opus)       | Opus           |
-| [rusty_aac](https://crates.io/crates/rusty_aac)                                  | AAC            |
-| [wavicle](https://crates.io/crates/wavicle)                                      | WavPack        |
-| [ape-decoder](https://crates.io/crates/ape-decoder)                              | Monkey's Audio |
+| Decoder                                                                    | Codecs                                  |
+| -------------------------------------------------------------------------- | --------------------------------------- |
+| [symphonia](https://github.com/pdeljanov/Symphonia)                        | FLAC, ALAC, WAV, AIFF, CAF, MP3, Vorbis |
+| [symphonia-opus](https://github.com/jiztastamablastamarang/symphonia-opus) | Opus                                    |
+| [rusty_aac](https://crates.io/crates/rusty_aac)                            | AAC                                     |
+| [wavicle](https://crates.io/crates/wavicle)                                | WavPack                                 |
+| [ape-decoder](https://crates.io/crates/ape-decoder)                        | Monkey's Audio                          |
 
-- HE-AAC is decoded at its output rate, with spectral band replication and parametric stereo.
-  The band above the core is the decoder's reconstruction, so its reading names no encoder
-- WavPack is read as mono or stereo at 16, 24 or 32 bits or as float. A hybrid file is lossy
-  without its correction file and is refused by name, as are 8-bit samples, more than two
-  channels and streams older than WavPack 4
-- Monkey's Audio is read at 8, 16 or 24 bits from version 3.99 on. Older files, float samples
+- HE-AAC is decoded at its output rate, with spectral band replication and parametric stereo
+- The band above an HE-AAC core is the decoder's reconstruction, so its reading names no encoder
+- WavPack is read as mono or stereo at 16, 24 or 32 bits or as float
+- A hybrid WavPack file is lossy without its correction file and is refused by name, as are
+  8-bit samples, more than two channels and streams older than WavPack 4
+- Monkey's Audio is read at 8, 16 or 24 bits from version 3.99 on; older files, float samples
   and 32-bit samples are refused by name
 - DSD is measured as PCM at a sixteenth of its rate and at most 352.8 or 384 kHz: 176.4 kHz
-  for DSD64. The filter passes 0.45 of that rate and removes what would fold onto it by 115 dB
+  for DSD64
+- The DSD filter passes 0.45 of that rate and removes what would fold onto it by 115 dB
 - A DSD reading says where the band stops, which shows a source limited like 44.1 or 48 kHz
-  PCM or cut by a lossy encoder. It cannot tell a DSD recording from PCM converted up, and the
-  noise above the audio band reads as content
+  PCM or cut by a lossy encoder
+- A DSD reading cannot tell a DSD recording from PCM converted up, and the noise above the
+  audio band reads as content
 - DST-compressed DSDIFF is refused by name
 - Opus is read in Ogg (`.opus`, `.ogg`), Matroska/WebM (`.mka`, `.webm`) and MP4
 - An Opus file starts after its pre-skip and has its header's output gain applied
@@ -298,8 +325,8 @@ fn main() -> Result<(), choon::Error> {
 - Measuring is slow and reading is quick: measure once, read under many thresholds
 - `picture` holds each window's spectrogram and waveform data
 - Logs through `tracing`
-- ape-decoder 0.3.2 can panic on a damaged Monkey's Audio file in a build with overflow checks.
-  The panic is caught, logged at `warn` and the frame skipped; a build with `panic = "abort"`
+- ape-decoder 0.3.2 can panic on a damaged Monkey's Audio file in a build with overflow checks
+- That panic is caught, logged at `warn` and the frame skipped; a build with `panic = "abort"`
   aborts
 
 | Setting    | Description                                    |
@@ -322,20 +349,20 @@ fn main() -> Result<(), choon::Error> {
 
 Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
 
-| Codec  | Encoder                                           | Decodes found, of 40 |
-| ------ | ------------------------------------------------- | -------------------- |
-| MP3    | LAME 3.90.3, 3.93.1, 3.97, 3.98.4, 3.99.5, 3.100  | 38 to 40             |
-| MP3    | Helix, Shine, BladeEnc, GOGO                      | 39 to 40             |
-| MP3    | Apple (Music) at 160, 320 and VBR                 | 39 to 40             |
-| AAC-LC | ffmpeg, fdk-aac                                   | 40                   |
-| AAC-LC | Nero, Apple (CBR, constrained VBR, true VBR)      | 39 to 40             |
-| AAC-LC | FAAC at 128 kbps and at quality 100               | 30 and 36            |
-| AAC-LC | FAAC at 256 kbps                                  | 5                    |
-| HE-AAC | Apple, fdk-aac, Nero at 48 and 64 kbps            | 4 to 21              |
-| HE-AAC | Apple, fdk-aac, Nero, v2 at 32 kbps               | 0 to 3               |
-| Vorbis | libvorbis 1.1.2 to 1.3.7, aoTuV, at q3 and q6     | 34 to 36             |
-| Vorbis | libvorbis 1.2.0 and 1.3.7, aoTuV, at q9           | 18 to 23             |
-| Opus   | libopus 1.1, 1.3.1, 1.5.2, 1.6.1 at 64 to 256     | 39                   |
+| Codec  | Encoder                                          | Decodes found, of 40 |
+| ------ | ------------------------------------------------ | -------------------- |
+| MP3    | LAME 3.90.3, 3.93.1, 3.97, 3.98.4, 3.99.5, 3.100 | 38 to 40             |
+| MP3    | Helix, Shine, BladeEnc, GOGO                     | 39 to 40             |
+| MP3    | Apple (Music) at 160, 320 and VBR                | 39 to 40             |
+| AAC-LC | ffmpeg, fdk-aac                                  | 40                   |
+| AAC-LC | Nero, Apple (CBR, constrained VBR, true VBR)     | 39 to 40             |
+| AAC-LC | FAAC at 128 kbps and at quality 100              | 30 and 36            |
+| AAC-LC | FAAC at 256 kbps                                 | 5                    |
+| HE-AAC | Apple, fdk-aac, Nero at 48 and 64 kbps           | 4 to 21              |
+| HE-AAC | Apple, fdk-aac, Nero, v2 at 32 kbps              | 0 to 3               |
+| Vorbis | libvorbis 1.1.2 to 1.3.7, aoTuV, at q3 and q6    | 34 to 36             |
+| Vorbis | libvorbis 1.2.0 and 1.3.7, aoTuV, at q9          | 18 to 23             |
+| Opus   | libopus 1.1, 1.3.1, 1.5.2, 1.6.1 at 64 to 256    | 39                   |
 
 - FAAC at 256 kbps codes nearly every frame as short blocks, which the scan does not analyse
 - An HE-AAC decode's core was coded at half the sample rate under the decoder's filterbank
@@ -343,15 +370,15 @@ Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
 - AAC's quantizer steps show in 828 of the 880 AAC-LC decodes, 6 of which the count misses, in
   none of the 680 Vorbis decodes and none of the 280 HE-AAC ones
 - Fraunhofer's MP3 encoder, as the codec Windows ships, was checked on 44 other recordings at
-  96 to 320 kbps: every decode is found, at offset 1. Other versions of it were not tested
+  96 to 320 kbps: every decode is found, at offset 1
+- Other versions of Fraunhofer's encoder were not tested
 
 ## Limitations
 
 - A lossless master filtered sharply where an encoder cuts (16 or 19 kHz) reads as possibly lossy
 - An MP3 or AAC decode converted to another rate is found between 44.1 and 48 kHz only; after
   any other conversion it reads as possibly lossy at most
-- A Vorbis decode's grid mostly reads as AAC's; an AAC grid with AAC's quantizer steps is not
-  Vorbis's
+- A Vorbis decode's grid mostly reads as AAC's, without AAC's quantizer steps
 - Opus is found in frames with the pitch post-filter off; a decode made mostly of filtered
   frames and one in SILK voice mode read as possibly lossy at most
 - An Opus decode of frames under 20 ms whose level was changed afterwards is not found
@@ -387,7 +414,6 @@ Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
   double compressed MP3 audio tracks", _Proceedings of the 1st ACM Workshop on Information Hiding
   and Multimedia Security_, 2013.
   [Open access](https://iris.polito.it/bitstream/11583/2508475/2/bianchi_IHMMSEC13_OA.pdf).
-
 - J.-M. Valin, G. Maxwell, T. B. Terriberry, K. Vos, "High-quality, low-delay music coding in
   the Opus codec", AES 135th Convention, paper 8942, 2013.
   [arXiv:1602.04845](https://arxiv.org/abs/1602.04845).
