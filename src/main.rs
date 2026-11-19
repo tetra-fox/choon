@@ -38,10 +38,7 @@ const LOSSY: u8 = 1;
 const FAILED: u8 = 2;
 
 #[derive(Parser)]
-#[command(
-  version,
-  about = "Tells whether audio files are what their format claims, such as a FLAC made from an MP3"
-)]
+#[command(version, about)]
 struct Cli {
   #[command(subcommand)]
   command: Command,
