@@ -17,8 +17,8 @@ use tracing::debug;
 
 use crate::decode::opus::OpusUse;
 use crate::decode::{self, Claimed, Decoder, Filled, HeAac, dsd};
+use crate::grid::lattice::{self, Uncut};
 use crate::grid::{self, Scan, Segments};
-use crate::lattice::{self, Uncut};
 use crate::limitation::Limitation;
 use crate::thresholds::MeasureThresholds;
 use crate::totals::Totals;

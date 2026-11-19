@@ -82,13 +82,15 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::lattice;
-use crate::resample::Resampler;
-use crate::thresholds::{FraunhoferSteps, ReadingThresholds};
 use rayon::prelude::*;
 use rustfft::num_complex::Complex;
 use rustfft::num_traits::Float;
 use rustfft::{Fft, FftNum, FftPlanner};
+
+use crate::resample::Resampler;
+use crate::thresholds::{FraunhoferSteps, ReadingThresholds};
+
+pub(crate) mod lattice;
 
 /// AAC's hop, the length of its long frames' new samples
 pub(crate) const AAC_HOP: usize = 1024;

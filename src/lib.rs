@@ -65,7 +65,6 @@ mod decode;
 mod engine;
 mod flags;
 pub mod grid;
-mod lattice;
 mod limitation;
 pub mod picture;
 mod reading;

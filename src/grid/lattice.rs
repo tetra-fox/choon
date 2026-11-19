@@ -20,7 +20,7 @@
 
 use rayon::prelude::*;
 
-use crate::grid::{DctIv, fold};
+use super::{DctIv, fold};
 use crate::resample::Resampler;
 
 /// a 20 ms frame at 48 kHz
