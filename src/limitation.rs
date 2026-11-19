@@ -121,6 +121,9 @@ impl fmt::Display for Limitation {
         "The file runs longer than it states, so the analysis stopped after {}",
         minutes(*seconds)
       ),
+      Self::PacketsSkipped { count: 1 } => {
+        f.write_str("1 packet could not be decoded and was skipped")
+      }
       Self::PacketsSkipped { count } => {
         write!(f, "{count} packets could not be decoded and were skipped")
       }
@@ -132,6 +135,9 @@ impl fmt::Display for Limitation {
           Some(first) => write!(f, "{}{}", first.to_uppercase(), chars.as_str()),
           None => Ok(()),
         }
+      }
+      Self::Sampled { windows: 1 } => {
+        f.write_str("Only 1 one-second window of the file was analyzed")
       }
       Self::Sampled { windows } => write!(
         f,
@@ -187,6 +193,7 @@ impl fmt::Display for Limitation {
 /// `seconds` in words, as minutes when they are whole minutes
 fn minutes(seconds: u64) -> String {
   match seconds {
+    1 => "a second".to_string(),
     60 => "a minute".to_string(),
     s if s > 0 && s % 60 == 0 => format!("{} minutes", s / 60),
     s => format!("{s} seconds"),
@@ -210,5 +217,24 @@ mod tests {
     assert_eq!(Limitation::Decoder(String::new()).to_string(), "");
     let whole = Limitation::LengthNotStated { seconds: 120 };
     assert!(whole.to_string().ends_with("after 2 minutes"));
+  }
+
+  #[test]
+  fn one_of_a_thing_is_written_in_the_singular() {
+    let one = [
+      Limitation::PacketsSkipped { count: 1 }.to_string(),
+      Limitation::Sampled { windows: 1 }.to_string(),
+      Limitation::LengthNotStated { seconds: 1 }.to_string(),
+    ];
+    assert_eq!(
+      one,
+      [
+        "1 packet could not be decoded and was skipped",
+        "Only 1 one-second window of the file was analyzed",
+        "The file does not state its length, so the analysis stopped after a second",
+      ]
+    );
+    let two = Limitation::PacketsSkipped { count: 2 }.to_string();
+    assert_eq!(two, "2 packets could not be decoded and were skipped");
   }
 }
