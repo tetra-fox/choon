@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::decode::HeAac;
-use crate::engine::{self, Coverage, Error, Measured, Settings, measure, measure_bytes};
+use crate::engine::{Coverage, Error, Measured, Settings, measure, measure_bytes};
 use crate::fixtures::{self, Audio, Bitrate, LongWindow, lo_fi, music, music_for, pink, tone};
 use crate::flags::Flag;
 use crate::grid::{self, Codec, Evidence};
@@ -44,8 +44,39 @@ fn analyzed(path: &Path) -> Reading {
 fn explained(path: &Path) -> (Reading, String) {
   let measured = measure(path, &settings()).unwrap();
   let reading = read(&measured);
-  let why = engine::explain(&measured, &reading);
+  let why = explain(&measured, &reading);
   (reading, why)
+}
+
+/// what a reading saw, for a failing test to print: the reading, then each window's start,
+/// level, cutoff, shelf and steepest inner step
+fn explain(measured: &Measured, reading: &Reading) -> String {
+  let mut text = format!(
+    "{:?} at {:.2}, guess {:?}, flags {:?}\n  {}\n  limitations {:?}\n  median {:?} Hz, \
+     bitrate {:?} kbps\n",
+    reading.verdict,
+    reading.confidence,
+    reading.encoder_guess.as_ref().map(|g| &g.profile),
+    reading.flags,
+    reading.summary,
+    reading.limitations,
+    reading.measures.cutoff_median_hz,
+    measured.bitrate_kbps,
+  );
+  for window in &measured.windows {
+    let step = window
+      .inner_shelf
+      .map(|s| format!("{:.0} Hz -{:.0} dB clear {:.0}", s.hz, s.drop, s.clearance));
+    text += &format!(
+      "  t {:>4} {:>6.1} dBFS cutoff {:?} shelf {:?} step {}\n",
+      window.start,
+      window.rms_dbfs,
+      window.cutoff_hz.map(f64::round),
+      window.shelf_db.map(f64::round),
+      step.unwrap_or_default()
+    );
+  }
+  text
 }
 
 fn flac(dir: &Path, name: &str, audio: &Audio, bits: u32) -> PathBuf {
