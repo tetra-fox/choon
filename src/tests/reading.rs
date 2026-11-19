@@ -798,3 +798,20 @@ fn a_reading_needs_thirty_whole_seconds_of_audio() {
   let reading = analyzed(&flac(dir.path(), "short.flac", &audio, 16));
   assert_eq!(reading.verdict, Verdict::Inconclusive, "{reading:#?}");
 }
+
+#[test]
+fn digital_silence_holds_zero_seconds_of_audio_not_minus_zero() {
+  let silence = Audio {
+    rate: 44_100,
+    channels: vec![vec![0.0; 2 * 44_100]; 2],
+  };
+  let measured = measure_bytes(fixtures::flac(&silence, 16, false), &settings()).unwrap();
+  let reading = read(&measured);
+  assert!(
+    reading.limitations.iter().any(|limitation| limitation
+      .to_string()
+      .starts_with("Only 0.0 s of the audio")),
+    "{:?}",
+    reading.limitations
+  );
+}

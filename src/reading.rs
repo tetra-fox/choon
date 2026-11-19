@@ -169,9 +169,10 @@ struct Heard<'a> {
 }
 
 impl<'a> Heard<'a> {
-  /// how many seconds of audio the windows hold, a short last one by its length
+  /// how many seconds of audio the windows hold, a short last one by its length. summed from
+  /// zero, as an empty `sum` of floats is -0.0, which is printed with its sign
   fn seconds(&self) -> f64 {
-    self.windows.iter().map(|w| w.seconds).sum()
+    self.windows.iter().fold(0.0, |sum, w| sum + w.seconds)
   }
 
   fn share(&self, keep: impl Fn(&Seen) -> bool) -> f64 {
