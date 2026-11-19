@@ -741,15 +741,7 @@ pub struct Found {
 
 /// the grid `scan` shows under `thresholds`, with the encoder family its offset fits
 pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found> {
-  let (codec, evidence) = shown(scan, thresholds)?;
-  // which of AAC's windows a count was taken under
-  let sine = |count: &CodecScan| {
-    scan.aac_sine.as_ref() == Some(count)
-      || scan
-        .other_rate
-        .as_ref()
-        .is_some_and(|other| &other.aac_sine == count)
-  };
+  let (codec, evidence, sine) = shown(scan, thresholds)?;
   // AAC's steps, which are read at the file's own rate
   let stepped = match (&evidence, codec) {
     (Evidence::CountAt { .. }, _) | (_, Codec::Mp3 | Codec::Opus) => None,
@@ -760,7 +752,7 @@ pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found
     (Evidence::Count(count) | Evidence::CountAt { scan: count, .. }, Codec::Aac) => {
       match &stepped {
         Some((window, _)) => Family::of_aac(window.offset, window.sine),
-        None => Family::of_aac(count.offset, sine(count)),
+        None => Family::of_aac(count.offset, sine),
       }
     }
     (_, Codec::Aac) => stepped
@@ -799,6 +791,16 @@ pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found
     evidence,
     quantizer,
   })
+}
+
+/// a count that may show a grid: its codec, whether it was taken under AAC's sine window, and
+/// the z and the agreement it has to pass
+struct Counted<'a> {
+  codec: Codec,
+  sine: bool,
+  scan: &'a CodecScan,
+  z: f64,
+  agreeing: usize,
 }
 
 /// the AAC window `steps` were read under: the offset of its count, and whether it is the sine
@@ -850,38 +852,37 @@ fn aac_stepped<'a>(
 /// - MP3 or AAC at the other rate
 ///
 /// the codec decoded last leaves the grid that counts, and Opus's energies can show through
-/// an MP3 made from its decode
-fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence)> {
-  let aac = |scan| {
-    (
-      Codec::Aac,
-      scan,
-      thresholds.aac_grid_z,
-      thresholds.aac_grid_segments_agreeing,
-    )
+/// an MP3 made from its decode.
+///
+/// the last of the three is whether the evidence is a count taken under AAC's sine window
+fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence, bool)> {
+  let aac = |scan, sine| Counted {
+    codec: Codec::Aac,
+    sine,
+    scan,
+    z: thresholds.aac_grid_z,
+    agreeing: thresholds.aac_grid_segments_agreeing,
   };
-  let mp3 = |scan| {
-    (
-      Codec::Mp3,
-      scan,
-      thresholds.mp3_grid_z,
-      thresholds.mp3_grid_segments_agreeing,
-    )
+  let mp3 = |scan| Counted {
+    codec: Codec::Mp3,
+    sine: false,
+    scan,
+    z: thresholds.mp3_grid_z,
+    agreeing: thresholds.mp3_grid_segments_agreeing,
   };
-  let clearest = |scans: [Option<(Codec, &CodecScan, f64, usize)>; 3]| {
-    scans
+  fn clearest<'a>(counts: [Option<Counted<'a>>; 3]) -> Option<Counted<'a>> {
+    counts
       .into_iter()
       .flatten()
-      .filter(|(_, scan, z, agreeing)| scan.z > *z && scan.segments_agreeing >= *agreeing)
-      .max_by(|(_, a, za, _), (_, b, zb, _)| (a.z / za).total_cmp(&(b.z / zb)))
-      .map(|(codec, scan, _, _)| (codec, scan.clone()))
-  };
+      .filter(|count| count.scan.z > count.z && count.scan.segments_agreeing >= count.agreeing)
+      .max_by(|a, b| (a.scan.z / a.z).total_cmp(&(b.scan.z / b.z)))
+  }
   let own = clearest([
-    Some(aac(&scan.aac)),
-    scan.aac_sine.as_ref().map(aac),
+    Some(aac(&scan.aac, false)),
+    scan.aac_sine.as_ref().map(|scan| aac(scan, true)),
     Some(mp3(&scan.mp3)),
   ])
-  .map(|(codec, scan)| (codec, Evidence::Count(scan)));
+  .map(|count| (count.codec, Evidence::Count(count.scan.clone()), count.sine));
   // the quantizer's steps show a grid whose count stands out too little
   let stepped = || {
     let steps = scan.mp3_steps.as_ref()?;
@@ -894,7 +895,7 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
         offset: scan.mp3.offset,
         steps: steps.clone(),
       };
-      (Codec::Mp3, evidence)
+      (Codec::Mp3, evidence, false)
     })
   };
   let stepped_aac = || {
@@ -903,26 +904,26 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
       offset: window.offset,
       steps: steps.clone(),
     };
-    Some((Codec::Aac, evidence))
+    Some((Codec::Aac, evidence, false))
   };
   // a grid at the other rate was laid before the conversion, so one on the file's own
   // samples was laid after it and is named first
   let converted = || {
     let other = scan.other_rate.as_ref()?;
-    let aac = |scan| {
-      let (codec, scan, _, agreeing) = aac(scan);
-      (codec, scan, thresholds.other_rate_aac_z, agreeing)
+    let aac = |scan, sine| Counted {
+      z: thresholds.other_rate_aac_z,
+      ..aac(scan, sine)
     };
-    let (codec, scan) = clearest([
-      Some(aac(&other.aac)),
-      Some(aac(&other.aac_sine)),
+    let count = clearest([
+      Some(aac(&other.aac, false)),
+      Some(aac(&other.aac_sine, true)),
       Some(mp3(&other.mp3)),
     ])?;
     let evidence = Evidence::CountAt {
       rate: other.rate,
-      scan,
+      scan: count.scan.clone(),
     };
-    Some((codec, evidence))
+    Some((count.codec, evidence, count.sine))
   };
   let opus = || {
     let opus = scan.opus.as_ref()?;
@@ -965,7 +966,7 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
         hybrid: hybrid.clone(),
       }
     };
-    Some((Codec::Opus, evidence))
+    Some((Codec::Opus, evidence, false))
   };
   own
     .or_else(stepped)
@@ -2379,7 +2380,7 @@ mod tests {
         segment_whole: [0, thresholds.aac_whole_steps, 0, 0],
         ..steps(0)
       }),
-      ..quiet.clone()
+      ..quiet
     };
     assert_eq!(found(&one, &thresholds).map(|f| f.codec), Some(Codec::Aac));
     assert_eq!(found(&scan(4.0, 5.0, under, under), &thresholds), None);
