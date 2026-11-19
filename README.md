@@ -23,7 +23,7 @@ command-line tool and a Rust library.
 - Reads Opus files, with the coding mode and audio bandwidth their packets state
 - Reads WavPack, Monkey's Audio and DSD files, and HE-AAC with the band its decoder rebuilds
 - Reads the encoder's cutoff in the spectrum, which alone raises a doubt
-- Guesses the encoder setting behind a transcode, such as `mp3 ~128 kbps`
+- Guesses the encoder setting behind a transcode, such as `MP3 ~128 kbps`
 - Flags upsampled audio, bit-padded samples and two channels holding the same audio
 - Finds lossy parts mixed into lossless audio (an intro, a stem)
 - Checks a whole library in one run: directories, a list of paths on stdin, files in parallel
@@ -223,9 +223,9 @@ cargo install choon
 
 ```console
 $ choon check music/
-music/fake-128.flac: likely transcode: MP3 grid at offset 1 (z 110), cut at 16.8 kHz, where mp3 ~128 kbps cuts
-music/cut-19.flac: possibly lossy, cannot confirm: no codec grid; the spectrum reads as an encoder's cutoff (cut at 19.4 kHz, like mp3 ~224 kbps)
-music/fake-320.flac: likely transcode: MP3 grid at offset 1 (z 126), cut at 20.2 kHz, where mp3 ~320 kbps or aac cuts
+likely transcode  (MP3 grid, cutoff 16.8 kHz, MP3 ~128 kbps)  music/fake-128.flac
+possibly lossy    (cutoff 19.4 kHz, MP3 ~224 kbps, no grid)  music/cut-19.flac
+likely transcode  (MP3 grid, cutoff 20.2 kHz, MP3 ~320 kbps or AAC)  music/fake-320.flac
 
 Verdict            Files
 ------------------ -------
@@ -242,21 +242,21 @@ Files per minute     255
 
 Verdict            Grid            Cutoff     Encoder guess          Path
 ------------------ --------------- ---------- ---------------------- ---------------------
-possibly lossy                     19.4 kHz   mp3 ~224 kbps          music/cut-19.flac
-likely transcode   MP3, offset 1   16.8 kHz   mp3 ~128 kbps          music/fake-128.flac
-likely transcode   MP3, offset 1   20.2 kHz   mp3 ~320 kbps or aac   music/fake-320.flac
+possibly lossy                     19.4 kHz   MP3 ~224 kbps          music/cut-19.flac
+likely transcode   MP3, offset 1   16.8 kHz   MP3 ~128 kbps          music/fake-128.flac
+likely transcode   MP3, offset 1   20.2 kHz   MP3 ~320 kbps or AAC   music/fake-320.flac
 ```
 
 A terminal shows a progress bar per file and one for the run, each flagged file as it is found,
-then these tables. One file alone gets its reading in detail. Piped or with `--json`, each file is
-one line, in the order files finish:
+then these tables. One file alone gets its reading in detail, with its summary in sentences under
+`--verbose`. Piped or with `--json`, each file is one line, in the order files finish:
 
 ```console
 $ fd -e flac . music/ | choon check - | sort
-music/cut-19.flac: possibly lossy, cannot confirm: no codec grid; the spectrum reads as an encoder's cutoff (cut at 19.4 kHz, like mp3 ~224 kbps)
-music/fake-128.flac: likely transcode: MP3 grid at offset 1 (z 110), cut at 16.8 kHz, where mp3 ~128 kbps cuts
-music/fake-320.flac: likely transcode: MP3 grid at offset 1 (z 126), cut at 20.2 kHz, where mp3 ~320 kbps or aac cuts
-music/honest.flac: consistent, confidence 0.73
+music/cut-19.flac: possibly lossy (cutoff 19.4 kHz, MP3 ~224 kbps, no grid)
+music/fake-128.flac: likely transcode (MP3 grid, cutoff 16.8 kHz, MP3 ~128 kbps)
+music/fake-320.flac: likely transcode (MP3 grid, cutoff 20.2 kHz, MP3 ~320 kbps or AAC)
+music/honest.flac: consistent (confidence 0.73)
 ```
 
 | Argument    | Description                                                         |
