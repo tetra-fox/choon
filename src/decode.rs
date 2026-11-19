@@ -132,16 +132,21 @@ pub struct Claimed {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct HeAac {
-  /// Sample rate of the core, in Hz, half the rate of the decoded audio.
+  /// Sample rate of the core, in Hz.
+  ///
+  /// It is half the rate of the decoded audio.
   pub core_rate: u32,
-  /// Whether the two channels were rebuilt from one by parametric stereo, as in HE-AAC v2.
+  /// Whether parametric stereo rebuilt the two channels from one.
+  ///
+  /// An HE-AAC v2 stream is coded this way.
   pub parametric_stereo: bool,
 }
 
 impl HeAac {
-  /// Returns the top of the band the core can code, in Hz: half its sample rate.
+  /// Returns the top of the band the core can code, in Hz.
   ///
-  /// The core stops at or under it, and everything above was rebuilt.
+  /// It is half the core's sample rate. The core stops at or under it, and everything above
+  /// was rebuilt.
   pub fn core_top_hz(&self) -> f64 {
     f64::from(self.core_rate) / 2.0
   }
@@ -477,9 +482,9 @@ impl Decoder {
       (None, None, Some(_)) => (0, DSD_PRE_ROLL),
       (None, None, None) => (0, 0),
     };
-    // the position and the place sought to are whole sample frames, and the place a timestamp
-    // worked out from them: a time in seconds is rounded on its way to one, and a tick lost
-    // there starts the window early
+    // the position and the place sought to are counted in whole sample frames, and the timestamp
+    // is worked out from them. a time in seconds is rounded on its way to a timestamp, and a
+    // tick lost there starts the window early
     let position = ((seconds * f64::from(rate)).round() as u64)
       .checked_add(delay)
       .ok_or("the position is out of range")?;

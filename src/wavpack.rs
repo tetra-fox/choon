@@ -35,7 +35,7 @@ use crate::decode::refused;
 const HEADER: usize = 32;
 /// the most bytes a block is read with, which is the most the format's own decoder takes
 const MAX_BLOCK: usize = 1 << 20;
-/// the most sample frames a block is read with, likewise
+/// the most sample frames a block is read with, which is the most the format's own decoder takes
 const MAX_BLOCK_FRAMES: u32 = 131_072;
 /// the blocks without audio read past at the start before the file is given up on
 const MAX_LEADING_BLOCKS: usize = 64;
@@ -102,7 +102,7 @@ impl Header {
 }
 
 /// the header at the reader's position, which is left after it; `None` at the end of the file
-/// and at anything that is not a block, as the tags after the audio
+/// and at anything that is not a block, such as the tags after the audio
 fn next_header(reader: &mut MediaSourceStream<'_>) -> Result<Option<Header>> {
   let mut bytes = [0; HEADER];
   let mut read = 0;

@@ -42,7 +42,7 @@ const DESCRIPTOR_VERSION: u16 = 3980;
 /// the bytes of the format's descriptor and of its header, which later versions may add to
 const DESCRIPTOR_BYTES: u32 = 52;
 const HEADER_BYTES: u32 = 24;
-/// the most bytes a descriptor or a header is taken for one with
+/// the most bytes a descriptor or a header may state as its length
 const MAX_STATED_BYTES: u32 = 1 << 16;
 /// the most channels a file is read with
 const MAX_CHANNELS: u16 = 8;
@@ -295,8 +295,6 @@ impl FormatReader for ApeReader<'_> {
     if frame >= self.info.header.total_frames {
       return Ok(None);
     }
-    // a frame starts at any byte, and the decoder reads it in words of four from the last
-    // word boundary before it, counted from the first frame
     let last = frame + 1 == self.info.header.total_frames;
     // the last frame runs to the end of the file's audio, which a tag can follow
     let end = if last {
@@ -305,6 +303,8 @@ impl FormatReader for ApeReader<'_> {
     } else {
       self.start_of(frame + 1)
     };
+    // a frame starts at any byte, and the decoder reads it in words of four from the last
+    // word boundary before it, counted from the first frame
     let placed = self.start_of(frame).zip(self.start_of(0)).zip(end);
     let placed = placed.and_then(|((start, first), end)| {
       Some((
@@ -393,12 +393,10 @@ impl ApeDecoder {
     if blocks > self.stream.frame_blocks {
       return decode_error("ape: a frame's length is out of range");
     }
-    // TODO: stop catching panics once an ape-decoder release sums with wrapping arithmetic.
-    // 0.3.2 adds a damaged frame's filter products unchecked (nn_filter.rs), which panics in
-    // a build with overflow checks and wraps, as the format's own decoder does, in one
-    // without. the panic is caught and logged as one, and the frame skipped like any other
-    // that does not decode. the default panic hook still prints it, and a build with
-    // panic = "abort" still aborts
+    // ape-decoder 0.3.2 adds a damaged frame's filter products unchecked (nn_filter.rs), which
+    // panics in a build with overflow checks and wraps, as the format's own decoder does, in
+    // one without. the default panic hook still prints it, and panic = "abort" still aborts
+    // TODO: remove once an ape-decoder release sums with wrapping arithmetic
     let decoding = AssertUnwindSafe(|| {
       self
         .inner

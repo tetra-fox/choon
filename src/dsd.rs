@@ -1,10 +1,7 @@
 //! reads DSD files, DSF and DSDIFF: a reader that hands out the one-bit samples a block a
-//! packet, and a decoder that filters them down to PCM for the analysis.
-//!
-//! the PCM is at a sixteenth of the one-bit rate, and no more than 352.8 or 384 kHz: 176.4 kHz
-//! for DSD64, 352.8 kHz from DSD128 on. the filter is a Kaiser-windowed sinc that leaves an
-//! eighth of the samples, read from tables a byte at a time, then half-band stages that each
-//! leave half. every stage is designed for 120 dB of attenuation and passes 0.45 of the PCM rate
+//! packet, and a decoder that filters them down to PCM for the analysis. the filter is a
+//! Kaiser-windowed sinc that leaves an eighth of the samples, read from tables a byte at a time,
+//! then half-band stages that each leave half
 
 use std::io::{Read, Seek, SeekFrom};
 use std::num::NonZeroU32;
@@ -49,7 +46,7 @@ const MAX_PCM_MULTIPLE: u32 = 8;
 const PASS: f64 = 0.45;
 /// the stopband attenuation every stage of the filter is designed for, in dB
 const ATTENUATION_DB: f64 = 120.0;
-/// a byte whose every other bit is set, which a lowpass reads as silence
+/// a byte with half its bits set, which a lowpass reads as silence
 const IDLE: u8 = 0x69;
 
 const FORMAT: FormatInfo = FormatInfo {
@@ -141,7 +138,7 @@ impl From<std::io::Error> for Unread {
   }
 }
 
-/// the header of the DSF or DSDIFF file `file` starts with, `length` bytes long
+/// the DSF or DSDIFF header at the start of `file`, which is `length` bytes long
 fn read_header(file: &mut (impl Read + Seek), length: u64) -> std::result::Result<Header, Unread> {
   let mut magic = [0u8; 4];
   file.read_exact(&mut magic)?;
@@ -775,7 +772,7 @@ impl DsdDecoder {
     if bytes > BLOCK || !packet.len().is_multiple_of(channels) {
       return decode_error("dsd: a packet's length is out of range");
     }
-    // an empty packet has no channel to split it into
+    // an empty packet gives a size of zero, which chunks_exact panics on
     let stored = packet.chunks_exact(bytes.max(1));
     for ((chain, plane), stored) in self.chains.iter_mut().zip(&mut self.planes).zip(stored) {
       plane.clear();
