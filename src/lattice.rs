@@ -136,9 +136,9 @@ const AGREE: f64 = 0.002;
 const SHIFT_LIMIT: f64 = 18.0 / (2.0 * DB);
 
 /// where the frames of a decode sit when nothing was cut from its start, from the file's first
-/// sample: libopus's encoders delay by 312 samples, and a frame's window reaches 420 samples back
-/// from where its rise starts
-pub(crate) const UNCUT_OFFSET: usize = (2 * FRAME - 312 - 420) % FRAME;
+/// sample: libopus's encoders delay by the first of [`DELAYS`], and a frame's window reaches
+/// half of what its length has over the overlap back from where its rise starts
+pub(crate) const UNCUT_OFFSET: usize = (2 * FRAME - DELAYS[0] - (FRAME - OVERLAP) / 2) % FRAME;
 /// the most windows the pass at that offset reads
 const UNCUT_WINDOWS: usize = 60;
 
