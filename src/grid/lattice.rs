@@ -20,8 +20,8 @@
 
 use rayon::prelude::*;
 
+use super::mdct::{DctIv, fold};
 use super::resample::Resampler;
-use super::{DctIv, fold};
 
 /// a 20 ms frame at 48 kHz
 pub(crate) const FRAME: usize = 960;
