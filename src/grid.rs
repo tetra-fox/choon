@@ -87,10 +87,12 @@ use rustfft::num_complex::Complex;
 use rustfft::num_traits::Float;
 use rustfft::{Fft, FftNum, FftPlanner};
 
-use crate::resample::Resampler;
 use crate::thresholds::{FraunhoferSteps, ReadingThresholds};
 
 pub(crate) mod lattice;
+mod resample;
+
+use resample::Resampler;
 
 /// AAC's hop, the length of its long frames' new samples
 pub(crate) const AAC_HOP: usize = 1024;

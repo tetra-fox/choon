@@ -4,7 +4,7 @@
 
 use std::sync::LazyLock;
 
-use crate::grid::bessel_i0;
+use super::bessel_i0;
 
 /// samples of the lower rate on each side of an output sample that the filter reads
 const HALF: usize = 64;

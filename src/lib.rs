@@ -68,7 +68,6 @@ pub mod grid;
 mod limitation;
 pub mod picture;
 mod reading;
-mod resample;
 mod thresholds;
 mod totals;
 mod window;
