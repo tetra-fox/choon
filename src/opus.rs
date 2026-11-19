@@ -81,7 +81,7 @@ impl fmt::Display for OpusBandwidth {
   }
 }
 
-/// Time the decoded packets of an Opus stream spend in one mode and bandwidth.
+/// Time decoded Opus packets spend in one mode and bandwidth.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OpusUse {
@@ -98,7 +98,8 @@ impl OpusUse {
   ///
   /// SILK and hybrid are named as voice mode, and the share of the time is added when `uses`
   /// holds more than one: "CELT fullband", "SILK wideband, voice mode", "hybrid fullband,
-  /// voice mode for 71% of the time". `None` for no uses, as of a file that is not Opus.
+  /// voice mode for 71% of the time". Returns `None` for no uses, as of a file that is not
+  /// Opus.
   pub fn describe(uses: &[OpusUse]) -> Option<String> {
     let most = uses.first()?;
     let total: f64 = uses.iter().map(|u| u.seconds).sum();
@@ -170,7 +171,6 @@ fn coding_of(packet: &[u8]) -> Option<(OpusMode, OpusBandwidth, u32)> {
 pub(crate) struct Tally(Vec<(OpusMode, OpusBandwidth, u64)>);
 
 impl Tally {
-  /// counts a decoded packet
   pub(crate) fn count(&mut self, packet: &[u8]) {
     let Some((mode, bandwidth, frames)) = coding_of(packet) else {
       return;

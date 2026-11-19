@@ -94,6 +94,7 @@ impl Short {
     DELAYS.map(|delay| (4 * self.length - delay - (self.length - OVERLAP) / 2) % self.length)
   }
 }
+
 /// the short blocks of a transient frame, and the samples each brings
 const BLOCKS: usize = 8;
 const BLOCK: usize = FRAME / BLOCKS;
@@ -739,8 +740,7 @@ fn frames_in(length: usize) -> usize {
 }
 
 /// whether a short frame sits on the lattice after the frame before it, or with `alone`
-/// without it: every channel with enough tested bands has its share of them on the lattice,
-/// and one at least has enough
+/// without it, by the rule of [`sits`] over its channels
 fn short_sits(
   short: Short,
   frame: usize,
@@ -916,9 +916,8 @@ impl Stretches {
 /// of a decode whose start was not cut
 pub(crate) struct Uncut {
   celt: Celt,
-  /// the analysis of each length of short frame, and what the windows' frames of that length
-  /// count on the grid of each of [`DELAYS`]: on the lattice after the frame before, and that
-  /// or without it
+  /// the analysis of each length of short frame, and its counts as [`Uncut::short_counted`]
+  /// gives them
   short: [(Celt, [[usize; 2]; 2]); 3],
   rate: Rate,
   /// each window's frames on that grid, by channel: a frame read as a long block and as short

@@ -182,7 +182,7 @@ pub struct OpusScan {
   /// The grid is the one a decode has when nothing was cut from its start: libopus's encoders
   /// all delay their input by the same 312 samples. Up to 60 windows are read.
   pub uncut_frames: usize,
-  /// Frames counted with a change of level after the decode searched for.
+  /// Frames counted once a change of level after the decode is taken off.
   ///
   /// `None` in measures kept by a version of the analyzer that did not search for one.
   #[cfg_attr(feature = "serde", serde(default))]
@@ -380,7 +380,9 @@ pub struct Scan {
   /// `None` where `aac_steps` is.
   #[cfg_attr(feature = "serde", serde(default))]
   pub aac_sine_steps: Option<AacSteps>,
-  /// Opus's frames, `None` at a sample rate other than 44.1 and 48 kHz.
+  /// Opus's frames.
+  ///
+  /// `None` at a sample rate other than 44.1 and 48 kHz.
   #[cfg_attr(feature = "serde", serde(default))]
   pub opus: Option<OpusScan>,
   /// MP3's and AAC's grids in the samples brought to the other of 44.1 and 48 kHz.
@@ -446,7 +448,7 @@ pub struct Mp3Neighbours {
   pub two_coarser: usize,
   /// Number of bands 0 to 5 with a whole step.
   pub low_bands: usize,
-  /// Sum over those bands of the base-2 logarithm of one more than the largest quantized value.
+  /// Sum over those bands of log2 of one more than the largest quantized value.
   pub low_log: f64,
   /// Number of bands 12 up with a whole step.
   pub high_bands: usize,
@@ -803,7 +805,7 @@ struct Counted<'a> {
   agreeing: usize,
 }
 
-/// the AAC window `steps` were read under: the offset of its count, and whether it is the sine
+/// the AAC window steps were read under: the offset of its count, and whether it is the sine one
 struct StepsWindow {
   offset: usize,
   sine: bool,
@@ -848,7 +850,7 @@ fn aac_stepped<'a>(
 ///   the one furthest over its z threshold when several are. AAC is read under each window
 /// - MP3 by its quantizer's steps in enough segments, then AAC by its own
 /// - Opus with enough frames on its lattice in the segments or in the windows: at the
-///   decoder's level, at another, or as the hybrid mode codes them
+///   decoder's level, at another, as frames under 20 ms, or as the hybrid mode codes them
 /// - MP3 or AAC at the other rate
 ///
 /// the codec decoded last leaves the grid that counts, and Opus's energies can show through
@@ -1105,22 +1107,23 @@ pub(crate) struct Opus {
   pub(crate) uncut_short: [[[usize; 2]; 2]; 3],
 }
 
-/// the jobs of one scan: MP3 and AAC under each of its windows in each segment. at a rate
-/// Opus is looked for at, `opus`, as many for Opus as there are segments and one for each
-/// length of short frame, and with `other_rate` MP3 and AAC again in each segment at the other
-/// rate
+/// the number of jobs in one scan: three in each segment, for MP3 and for AAC under each of its
+/// windows. with `opus`, set at a rate Opus is looked for at, one more per segment and one per
+/// length of short frame, and with `other_rate` too the three again in each segment at the
+/// other rate
 pub(crate) fn jobs(opus: bool, other_rate: bool) -> usize {
   (3 + usize::from(opus) + 3 * usize::from(opus && other_rate)) * SEGMENTS
     + lattice::SHORT.len() * usize::from(opus)
 }
+
 /// the tasks a job's offsets are split into at most, so that one file's scan can fill the pool
 const TASKS: usize = 32;
 
-/// the scan of full `segments`, each codec of each segment a job on rayon's thread pool that
-/// splits its offsets into tasks on the same pool; Opus is among the codecs with `opus`, and
+/// the scan of full `segments`. each codec of each segment is a job on rayon's thread pool that
+/// splits its offsets into tasks on the same pool. Opus is among the codecs with `opus`, and
 /// with `other_rate` a file at 44.1 or 48 kHz is scanned for MP3 and AAC at the other of the
-/// two too. `go_on` is asked before each job, `None` once it says not to, and `ended` is called
-/// as each job ends. panics when a segment is not full.
+/// two too. `go_on` is asked before each job and the scan is `None` once it says not to;
+/// `ended` is called as each job ends. panics when a segment is not full.
 pub(crate) fn scan(
   segments: &Segments,
   rate: u32,
