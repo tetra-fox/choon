@@ -48,6 +48,8 @@ pub enum Coverage {
     /// further than this, so not at all when it is 0.
     over_seconds: f64,
     /// Number of windows a longer file is analyzed at.
+    ///
+    /// A file with no more seconds than this has each of them analyzed once.
     windows: NonZeroUsize,
   },
 }
@@ -654,9 +656,14 @@ fn scan_grid(
   Ok(scan)
 }
 
-/// the whole seconds `count` windows spread evenly over `seconds` of audio start at
+/// the whole seconds `count` windows spread evenly over `seconds` of audio start at: each
+/// second once when there are no more seconds than windows
 fn picks(seconds: f64, count: usize) -> BTreeSet<u64> {
   let last = (seconds - 1.0).max(0.0);
+  let starts = last as u64 + 1;
+  if count as u64 >= starts {
+    return (0..starts).collect();
+  }
   (0..count)
     .map(|i| {
       let at = last * i as f64 / (count.max(2) - 1) as f64;
@@ -875,4 +882,18 @@ fn sampled(
     measuring.window(second, buffer, rate, measured);
   }
   Ok(Reached::Sampled)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn more_windows_than_a_file_has_seconds_pick_each_second_once() {
+    assert_eq!(picks(100.0, 3), BTreeSet::from([0, 49, 99]));
+    assert_eq!(picks(100.0, 1), BTreeSet::from([0]));
+    assert_eq!(picks(34.5, 34), (0..34).collect());
+    assert_eq!(picks(34.5, usize::MAX), (0..34).collect());
+    assert_eq!(picks(0.4, usize::MAX), BTreeSet::from([0]));
+  }
 }
