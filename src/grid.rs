@@ -59,6 +59,9 @@
 //! a frame, or coded without the frame before them. Frames of the hybrid mode, which codes only
 //! the bands from 8 kHz up this way, are counted apart ([`OpusHybrid`]).
 //!
+//! Frames of 10, 5 and 2.5 ms are counted apart too, each length on a grid of its own
+//! ([`OpusShort`]).
+//!
 //! # Limits
 //!
 //! A grid is evidence that the samples were decoded from that codec, at some point.
@@ -70,8 +73,8 @@
 //! - Clipping hides a grid frame by frame.
 //! - Vorbis's grid shows through the AAC scan, so a Vorbis decode reads as AAC by the count.
 //!   Its values do not sit on AAC's steps.
-//! - Opus frames of 2.5, 5 and 10 ms, frames the pitch post-filter ran over, and its SILK
-//!   mode are not found.
+//! - Opus frames the pitch post-filter ran over and its SILK mode are not found, nor are
+//!   frames of 2.5, 5 and 10 ms coded as several blocks or at another level than the decoder's.
 //! - A gain after an Opus decode moves the lattice, and the scan searches for one move a
 //!   channel ([`OpusShifted`]). A level that changes over time, as under a fade or a limiter,
 //!   hides the lattice where it changes.
@@ -116,7 +119,7 @@ pub enum Codec {
   Aac,
   /// MP3, layer III.
   Mp3,
-  /// Opus, by the band energies of its CELT layer in 20 ms frames.
+  /// Opus, by the band energies of its CELT layer.
   Opus,
 }
 

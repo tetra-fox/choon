@@ -264,7 +264,6 @@ pub struct ReadingThresholds {
   pub opus_hybrid_share: f64,
 }
 
-/// Band top of a rate some old equipment recorded at.
 /// Weights that read the steps of an MP3 decode as Fraunhofer's encoder.
 ///
 /// Encoders that state no delay all leave their grid at offset 1. They differ in how they
@@ -327,6 +326,7 @@ impl Default for FraunhoferSteps {
   }
 }
 
+/// Band top of a rate some old equipment recorded at.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
