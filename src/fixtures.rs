@@ -24,8 +24,9 @@ use realfft::RealFftPlanner;
 use realfft::num_complex::Complex;
 
 use crate::decode::{Decoder, Filled, hint_of};
+use crate::grid::AAC_HOP;
+use crate::grid::aac::{Window, aac_bands};
 use crate::grid::mdct::{DctIv, fold};
-use crate::grid::{AAC_HOP, Window, aac_bands};
 
 /// Bitrate an MP3 is written at.
 pub use mp3lame_encoder::Bitrate;
