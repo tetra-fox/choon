@@ -4,9 +4,10 @@
 use rayon::prelude::*;
 
 use super::mdct::fold_with;
+use super::scan::active;
 use super::segments::Segment;
 use super::steps::{BandScratch, WHOLE_STEP, band_step};
-use super::{MP3_HOP, Mp3Neighbours, NOISE16, active};
+use super::{MP3_HOP, Mp3Neighbours, NOISE16};
 
 /// the rms of a hybrid filterbank value per unit rms of white input, which puts the MP3 noise
 /// level at the 16-bit rounding noise of the filterbank's output

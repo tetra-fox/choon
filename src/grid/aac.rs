@@ -4,9 +4,10 @@
 use rayon::prelude::*;
 
 use super::mdct::{DctIv, fold};
+use super::scan::active;
 use super::segments::Segment;
 use super::steps::{BandScratch, WHOLE_STEP, band_step};
-use super::{AAC_HOP, NOISE16, active};
+use super::{AAC_HOP, NOISE16};
 
 /// the tasks a job's offsets are split into at most, so that one file's scan can fill the pool
 const TASKS: usize = 32;
