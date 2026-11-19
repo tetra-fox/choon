@@ -1,0 +1,495 @@
+A-adpcm_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode	an IMA ADPCM decode stored at 16 and 24 bits
+A-adpcm_24-44.ape	honest	README Verdicts: only a grid makes a likely transcode	an IMA ADPCM decode stored at 16 and 24 bits
+A-alaw_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode	a alaw decode stored at 16 and 24 bits
+A-alaw_24-44.wv	honest	README Verdicts: only a grid makes a likely transcode	a alaw decode stored at 16 and 24 bits
+A-bitcrushed_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode	a bitcrusher at 6 bits and a quarter of the rate (acrusher)
+A-bitcrushed_24-44.wav	honest	README Verdicts: only a grid makes a likely transcode	a bitcrusher at 6 bits and a quarter of the rate (acrusher)
+A-brickwall-20k_16-44.flac	honest	README Limitations: a cutoff near 20 kHz reads as inconclusive	a brickwall filter at 20 kHz
+A-brickwall-20k_24-44.wav	honest	README Limitations: a cutoff near 20 kHz reads as inconclusive	a brickwall filter at 20 kHz
+A-brown_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode, README Limitations: naturally band-limited audio	brown noise, the two channels apart
+A-brown_24-44.m4a	honest	README Verdicts: only a grid makes a likely transcode, README Limitations: naturally band-limited audio	brown noise, the two channels apart
+A-click-1152_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode	a click every 1152 samples over the noise
+A-click-1152_24-44.wv	honest	README Verdicts: only a grid makes a likely transcode	a click every 1152 samples over the noise
+A-click-in-silence_16-44.flac	honest	README Limitations: needs about 30 seconds of non-silent audio	one click in digital silence
+A-click-in-silence_24-44.m4a	honest	README Limitations: needs about 30 seconds of non-silent audio	one click in digital silence
+A-dc_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode	the noise on a DC offset of 0.6 of full scale
+A-dc_24-44.ape	honest	README Verdicts: only a grid makes a likely transcode	the noise on a DC offset of 0.6 of full scale
+A-denoised_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode	a spectral denoiser (afftdn)
+A-denoised_24-44.wv	honest	README Verdicts: only a grid makes a likely transcode	a spectral denoiser (afftdn)
+A-dual-mono_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode, samples/README: dual-mono reads consistent, flagged	one channel copied to both
+A-dual-mono_24-44.wv	honest	README Verdicts: only a grid makes a likely transcode, samples/README: dual-mono reads consistent, flagged	one channel copied to both
+A-float-denormal_f32-44.wav	honest	README Verdicts: only a grid makes a likely transcode	float WAV with 64 frames of denormal in it
+A-float-inf_f32-44.wav	honest	README Verdicts: only a grid makes a likely transcode	float WAV with 64 frames of inf in it
+A-float-nan_f32-44.wav	honest	README Verdicts: only a grid makes a likely transcode	float WAV with 64 frames of nan in it
+A-float-over_f32-44.wav	honest	README Verdicts: only a grid makes a likely transcode	float WAV with samples up to 2.7
+A-float-over_f32-44.wv	honest	README Verdicts: only a grid makes a likely transcode	float WavPack with samples up to 2.7
+A-gain-1_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode	the 16-bit file with a gain of -1 dB, at 16 bits again
+A-gain-1_24-44.m4a	honest	README Verdicts: only a grid makes a likely transcode	the 16-bit file with a gain of -1 dB, at 16 bits again
+A-gain3_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode	the 16-bit file with a gain of 3 dB, at 16 bits again
+A-gain3_24-44.wv	honest	README Verdicts: only a grid makes a likely transcode	the 16-bit file with a gain of 3 dB, at 16 bits again
+A-gain-6_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode	the 16-bit file with a gain of -6 dB, at 16 bits again
+A-gain-6_24-44.wav	honest	README Verdicts: only a grid makes a likely transcode	the 16-bit file with a gain of -6 dB, at 16 bits again
+A-gate-1152_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode	a gate open for 576 of every 1152 samples
+A-gate-1152_24-44.m4a	honest	README Verdicts: only a grid makes a likely transcode	a gate open for 576 of every 1152 samples
+A-hires-shaped_16-96.flac	honest	README Verdicts: only a grid makes a likely transcode	96 kHz: the noise up to 21 kHz and shaped noise rising above 30 kHz, as a DSD conversion leaves
+A-hires-shaped_24-96.ape	honest	README Verdicts: only a grid makes a likely transcode	96 kHz: the noise up to 21 kHz and shaped noise rising above 30 kHz, as a DSD conversion leaves
+A-inverted_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode	the right channel the left inverted
+A-inverted_24-44.m4a	honest	README Verdicts: only a grid makes a likely transcode	the right channel the left inverted
+A-length-29_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode, README Limitations: needs about 30 seconds of non-silent audio	29 s of the noise
+A-length-29_24-44.wav	honest	README Verdicts: only a grid makes a likely transcode, README Limitations: needs about 30 seconds of non-silent audio	29 s of the noise
+A-length-30_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode, README Limitations: needs about 30 seconds of non-silent audio	30 s of the noise
+A-length-30_24-44.m4a	honest	README Verdicts: only a grid makes a likely transcode, README Limitations: needs about 30 seconds of non-silent audio	30 s of the noise
+A-length-31_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode, README Limitations: needs about 30 seconds of non-silent audio	31 s of the noise
+A-length-31_24-44.wv	honest	README Verdicts: only a grid makes a likely transcode, README Limitations: needs about 30 seconds of non-silent audio	31 s of the noise
+A-loop-1024_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode	1024 samples of the noise, repeated
+A-loop-1024_24-44.wv	honest	README Verdicts: only a grid makes a likely transcode	1024 samples of the noise, repeated
+A-loop-1152_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode	1152 samples of the noise, repeated
+A-loop-1152_24-44.m4a	honest	README Verdicts: only a grid makes a likely transcode	1152 samples of the noise, repeated
+A-loop-1152-bed_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode	a 1152-sample loop over the noise 14 dB down
+A-loop-1152-bed_24-44.wav	honest	README Verdicts: only a grid makes a likely transcode	a 1152-sample loop over the noise 14 dB down
+A-loop-120_16-48.flac	honest	README Verdicts: only a grid makes a likely transcode	120 samples of the noise at 48 kHz, repeated
+A-loop-120_24-48.wav	honest	README Verdicts: only a grid makes a likely transcode	120 samples of the noise at 48 kHz, repeated
+A-loop-2048_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode	2048 samples of the noise, repeated
+A-loop-2048_24-44.ape	honest	README Verdicts: only a grid makes a likely transcode	2048 samples of the noise, repeated
+A-loop-240_16-48.flac	honest	README Verdicts: only a grid makes a likely transcode	240 samples of the noise at 48 kHz, repeated
+A-loop-240_24-48.m4a	honest	README Verdicts: only a grid makes a likely transcode	240 samples of the noise at 48 kHz, repeated
+A-loop-480_16-48.flac	honest	README Verdicts: only a grid makes a likely transcode	480 samples of the noise at 48 kHz, repeated
+A-loop-480_24-48.wv	honest	README Verdicts: only a grid makes a likely transcode	480 samples of the noise at 48 kHz, repeated
+A-loop-576_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode	576 samples of the noise, repeated
+A-loop-576_24-44.wav	honest	README Verdicts: only a grid makes a likely transcode	576 samples of the noise, repeated
+A-loop-960_16-48.flac	honest	README Verdicts: only a grid makes a likely transcode	960 samples of the noise at 48 kHz, repeated
+A-loop-960_24-48.ape	honest	README Verdicts: only a grid makes a likely transcode	960 samples of the noise at 48 kHz, repeated
+A-mono_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode	one channel
+A-mono_24-44.ape	honest	README Verdicts: only a grid makes a likely transcode	one channel
+A-mulaw_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode	a mulaw decode stored at 16 and 24 bits
+A-mulaw_24-44.m4a	honest	README Verdicts: only a grid makes a likely transcode	a mulaw decode stored at 16 and 24 bits
+A-music-then-silence_16-44.flac	honest	README Limitations: needs about 30 seconds of non-silent audio	25 s of the noise, then five minutes of silence
+A-music-then-silence_24-44.wv	honest	README Limitations: needs about 30 seconds of non-silent audio	25 s of the noise, then five minutes of silence
+A-partials_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode, README Limitations: naturally band-limited audio	25 partials a fourth root of two apart in frequency and level
+A-partials_24-44.m4a	honest	README Verdicts: only a grid makes a likely transcode, README Limitations: naturally band-limited audio	25 partials a fourth root of two apart in frequency and level
+A-pink_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode, README Limitations: naturally band-limited audio	pink noise, the two channels apart
+A-pink_24-44.wav	honest	README Verdicts: only a grid makes a likely transcode, README Limitations: naturally band-limited audio	pink noise, the two channels apart
+A-pitched_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode	a pitch shift of a semitone by resampling and a time stretch
+A-pitched_24-44.wav	honest	README Verdicts: only a grid makes a likely transcode	a pitch shift of a semitone by resampling and a time stretch
+A-right-silent_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode	the right channel digital silence
+A-right-silent_24-44.wav	honest	README Verdicts: only a grid makes a likely transcode	the right channel digital silence
+A-rolloff-12k_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode, README Limitations: naturally band-limited audio	a 6 dB an octave roll-off from 12 kHz
+A-rolloff-12k_24-44.m4a	honest	README Verdicts: only a grid makes a likely transcode, README Limitations: naturally band-limited audio	a 6 dB an octave roll-off from 12 kHz
+A-sampler-12bit_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode	12-bit samples stored at 16 and 24 bits
+A-sampler-12bit_24-44.ape	honest	README Verdicts: only a grid makes a likely transcode	12-bit samples stored at 16 and 24 bits
+A-sampler-8bit_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode	8-bit samples stored at 16 and 24 bits
+A-sampler-8bit_24-44.wv	honest	README Verdicts: only a grid makes a likely transcode	8-bit samples stored at 16 and 24 bits
+A-silence_16-44.flac	honest	README Limitations: needs about 30 seconds of non-silent audio	digital silence
+A-silence_24-44.ape	honest	README Limitations: needs about 30 seconds of non-silent audio	digital silence
+A-silence-dither_16-44.flac	honest	README Limitations: needs about 30 seconds of non-silent audio	silence with triangular dither at the 16th bit
+A-silence-dither_24-44.wav	honest	README Limitations: needs about 30 seconds of non-silent audio	silence with triangular dither at the 16th bit
+A-sine-1000_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode, README Limitations: naturally band-limited audio	a sine at 1000 Hz on both channels
+A-sine-1000_24-44.ape	honest	README Verdicts: only a grid makes a likely transcode, README Limitations: naturally band-limited audio	a sine at 1000 Hz on both channels
+A-sine-15900_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode, README Limitations: naturally band-limited audio	a sine at 15900 Hz on both channels
+A-sine-15900_24-44.wav	honest	README Verdicts: only a grid makes a likely transcode, README Limitations: naturally band-limited audio	a sine at 15900 Hz on both channels
+A-sine-19000_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode, README Limitations: naturally band-limited audio	a sine at 19000 Hz on both channels
+A-sine-19000_24-44.m4a	honest	README Verdicts: only a grid makes a likely transcode, README Limitations: naturally band-limited audio	a sine at 19000 Hz on both channels
+A-square-clipped_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode	a square wave at full scale
+A-square-clipped_24-44.wv	honest	README Verdicts: only a grid makes a likely transcode	a square wave at full scale
+A-steps-1.5db_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode	the level stepped by a fourth root of two every quarter second
+A-steps-1.5db_24-44.wav	honest	README Verdicts: only a grid makes a likely transcode	the level stepped by a fourth root of two every quarter second
+A-stft-2048_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode	a spectral tilt in 2048-sample sine windows at half overlap (afftfilt)
+A-stft-2048_24-44.m4a	honest	README Verdicts: only a grid makes a likely transcode	a spectral tilt in 2048-sample sine windows at half overlap (afftfilt)
+A-stretched_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode	a 7% time stretch (atempo)
+A-stretched_24-44.ape	honest	README Verdicts: only a grid makes a likely transcode	a 7% time stretch (atempo)
+A-sweep_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode, README Limitations: naturally band-limited audio	a sine swept from 20 Hz to 22 kHz
+A-sweep_24-44.wv	honest	README Verdicts: only a grid makes a likely transcode, README Limitations: naturally band-limited audio	a sine swept from 20 Hz to 22 kHz
+A-tape_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode, README Limitations: naturally band-limited audio	the noise rolled off from 5 kHz under hiss 66 dB down
+A-tape_24-44.wv	honest	README Verdicts: only a grid makes a likely transcode, README Limitations: naturally band-limited audio	the noise rolled off from 5 kHz under hiss 66 dB down
+A-tremolo-1152_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode	a tremolo of one cycle every 1152 samples
+A-tremolo-1152_24-44.ape	honest	README Verdicts: only a grid makes a likely transcode	a tremolo of one cycle every 1152 samples
+A-up-22k_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode, README Features: flags upsampled audio	a 22.05 kHz source brought to 44.1 kHz
+A-up-22k_24-44.wv	honest	README Verdicts: only a grid makes a likely transcode, README Features: flags upsampled audio	a 22.05 kHz source brought to 44.1 kHz
+A-up-22k-to-96_16-96.flac	honest	README Verdicts: only a grid makes a likely transcode, README Features: flags upsampled audio	a 22.05 kHz source brought to 96 kHz
+A-up-22k-to-96_24-96.wav	honest	README Verdicts: only a grid makes a likely transcode, README Features: flags upsampled audio	a 22.05 kHz source brought to 96 kHz
+A-up-32k_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode, README Features: flags upsampled audio	a 32 kHz source brought to 44.1 kHz
+A-up-32k_24-44.ape	honest	README Verdicts: only a grid makes a likely transcode, README Features: flags upsampled audio	a 32 kHz source brought to 44.1 kHz
+A-up-32k-to-96_16-96.flac	honest	README Verdicts: only a grid makes a likely transcode, README Features: flags upsampled audio	a 32 kHz source brought to 96 kHz
+A-up-32k-to-96_24-96.m4a	honest	README Verdicts: only a grid makes a likely transcode, README Features: flags upsampled audio	a 32 kHz source brought to 96 kHz
+A-white_16-44.flac	honest	README Verdicts: only a grid makes a likely transcode, README Limitations: naturally band-limited audio	white noise, the two channels apart
+A-white_24-44.ape	honest	README Verdicts: only a grid makes a likely transcode, README Limitations: naturally band-limited audio	white noise, the two channels apart
+B-aac-then-mp3_16-44.flac	lossy:any	nothing says which codec two generations name	AAC 128, decoded, MP3 128, decoded
+B-ac3-192_16-44.flac	other	nothing says; a codec not looked for must not be named MP3, AAC or Opus with a family	AC-3 at 192 kbps (ffmpeg), decoded
+B-aptx_16-44.flac	other	nothing says; a codec not looked for must not be named MP3, AAC or Opus with a family	aptX (ffmpeg), decoded
+B-crossfade_16-44.flac	atmost	nothing says of a crossfade	an MP3 decode crossfaded over 6 s into lossless audio
+B-dj-mix_16-44.flac	lossy:any	README Limitations: a grid shows that the samples were decoded at some point	a mix: lossless, an MP3 decode, lossless, an AAC decode, 4 s crossfades
+B-fdk128_16-44.flac	lossy:AAC:ffmpeg or fdk-aac	samples/README	fdkaac -b 128, decoded
+B-fdk128-then-cut-577_16-44.flac	lossy:AAC:none	README Features: the grid, README Encoder family	the first 577 samples cut
+B-fdk128-then-gain-6_16-44.flac	lossy:AAC:ffmpeg or fdk-aac	README Features: the grid	6 dB down
+B-ffaac128_16-44.flac	lossy:AAC:ffmpeg or fdk-aac	samples/README	ffmpeg's AAC at 128 kbps, decoded
+B-ffaac128-then-8bit_16-44.flac	open	nothing says	truncated to 8 bits, stored at 16
+B-ffaac128-then-analog_16-44.flac	atmost	README Limitations: after any other conversion possibly lossy at most	an analog round trip: an odd rate and back, noise 70 dB down, a low-pass at 20 kHz
+B-ffaac128-then-clipped_16-44.flac	atmost	README Limitations: clipping hides the grid frame by frame	12 dB up, clipping
+B-ffaac128-then-cut-10000_16-44.flac	lossy:AAC:none	README Features: the grid, README Encoder family: the offsets are those of a decode whose start was not cut	the first 10000 samples cut
+B-ffaac128-then-cut-100_16-44.flac	lossy:AAC:none	README Features: the grid, README Encoder family: the offsets are those of a decode whose start was not cut	the first 100 samples cut
+B-ffaac128-then-cut-1_16-44.flac	lossy:AAC:none	README Features: the grid, README Encoder family: the offsets are those of a decode whose start was not cut	the first 1 samples cut
+B-ffaac128-then-cut-577_16-44.flac	lossy:AAC:none	README Features: the grid, README Encoder family: the offsets are those of a decode whose start was not cut	the first 577 samples cut
+B-ffaac128-then-dither_16-44.flac	lossy:AAC:ffmpeg or fdk-aac	README Features: the grid	3 dB down in float, dithered to 16 bits
+B-ffaac128-then-end-cut_16-44.flac	lossy:AAC:ffmpeg or fdk-aac	README Features: the grid	the last 3 s cut
+B-ffaac128-then-fade_16-44.flac	lossy:AAC:ffmpeg or fdk-aac	README Features: the grid, README Limitations: a level that changes over time after an Opus decode	a 10 s fade in and out
+B-ffaac128-then-gain+3_16-44.flac	lossy:AAC:ffmpeg or fdk-aac	README Features: the grid	3 dB up
+B-ffaac128-then-gain-6_16-44.flac	lossy:AAC:ffmpeg or fdk-aac	README Features: the grid	6 dB down
+B-ffaac128-then-limiter_16-44.flac	lossy:AAC:ffmpeg or fdk-aac	README Features: the grid, README Limitations: a level that changes over time after an Opus decode	8 dB up into a limiter
+B-ffaac128-then-mid-side_16-44.flac	lossy:AAC:ffmpeg or fdk-aac	README Features: the grid	mid and side in place of left and right
+B-ffaac128-then-mono-to-stereo_16-44.flac	lossy:AAC:ffmpeg or fdk-aac	README Features: the grid	folded to mono, copied to both channels
+B-ffaac128-then-normalised_16-44.flac	lossy:AAC:ffmpeg or fdk-aac	README Features: the grid	peak normalised to full scale
+B-ffaac128-then-pad24_24-44.flac	lossy:AAC:ffmpeg or fdk-aac	README Features: the grid, README Features: flags bit-padded samples	padded into 24 bits
+B-ffaac128-then-replaygain_16-44.flac	lossy:AAC:ffmpeg or fdk-aac	README Features: the grid	a ReplayGain of -7.3 dB applied
+B-ffaac128-then-silence-first_16-44.flac	lossy:AAC:none	README Features: the grid, README Encoder family	0.701 s of silence put in front, which is no whole number of frames
+B-ffaac128-then-speed_16-44.flac	atmost	README Limitations: after any other conversion possibly lossy at most	0.1% faster, as off a drifting clock
+B-ffaac128-then-swapped_16-44.flac	lossy:AAC:ffmpeg or fdk-aac	README Features: the grid	channels swapped
+B-ffaac128-then-to-48_16-48.flac	lossy:AAC	README Features: finds that grid after a conversion between 44.1 and 48 kHz	converted to 48 kHz
+B-ffaac128-then-to-48-and-back_16-44.flac	atmost	nothing says of two conversions	to 48 kHz and back
+B-ffaac128-then-to-5.1_16-44.flac	lossy:AAC:ffmpeg or fdk-aac	README Features: the grid, README Limitations: reads only the first two channels	upmixed to 5.1
+B-ffaac128-then-to-88_16-88.flac	atmost	README Limitations: after any other conversion possibly lossy at most	converted to 88.2 kHz
+B-ffaac128-then-to-96_16-96.flac	atmost	README Limitations: after any other conversion possibly lossy at most	converted to 96 kHz
+B-ffaac128-then-to-mono_16-44.flac	lossy:AAC:ffmpeg or fdk-aac	README Features: the grid	folded to mono
+B-ffaac128-then-track-2_16-44.flac	lossy:AAC:none	README Features: the grid, README Encoder family	an album decode's second track, cut at sample 123457
+B-joined-mp3-aac_16-44.flac	lossy:any	nothing says which codec a join names	17 s of the MP3 decode, then 17 s of the AAC decode
+B-lame128_16-44.aiff	as:B-lame128_16-44.flac	one decode reads the same in every lossless format	lame -b 128, decoded, as aiff
+B-lame128_16-44.ape	as:B-lame128_16-44.flac	one decode reads the same in every lossless format	lame -b 128, decoded, as ape
+B-lame128_16-44.caf	as:B-lame128_16-44.flac	one decode reads the same in every lossless format	lame -b 128, decoded, as caf
+B-lame128_16-44.flac	lossy:MP3:LAME	samples/README	lame -b 128, decoded
+B-lame128_16-44.m4a	as:B-lame128_16-44.flac	one decode reads the same in every lossless format	lame -b 128, decoded, as m4a
+B-lame128_16-44.wav	as:B-lame128_16-44.flac	one decode reads the same in every lossless format	lame -b 128, decoded, as wav
+B-lame128_16-44.wv	as:B-lame128_16-44.flac	one decode reads the same in every lossless format	lame -b 128, decoded, as wv
+B-lame128-alac_16-44.caf	as:B-lame128_16-44.flac	one decode reads the same in every lossless format	lame -b 128, decoded, as ALAC in CAF
+B-lame128-c1000_16-44.ape	as:B-lame128_16-44.flac	one decode reads the same in every lossless format	lame -b 128, decoded, as Monkey's Audio at level 1000
+B-lame128-c3000_16-44.ape	as:B-lame128_16-44.flac	one decode reads the same in every lossless format	lame -b 128, decoded, as Monkey's Audio at level 3000
+B-lame128-c4000_16-44.ape	as:B-lame128_16-44.flac	one decode reads the same in every lossless format	lame -b 128, decoded, as Monkey's Audio at level 4000
+B-lame128-c5000_16-44.ape	as:B-lame128_16-44.flac	one decode reads the same in every lossless format	lame -b 128, decoded, as Monkey's Audio at level 5000
+B-lame128-intro_16-44.flac	atmost	samples/README: possibly lossy, mixed sources	12 s from lame -b 128, then lossless audio
+B-lame128-then-8bit_16-44.flac	open	nothing says	truncated to 8 bits, stored at 16
+B-lame128-then-analog_16-44.flac	atmost	README Limitations: after any other conversion possibly lossy at most	an analog round trip: an odd rate and back, noise 70 dB down, a low-pass at 20 kHz
+B-lame128-then-clipped_16-44.flac	atmost	README Limitations: clipping hides the grid frame by frame	12 dB up, clipping
+B-lame128-then-cut-10000_16-44.flac	lossy:MP3:none	README Features: the grid, README Encoder family: the offsets are those of a decode whose start was not cut	the first 10000 samples cut
+B-lame128-then-cut-100_16-44.flac	lossy:MP3:none	README Features: the grid, README Encoder family: the offsets are those of a decode whose start was not cut	the first 100 samples cut
+B-lame128-then-cut-1_16-44.flac	lossy:MP3:none	README Features: the grid, README Encoder family: the offsets are those of a decode whose start was not cut	the first 1 samples cut
+B-lame128-then-cut-577_16-44.flac	lossy:MP3:none	README Features: the grid, README Encoder family: the offsets are those of a decode whose start was not cut	the first 577 samples cut
+B-lame128-then-dither_16-44.flac	lossy:MP3:LAME	README Features: the grid	3 dB down in float, dithered to 16 bits
+B-lame128-then-end-cut_16-44.flac	lossy:MP3:LAME	README Features: the grid	the last 3 s cut
+B-lame128-then-fade_16-44.flac	lossy:MP3:LAME	README Features: the grid, README Limitations: a level that changes over time after an Opus decode	a 10 s fade in and out
+B-lame128-then-gain+3_16-44.flac	lossy:MP3:LAME	README Features: the grid	3 dB up
+B-lame128-then-gain-6_16-44.flac	lossy:MP3:LAME	README Features: the grid	6 dB down
+B-lame128-then-limiter_16-44.flac	lossy:MP3:LAME	README Features: the grid, README Limitations: a level that changes over time after an Opus decode	8 dB up into a limiter
+B-lame128-then-mid-side_16-44.flac	lossy:MP3:LAME	README Features: the grid	mid and side in place of left and right
+B-lame128-then-mono-to-stereo_16-44.flac	lossy:MP3:LAME	README Features: the grid	folded to mono, copied to both channels
+B-lame128-then-normalised_16-44.flac	lossy:MP3:LAME	README Features: the grid	peak normalised to full scale
+B-lame128-then-pad24_24-44.flac	lossy:MP3:LAME	README Features: the grid, README Features: flags bit-padded samples	padded into 24 bits
+B-lame128-then-replaygain_16-44.flac	lossy:MP3:LAME	README Features: the grid	a ReplayGain of -7.3 dB applied
+B-lame128-then-silence-first_16-44.flac	lossy:MP3:none	README Features: the grid, README Encoder family	0.701 s of silence put in front, which is no whole number of frames
+B-lame128-then-speed_16-44.flac	atmost	README Limitations: after any other conversion possibly lossy at most	0.1% faster, as off a drifting clock
+B-lame128-then-swapped_16-44.flac	lossy:MP3:LAME	README Features: the grid	channels swapped
+B-lame128-then-to-48_16-48.flac	lossy:MP3	README Features: finds that grid after a conversion between 44.1 and 48 kHz	converted to 48 kHz
+B-lame128-then-to-48-and-back_16-44.flac	atmost	nothing says of two conversions	to 48 kHz and back
+B-lame128-then-to-5.1_16-44.flac	lossy:MP3:LAME	README Features: the grid, README Limitations: reads only the first two channels	upmixed to 5.1
+B-lame128-then-to-88_16-88.flac	atmost	README Limitations: after any other conversion possibly lossy at most	converted to 88.2 kHz
+B-lame128-then-to-96_16-96.flac	atmost	README Limitations: after any other conversion possibly lossy at most	converted to 96 kHz
+B-lame128-then-to-mono_16-44.flac	lossy:MP3:LAME	README Features: the grid	folded to mono
+B-lame128-then-track-2_16-44.flac	lossy:MP3:none	README Features: the grid, README Encoder family	an album decode's second track, cut at sample 123457
+B-lame320_16-44.flac	lossy:MP3:LAME	samples/README	lame -b 320, decoded
+B-lame320-then-cut-577_16-44.flac	lossy:MP3:none	README Features: the grid, README Encoder family	the first 577 samples cut
+B-lame320-then-gain-6_16-44.flac	lossy:MP3:LAME	README Features: the grid	6 dB down
+B-lameV0_16-44.flac	lossy:MP3:LAME	README Features: tuned on V0 to V9	lame -V 0, decoded
+B-lameV0-then-cut-577_16-44.flac	lossy:MP3:none	README Features: the grid, README Encoder family	the first 577 samples cut
+B-lameV0-then-gain-6_16-44.flac	lossy:MP3:LAME	README Features: the grid	6 dB down
+B-mp2-192_16-44.flac	other	nothing says; a codec not looked for must not be named MP3, AAC or Opus with a family	MP2 at 192 kbps (ffmpeg), decoded
+B-mp3-128-then-320_16-44.flac	lossy:MP3	nothing says which codec two generations name	MP3 128, decoded, MP3 320, decoded
+B-mp3-then-aac_16-44.flac	lossy:any	nothing says which codec two generations name	MP3 128, decoded, AAC 128, decoded
+B-opus128_16-48.flac	lossy:Opus:libopus	samples/README	opusenc --bitrate 128, decoded
+B-opus128-then-8bit_16-48.flac	open	nothing says	truncated to 8 bits, stored at 16
+B-opus128-then-analog_16-48.flac	atmost	README Limitations: after any other conversion possibly lossy at most	an analog round trip: an odd rate and back, noise 70 dB down, a low-pass at 20 kHz
+B-opus128-then-clipped_16-48.flac	atmost	README Limitations: clipping hides the grid frame by frame	12 dB up, clipping
+B-opus128-then-cut-10000_16-48.flac	lossy:Opus:none	README Features: the grid, README Encoder family: the offsets are those of a decode whose start was not cut	the first 10000 samples cut
+B-opus128-then-cut-100_16-48.flac	lossy:Opus:none	README Features: the grid, README Encoder family: the offsets are those of a decode whose start was not cut	the first 100 samples cut
+B-opus128-then-cut-1_16-48.flac	lossy:Opus:none	README Features: the grid, README Encoder family: the offsets are those of a decode whose start was not cut	the first 1 samples cut
+B-opus128-then-cut-577_16-48.flac	lossy:Opus:none	README Features: the grid, README Encoder family: the offsets are those of a decode whose start was not cut	the first 577 samples cut
+B-opus128-then-dither_16-48.flac	lossy:Opus:libopus	README Features: with or without a gain after the decode	3 dB down in float, dithered to 16 bits
+B-opus128-then-end-cut_16-48.flac	lossy:Opus:libopus	README Features: the grid	the last 3 s cut
+B-opus128-then-fade_16-48.flac	atmost	README Features: the grid, README Limitations: a level that changes over time after an Opus decode	a 10 s fade in and out
+B-opus128-then-gain+3_16-48.flac	lossy:Opus:libopus	README Features: with or without a gain after the decode	3 dB up
+B-opus128-then-gain-6_16-48.flac	lossy:Opus:libopus	README Features: with or without a gain after the decode	6 dB down
+B-opus128-then-limiter_16-48.flac	atmost	README Features: the grid, README Limitations: a level that changes over time after an Opus decode	8 dB up into a limiter
+B-opus128-then-mid-side_16-48.flac	lossy:Opus:libopus	README Features: the grid	mid and side in place of left and right
+B-opus128-then-mono-to-stereo_16-48.flac	lossy:Opus:libopus	README Features: the grid	folded to mono, copied to both channels
+B-opus128-then-normalised_16-48.flac	lossy:Opus:libopus	README Features: with or without a gain after the decode	peak normalised to full scale
+B-opus128-then-pad24_24-48.flac	lossy:Opus:libopus	README Features: the grid, README Features: flags bit-padded samples	padded into 24 bits
+B-opus128-then-replaygain_16-48.flac	lossy:Opus:libopus	README Features: with or without a gain after the decode	a ReplayGain of -7.3 dB applied
+B-opus128-then-silence-first_16-48.flac	lossy:Opus:none	README Features: the grid, README Encoder family	0.701 s of silence put in front, which is no whole number of frames
+B-opus128-then-speed_16-48.flac	atmost	README Limitations: after any other conversion possibly lossy at most	0.1% faster, as off a drifting clock
+B-opus128-then-swapped_16-48.flac	lossy:Opus:libopus	README Features: the grid	channels swapped
+B-opus128-then-to-44_16-44.flac	lossy:Opus:libopus	samples/README	converted to 44.1 kHz
+B-opus128-then-to-44-and-back_16-48.flac	atmost	nothing says of two conversions	to 44.1 kHz and back
+B-opus128-then-to-5.1_16-48.flac	lossy:Opus:libopus	README Features: the grid, README Limitations: reads only the first two channels	upmixed to 5.1
+B-opus128-then-to-88_16-88.flac	atmost	README Limitations: after any other conversion possibly lossy at most	converted to 88.2 kHz
+B-opus128-then-to-96_16-96.flac	atmost	README Limitations: after any other conversion possibly lossy at most	converted to 96 kHz
+B-opus128-then-to-mono_16-48.flac	lossy:Opus:libopus	README Features: the grid	folded to mono
+B-opus128-then-track-2_16-48.flac	lossy:Opus:none	README Features: the grid, README Encoder family	an album decode's second track, cut at sample 123457
+B-opus-then-mp3_16-44.flac	lossy:any	nothing says which codec two generations name	Opus 128, decoded, to 44.1 kHz, MP3 192, decoded
+B-sbc-328_16-44.flac	other	nothing says; a codec not looked for must not be named MP3, AAC or Opus with a family	SBC at 328 kbps (ffmpeg), decoded
+B-vorbis6_16-44.flac	lossy:AAC	samples/README: read as an AAC grid	oggenc -q 6, decoded
+B-vorbis6-then-cut-577_16-44.flac	lossy:AAC:none	README Features: the grid, README Encoder family	the first 577 samples cut
+B-vorbis6-then-gain-6_16-44.flac	lossy:AAC	README Features: the grid	6 dB down
+B-wma-128_16-44.flac	other	nothing says; a codec not looked for must not be named MP3, AAC or Opus with a family	WMA 2 at 128 kbps (ffmpeg), decoded
+C-6ch.flac	as:C-honest_16-44.flac	README Limitations: reads only the first two channels	six channels, the first two the noise
+C-8ch.flac	as:C-honest_16-44.flac	README Limitations: reads only the first two channels	eight channels, the first two the noise
+C-aac-adts.aac	consistent	README Supported formats: ADTS	fdkaac -f 2
+C-aac-eld.m4a	open	README Supported formats lists AAC-LC, HE-AAC and HE-AAC v2 only	fdkaac -p 39 (AAC-ELD)
+C-aac-ld.m4a	open	README Supported formats lists AAC-LC, HE-AAC and HE-AAC v2 only	fdkaac -p 23 (AAC-LD)
+C-aiff-named.ape	as:C-honest.aiff	the reading must not depend on the extension	a aiff file named .ape
+C-aiff-named.caf	as:C-honest.aiff	the reading must not depend on the extension	a aiff file named .caf
+C-aiff-named.flac	as:C-honest.aiff	the reading must not depend on the extension	a aiff file named .flac
+C-aiff-named.m4a	as:C-honest.aiff	the reading must not depend on the extension	a aiff file named .m4a
+C-aiff-named.mka	as:C-honest.aiff	the reading must not depend on the extension	a aiff file named .mka
+C-aiff-named.mp3	as:C-honest.aiff	the reading must not depend on the extension	a aiff file named .mp3
+C-aiff-named.ogg	as:C-honest.aiff	the reading must not depend on the extension	a aiff file named .ogg
+C-aiff-named.opus	as:C-honest.aiff	the reading must not depend on the extension	a aiff file named .opus
+C-aiff-named.wav	as:C-honest.aiff	the reading must not depend on the extension	a aiff file named .wav
+C-aiff-named.wv	as:C-honest.aiff	the reading must not depend on the extension	a aiff file named .wv
+C-ape-32bit.ape	refused:32-bit	README Supported formats	mac of 32-bit samples
+C-ape-6ch.ape	honest	README Supported formats, README Limitations: reads only the first two channels	mac of six channels
+C-ape-8bit.ape	honest	README Supported formats: Monkey's Audio at 8 bits	mac of 8-bit samples
+C-ape-float.ape	refused:float	README Supported formats	mac of float samples
+C-ape-named.aiff	as:B-lame128_16-44.ape	the reading must not depend on the extension	a ape file named .aiff
+C-ape-named.caf	as:B-lame128_16-44.ape	the reading must not depend on the extension	a ape file named .caf
+C-ape-named.flac	as:B-lame128_16-44.ape	the reading must not depend on the extension	a ape file named .flac
+C-ape-named.m4a	as:B-lame128_16-44.ape	the reading must not depend on the extension	a ape file named .m4a
+C-ape-named.mka	as:B-lame128_16-44.ape	the reading must not depend on the extension	a ape file named .mka
+C-ape-named.mp3	as:B-lame128_16-44.ape	the reading must not depend on the extension	a ape file named .mp3
+C-ape-named.ogg	as:B-lame128_16-44.ape	the reading must not depend on the extension	a ape file named .ogg
+C-ape-named.opus	as:B-lame128_16-44.ape	the reading must not depend on the extension	a ape file named .opus
+C-ape-named.wav	as:B-lame128_16-44.ape	the reading must not depend on the extension	a ape file named .wav
+C-ape-named.wv	as:B-lame128_16-44.ape	the reading must not depend on the extension	a ape file named .wv
+C-ape-tag-after.wv	as:C-honest_16-44.flac	a tag is not audio: the reading is the untagged file's	an APE tag after the WavPack file
+C-caf-named.aiff	as:C-honest.caf	the reading must not depend on the extension	a caf file named .aiff
+C-caf-named.ape	as:C-honest.caf	the reading must not depend on the extension	a caf file named .ape
+C-caf-named.flac	as:C-honest.caf	the reading must not depend on the extension	a caf file named .flac
+C-caf-named.m4a	as:C-honest.caf	the reading must not depend on the extension	a caf file named .m4a
+C-caf-named.mka	as:C-honest.caf	the reading must not depend on the extension	a caf file named .mka
+C-caf-named.mp3	as:C-honest.caf	the reading must not depend on the extension	a caf file named .mp3
+C-caf-named.ogg	as:C-honest.caf	the reading must not depend on the extension	a caf file named .ogg
+C-caf-named.opus	as:C-honest.caf	the reading must not depend on the extension	a caf file named .opus
+C-caf-named.wav	as:C-honest.caf	the reading must not depend on the extension	a caf file named .wav
+C-caf-named.wv	as:C-honest.caf	the reading must not depend on the extension	a caf file named .wv
+C-chained-two-rates.ogg	limited	nothing says of a chained Ogg; a reading must say what it left out	two Vorbis streams chained, at 44.1 and at 48 kHz
+C-chained-vorbis-opus.ogg	limited	nothing says of a chained Ogg; a reading must say what it left out	a Vorbis stream, then an Opus stream, chained
+C-cover-art-20mb.mp3	as:C-lame128.mp3	a tag is not audio: the reading is the untagged file's	20 MB of cover art in the MP3's ID3v2 tag
+C-cue.flac	unread	check --help: a file the analyzer cannot open as audio	a cue sheet named .flac
+C-cut-10.ape	limited	a damaged file reads with a limitation or is not read	a ape file cut at 10% of its bytes
+C-cut-10.flac	limited	a damaged file reads with a limitation or is not read	a flac file cut at 10% of its bytes
+C-cut-10.m4a	limited	a damaged file reads with a limitation or is not read	a m4a file cut at 10% of its bytes
+C-cut-10.mp3	limited	a damaged file reads with a limitation or is not read	a mp3 file cut at 10% of its bytes
+C-cut-10.ogg	limited	a damaged file reads with a limitation or is not read	a ogg file cut at 10% of its bytes
+C-cut-10.opus	limited	a damaged file reads with a limitation or is not read	a opus file cut at 10% of its bytes
+C-cut-10.wav	limited	a damaged file reads with a limitation or is not read	a wav file cut at 10% of its bytes
+C-cut-10.wv	limited	a damaged file reads with a limitation or is not read	a wv file cut at 10% of its bytes
+C-cut-50.ape	limited	a damaged file reads with a limitation or is not read	a ape file cut at 50% of its bytes
+C-cut-50.flac	limited	a damaged file reads with a limitation or is not read	a flac file cut at 50% of its bytes
+C-cut-50.m4a	limited	a damaged file reads with a limitation or is not read	a m4a file cut at 50% of its bytes
+C-cut-50.mp3	limited	a damaged file reads with a limitation or is not read	a mp3 file cut at 50% of its bytes
+C-cut-50.ogg	limited	a damaged file reads with a limitation or is not read	a ogg file cut at 50% of its bytes
+C-cut-50.opus	limited	a damaged file reads with a limitation or is not read	a opus file cut at 50% of its bytes
+C-cut-50.wav	limited	a damaged file reads with a limitation or is not read	a wav file cut at 50% of its bytes
+C-cut-50.wv	limited	a damaged file reads with a limitation or is not read	a wv file cut at 50% of its bytes
+C-cut-99.ape	limited	a damaged file reads with a limitation or is not read	a ape file cut at 99% of its bytes
+C-cut-99.flac	limited	a damaged file reads with a limitation or is not read	a flac file cut at 99% of its bytes
+C-cut-99.m4a	limited	a damaged file reads with a limitation or is not read	a m4a file cut at 99% of its bytes
+C-cut-99.mp3	limited	a damaged file reads with a limitation or is not read	a mp3 file cut at 99% of its bytes
+C-cut-99.ogg	limited	a damaged file reads with a limitation or is not read	a ogg file cut at 99% of its bytes
+C-cut-99.opus	limited	a damaged file reads with a limitation or is not read	a opus file cut at 99% of its bytes
+C-cut-99.wav	limited	a damaged file reads with a limitation or is not read	a wav file cut at 99% of its bytes
+C-cut-99.wv	limited	a damaged file reads with a limitation or is not read	a wv file cut at 99% of its bytes
+C-dsd-silence.dff	honest	README Limitations: needs about 30 seconds of non-silent audio	34 s of DSD64 silence as DSDIFF
+C-dsd-silence.dsf	honest	README Limitations: needs about 30 seconds of non-silent audio	34 s of DSD64 silence as DSF
+C-edit-list.m4a	honest	README Verdicts: only a grid makes a likely transcode	ALAC with an edit list that skips the first second
+C-empty.flac	unread	check --help: a file the analyzer cannot open as audio	zero bytes
+C-flac-named.aiff	as:C-honest_16-44.flac	the reading must not depend on the extension	a flac file named .aiff
+C-flac-named.ape	as:C-honest_16-44.flac	the reading must not depend on the extension	a flac file named .ape
+C-flac-named.caf	as:C-honest_16-44.flac	the reading must not depend on the extension	a flac file named .caf
+C-flac-named.m4a	as:C-honest_16-44.flac	the reading must not depend on the extension	a flac file named .m4a
+C-flac-named.mka	as:C-honest_16-44.flac	the reading must not depend on the extension	a flac file named .mka
+C-flac-named.mp3	as:C-honest_16-44.flac	the reading must not depend on the extension	a flac file named .mp3
+C-flac-named.ogg	as:C-honest_16-44.flac	the reading must not depend on the extension	a flac file named .ogg
+C-flac-named.opus	as:C-honest_16-44.flac	the reading must not depend on the extension	a flac file named .opus
+C-flac-named.wav	as:C-honest_16-44.flac	the reading must not depend on the extension	a flac file named .wav
+C-flac-named.wv	as:C-honest_16-44.flac	the reading must not depend on the extension	a flac file named .wv
+C-flac-piped.flac	limited	rustdoc Limitation::GridNotScanned	a FLAC written to a pipe, which states no length
+C-flip-audio.flac	limited	a damaged file reads with a limitation or is not read	one bit flipped in a FLAC frame's audio, so its CRC fails
+C-flip-audio.mp3	open	MP3 frames have no checksum here: nothing can tell	one bit flipped in the middle of an MP3
+C-flip-frame-header.flac	limited	a damaged file reads with a limitation or is not read	one bit flipped in a FLAC frame's header
+C-fragmented.m4a	as:C-honest_16-44.flac	one reading whatever the container	ALAC in a fragmented MP4
+C-freeformat.mp3	open	nothing says of free-format MP3	lame --freeformat -b 300
+C-garbage-after.ape	open	nothing says of bytes after the audio	100 KB of random bytes after a ape file
+C-garbage-after.flac	open	nothing says of bytes after the audio	100 KB of random bytes after a flac file
+C-garbage-after.m4a	open	nothing says of bytes after the audio	100 KB of random bytes after a m4a file
+C-garbage-after.mp3	open	nothing says of bytes after the audio	100 KB of random bytes after a mp3 file
+C-garbage-after.ogg	open	nothing says of bytes after the audio	100 KB of random bytes after a ogg file
+C-garbage-after.opus	open	nothing says of bytes after the audio	100 KB of random bytes after a opus file
+C-garbage-after.wav	open	nothing says of bytes after the audio	100 KB of random bytes after a wav file
+C-garbage-after.wv	open	nothing says of bytes after the audio	100 KB of random bytes after a wv file
+C-halves-swapped.ape	limited	a damaged file reads with a limitation or is not read	the two halves of a ape file swapped
+C-halves-swapped.flac	limited	a damaged file reads with a limitation or is not read	the two halves of a flac file swapped
+C-halves-swapped.m4a	limited	a damaged file reads with a limitation or is not read	the two halves of a m4a file swapped
+C-halves-swapped.mp3	limited	a damaged file reads with a limitation or is not read	the two halves of a mp3 file swapped
+C-halves-swapped.ogg	limited	a damaged file reads with a limitation or is not read	the two halves of a ogg file swapped
+C-halves-swapped.opus	limited	a damaged file reads with a limitation or is not read	the two halves of a opus file swapped
+C-halves-swapped.wav	limited	a damaged file reads with a limitation or is not read	the two halves of a wav file swapped
+C-halves-swapped.wv	limited	a damaged file reads with a limitation or is not read	the two halves of a wv file swapped
+C-he-aac.m4a	open	README Supported formats: HE-AAC with the band its decoder rebuilds	fdkaac -p 5 -b 64
+C-he-aac-v2.m4a	open	README Supported formats: HE-AAC v2	fdkaac -p 29 -b 32
+C-header-only.flac	limited	a damaged file reads with a limitation or is not read	a FLAC's metadata and no frame
+C-hole.ape	limited	a damaged file reads with a limitation or is not read	256 KB of zeros in the middle of a ape file
+C-hole.flac	limited	a damaged file reads with a limitation or is not read	256 KB of zeros in the middle of a flac file
+C-hole.m4a	limited	a damaged file reads with a limitation or is not read	256 KB of zeros in the middle of a m4a file
+C-hole.mp3	limited	a damaged file reads with a limitation or is not read	256 KB of zeros in the middle of a mp3 file
+C-hole.ogg	limited	a damaged file reads with a limitation or is not read	256 KB of zeros in the middle of a ogg file
+C-hole.opus	limited	a damaged file reads with a limitation or is not read	256 KB of zeros in the middle of a opus file
+C-hole.wav	limited	a damaged file reads with a limitation or is not read	256 KB of zeros in the middle of a wav file
+C-hole.wv	limited	a damaged file reads with a limitation or is not read	256 KB of zeros in the middle of a wv file
+C-honest_16-44.flac	honest	samples/README: lossless reads consistent	the noise as FLAC
+C-honest.aiff	as:C-honest_16-44.flac	one reading whatever the container	AIFF
+C-honest-broadcast.wav	as:C-honest_16-44.flac	one reading whatever the container	broadcast WAV with bext and a 60 KB LIST
+C-honest.caf	as:C-honest_16-44.flac	one reading whatever the container	CAF
+C-honest-extensible.wav	as:C-honest_16-44.flac	one reading whatever the container	WAVE_FORMAT_EXTENSIBLE at 24 bits
+C-honest-flac-in-matroska.mka	as:C-honest_16-44.flac	one reading whatever the container	FLAC in Matroska
+C-honest-flac-in-mp4.mp4	as:C-honest_16-44.flac	one reading whatever the container	FLAC in MP4
+C-honest-flac-in-ogg.oga	as:C-honest_16-44.flac	one reading whatever the container	FLAC in Ogg
+C-honest-plain.wav	as:C-honest_16-44.flac	one reading whatever the container	plain WAV
+C-honest-rf64.wav	as:C-honest_16-44.flac	one reading whatever the container	RF64
+C-honest-sowt.aifc	as:C-honest_16-44.flac	one reading whatever the container	AIFF-C sowt
+C-honest-wave64.w64	as:C-honest_16-44.flac	one reading whatever the container	Wave64
+C-id3v1-ape-after.mp3	as:C-lame128.mp3	a tag is not audio: the reading is the untagged file's	ID3v1 and APE tags after the MP3
+C-id3v2-before-flac.flac	as:C-honest_16-44.flac	a tag is not audio: the reading is the untagged file's	an ID3v2 tag of 2 KB in front of the FLAC
+C-id3v2-size-lies.flac	limited	a damaged file reads with a limitation or is not read	an ID3v2 tag that states 256 MB in front of the FLAC
+C-jpeg.flac	unread	check --help: a file the analyzer cannot open as audio	a JPEG named .flac
+C-lame128.aiff	as:B-lame128_16-44.flac	one reading whatever the container	AIFF
+C-lame128-broadcast.wav	as:B-lame128_16-44.flac	one reading whatever the container	broadcast WAV with bext and a 60 KB LIST
+C-lame128.caf	as:B-lame128_16-44.flac	one reading whatever the container	CAF
+C-lame128-extensible.wav	as:B-lame128_16-44.flac	one reading whatever the container	WAVE_FORMAT_EXTENSIBLE at 24 bits
+C-lame128-flac-in-matroska.mka	as:B-lame128_16-44.flac	one reading whatever the container	FLAC in Matroska
+C-lame128-flac-in-mp4.mp4	as:B-lame128_16-44.flac	one reading whatever the container	FLAC in MP4
+C-lame128-flac-in-ogg.oga	as:B-lame128_16-44.flac	one reading whatever the container	FLAC in Ogg
+C-lame128.mp3	consistent	samples/README: consistent with its bitrate	lame -b 128
+C-lame128-plain.wav	as:B-lame128_16-44.flac	one reading whatever the container	plain WAV
+C-lame128-rf64.wav	as:B-lame128_16-44.flac	one reading whatever the container	RF64
+C-lame128-sowt.aifc	as:B-lame128_16-44.flac	one reading whatever the container	AIFF-C sowt
+C-lame128-wave64.w64	as:B-lame128_16-44.flac	one reading whatever the container	Wave64
+C-m4a-named.aiff	as:C-moov-first.m4a	the reading must not depend on the extension	a m4a file named .aiff
+C-m4a-named.ape	as:C-moov-first.m4a	the reading must not depend on the extension	a m4a file named .ape
+C-m4a-named.caf	as:C-moov-first.m4a	the reading must not depend on the extension	a m4a file named .caf
+C-m4a-named.flac	as:C-moov-first.m4a	the reading must not depend on the extension	a m4a file named .flac
+C-m4a-named.mka	as:C-moov-first.m4a	the reading must not depend on the extension	a m4a file named .mka
+C-m4a-named.mp3	as:C-moov-first.m4a	the reading must not depend on the extension	a m4a file named .mp3
+C-m4a-named.ogg	as:C-moov-first.m4a	the reading must not depend on the extension	a m4a file named .ogg
+C-m4a-named.opus	as:C-moov-first.m4a	the reading must not depend on the extension	a m4a file named .opus
+C-m4a-named.wav	as:C-moov-first.m4a	the reading must not depend on the extension	a m4a file named .wav
+C-m4a-named.wv	as:C-moov-first.m4a	the reading must not depend on the extension	a m4a file named .wv
+C-mka-named.aiff	as:C-honest-flac-in-matroska.mka	the reading must not depend on the extension	a mka file named .aiff
+C-mka-named.ape	as:C-honest-flac-in-matroska.mka	the reading must not depend on the extension	a mka file named .ape
+C-mka-named.caf	as:C-honest-flac-in-matroska.mka	the reading must not depend on the extension	a mka file named .caf
+C-mka-named.flac	as:C-honest-flac-in-matroska.mka	the reading must not depend on the extension	a mka file named .flac
+C-mka-named.m4a	as:C-honest-flac-in-matroska.mka	the reading must not depend on the extension	a mka file named .m4a
+C-mka-named.mp3	as:C-honest-flac-in-matroska.mka	the reading must not depend on the extension	a mka file named .mp3
+C-mka-named.ogg	as:C-honest-flac-in-matroska.mka	the reading must not depend on the extension	a mka file named .ogg
+C-mka-named.opus	as:C-honest-flac-in-matroska.mka	the reading must not depend on the extension	a mka file named .opus
+C-mka-named.wav	as:C-honest-flac-in-matroska.mka	the reading must not depend on the extension	a mka file named .wav
+C-mka-named.wv	as:C-honest-flac-in-matroska.mka	the reading must not depend on the extension	a mka file named .wv
+C-moov-first.m4a	as:C-honest_16-44.flac	one reading whatever the container	ALAC, moov at the start
+C-moov-last.m4a	as:C-honest_16-44.flac	one reading whatever the container	ALAC, moov at the end
+C-mp3-changes.mp3	limited	nothing says of a stream that changes; a reading must say what it left out	an MP3 that turns from 44.1 kHz stereo to 32 kHz mono half way
+C-mp3-named.aiff	as:C-lame128.mp3	the reading must not depend on the extension	a mp3 file named .aiff
+C-mp3-named.ape	as:C-lame128.mp3	the reading must not depend on the extension	a mp3 file named .ape
+C-mp3-named.caf	as:C-lame128.mp3	the reading must not depend on the extension	a mp3 file named .caf
+C-mp3-named.flac	as:C-lame128.mp3	the reading must not depend on the extension	a mp3 file named .flac
+C-mp3-named.m4a	as:C-lame128.mp3	the reading must not depend on the extension	a mp3 file named .m4a
+C-mp3-named.mka	as:C-lame128.mp3	the reading must not depend on the extension	a mp3 file named .mka
+C-mp3-named.ogg	as:C-lame128.mp3	the reading must not depend on the extension	a mp3 file named .ogg
+C-mp3-named.opus	as:C-lame128.mp3	the reading must not depend on the extension	a mp3 file named .opus
+C-mp3-named.wav	as:C-lame128.mp3	the reading must not depend on the extension	a mp3 file named .wav
+C-mp3-named.wv	as:C-lame128.mp3	the reading must not depend on the extension	a mp3 file named .wv
+C-mpeg2-11.025.mp3	open	README Supported formats: MP3; nothing says of MPEG-2 and 2.5 rates	lame --resample 11.025 -b 32
+C-mpeg2-12.mp3	open	README Supported formats: MP3; nothing says of MPEG-2 and 2.5 rates	lame --resample 12 -b 32
+C-mpeg2-16.mp3	open	README Supported formats: MP3; nothing says of MPEG-2 and 2.5 rates	lame --resample 16 -b 32
+C-mpeg2-22.05.mp3	open	README Supported formats: MP3; nothing says of MPEG-2 and 2.5 rates	lame --resample 22.05 -b 32
+C-mpeg2-24.mp3	open	README Supported formats: MP3; nothing says of MPEG-2 and 2.5 rates	lame --resample 24 -b 32
+C-mpeg2-8.mp3	open	README Supported formats: MP3; nothing says of MPEG-2 and 2.5 rates	lame --resample 8 -b 32
+C-no-seektable.flac	as:C-honest_16-44.flac	one reading whatever the container	flac --no-seektable
+C-ogg-named.aiff	as:C-vorbis.ogg	the reading must not depend on the extension	a ogg file named .aiff
+C-ogg-named.ape	as:C-vorbis.ogg	the reading must not depend on the extension	a ogg file named .ape
+C-ogg-named.caf	as:C-vorbis.ogg	the reading must not depend on the extension	a ogg file named .caf
+C-ogg-named.flac	as:C-vorbis.ogg	the reading must not depend on the extension	a ogg file named .flac
+C-ogg-named.m4a	as:C-vorbis.ogg	the reading must not depend on the extension	a ogg file named .m4a
+C-ogg-named.mka	as:C-vorbis.ogg	the reading must not depend on the extension	a ogg file named .mka
+C-ogg-named.mp3	as:C-vorbis.ogg	the reading must not depend on the extension	a ogg file named .mp3
+C-ogg-named.opus	as:C-vorbis.ogg	the reading must not depend on the extension	a ogg file named .opus
+C-ogg-named.wav	as:C-vorbis.ogg	the reading must not depend on the extension	a ogg file named .wav
+C-ogg-named.wv	as:C-vorbis.ogg	the reading must not depend on the extension	a ogg file named .wv
+C-opus-in-matroska.mka	as:C-opus.opus	one reading whatever the container	the Opus stream copied into mka
+C-opus-in-mp4.mp4	as:C-opus.opus	one reading whatever the container	the Opus stream copied into mp4
+C-opus-in-webm.webm	as:C-opus.opus	one reading whatever the container	the Opus stream copied into webm
+C-opus-named.aiff	as:C-opus.opus	the reading must not depend on the extension	a opus file named .aiff
+C-opus-named.ape	as:C-opus.opus	the reading must not depend on the extension	a opus file named .ape
+C-opus-named.caf	as:C-opus.opus	the reading must not depend on the extension	a opus file named .caf
+C-opus-named.flac	as:C-opus.opus	the reading must not depend on the extension	a opus file named .flac
+C-opus-named.m4a	as:C-opus.opus	the reading must not depend on the extension	a opus file named .m4a
+C-opus-named.mka	as:C-opus.opus	the reading must not depend on the extension	a opus file named .mka
+C-opus-named.mp3	as:C-opus.opus	the reading must not depend on the extension	a opus file named .mp3
+C-opus-named.ogg	as:C-opus.opus	the reading must not depend on the extension	a opus file named .ogg
+C-opus-named.wav	as:C-opus.opus	the reading must not depend on the extension	a opus file named .wav
+C-opus-named.wv	as:C-opus.opus	the reading must not depend on the extension	a opus file named .wv
+C-opus.opus	consistent	samples/README: consistent with its bitrate	opusenc --bitrate 128
+C-rate-384000.wav	honest	README Verdicts: only a grid makes a likely transcode	white noise at 384 kHz
+C-rate-768000.wav	honest	README Verdicts: only a grid makes a likely transcode	white noise at 768 kHz, the highest rate read
+C-rate-768001.wav	refused:above	rustdoc Error::Unsupported	white noise at 768,001 Hz
+C-rate-8000.wav	honest	README Verdicts: only a grid makes a likely transcode	white noise at 8 kHz
+C-seektable-wrong.flac	as:C-honest_16-44.flac	one reading whatever the container	a seek table whose every point is the first frame
+C-text.flac	unread	check --help: a file the analyzer cannot open as audio	a text file named .flac
+C-two-tracks-flac-mp3.mka	open	nothing says which of two audio tracks is read	Matroska: a FLAC track, then an MP3 track
+C-two-tracks-mp3-flac.mka	open	nothing says which of two audio tracks is read	Matroska: an MP3 track, then a FLAC track
+C-vorbis.ogg	open	README Supported formats: Vorbis	oggenc -q 6
+C-wav-named.aiff	as:C-honest-plain.wav	the reading must not depend on the extension	a wav file named .aiff
+C-wav-named.ape	as:C-honest-plain.wav	the reading must not depend on the extension	a wav file named .ape
+C-wav-named.caf	as:C-honest-plain.wav	the reading must not depend on the extension	a wav file named .caf
+C-wav-named.flac	as:C-honest-plain.wav	the reading must not depend on the extension	a wav file named .flac
+C-wav-named.m4a	as:C-honest-plain.wav	the reading must not depend on the extension	a wav file named .m4a
+C-wav-named.mka	as:C-honest-plain.wav	the reading must not depend on the extension	a wav file named .mka
+C-wav-named.mp3	as:C-honest-plain.wav	the reading must not depend on the extension	a wav file named .mp3
+C-wav-named.ogg	as:C-honest-plain.wav	the reading must not depend on the extension	a wav file named .ogg
+C-wav-named.opus	as:C-honest-plain.wav	the reading must not depend on the extension	a wav file named .opus
+C-wav-named.wv	as:C-honest-plain.wav	the reading must not depend on the extension	a wav file named .wv
+C-wavpack-32bit.wv	honest	README Supported formats: WavPack at 32 bits	wavpack of 32-bit samples
+C-wavpack-6ch.wv	refused:channels	README Supported formats	wavpack of six channels
+C-wavpack-8bit.wv	refused:8-bit	README Supported formats	wavpack of 8-bit samples
+C-wavpack-float_f32-44.wv	honest	README Supported formats: WavPack as float	wavpack of float samples
+C-wavpack-hybrid.wv	refused:hybrid WavPack	README Supported formats	wavpack -b256
+C-wav-piped.wav	limited	rustdoc Limitation::GridNotScanned	a WAV written to a pipe, its data size 0xFFFFFFFF
+C-wav-size-0.wav	limited	rustdoc Limitation::GridNotScanned	a WAV whose data size is 0
+C-with-video.mkv	as:C-honest_16-44.flac	one reading whatever the container	FLAC beside a video track in Matroska
+C-with-video.mp4	as:C-honest_16-44.flac	one reading whatever the container	ALAC beside a video track in MP4
+C-wv-named.aiff	as:B-lame128_16-44.wv	the reading must not depend on the extension	a wv file named .aiff
+C-wv-named.ape	as:B-lame128_16-44.wv	the reading must not depend on the extension	a wv file named .ape
+C-wv-named.caf	as:B-lame128_16-44.wv	the reading must not depend on the extension	a wv file named .caf
+C-wv-named.flac	as:B-lame128_16-44.wv	the reading must not depend on the extension	a wv file named .flac
+C-wv-named.m4a	as:B-lame128_16-44.wv	the reading must not depend on the extension	a wv file named .m4a
+C-wv-named.mka	as:B-lame128_16-44.wv	the reading must not depend on the extension	a wv file named .mka
+C-wv-named.mp3	as:B-lame128_16-44.wv	the reading must not depend on the extension	a wv file named .mp3
+C-wv-named.ogg	as:B-lame128_16-44.wv	the reading must not depend on the extension	a wv file named .ogg
+C-wv-named.opus	as:B-lame128_16-44.wv	the reading must not depend on the extension	a wv file named .opus
+C-wv-named.wav	as:B-lame128_16-44.wv	the reading must not depend on the extension	a wv file named .wav
+C-xing-lies-long.mp3	limited	rustdoc Limitation::LengthPastBytes	a Xing header that states 4,000,000 frames
+C-xing-lies.mp3	limited	rustdoc Limitation::LongerThanStated	a Xing header that states 12 frames
+D-frames-163840_16-44.flac	honest	README Limitations: needs about 30 seconds of non-silent audio	163840 sample frames of the noise
+D-frames-40959_16-44.flac	honest	README Limitations: needs about 30 seconds of non-silent audio	40959 sample frames of the noise
+D-frames-40960_16-44.flac	honest	README Limitations: needs about 30 seconds of non-silent audio	40960 sample frames of the noise
+D-half-second_16-44.flac	honest	README Limitations: needs about 30 seconds of non-silent audio	half a second of the noise
+D-hours-1_16-44.flac	honest	rustdoc Coverage::Full: time and measures grow with the length	1 hours of a tone under noise
+D-hours-24_16-44.flac	honest	rustdoc Coverage::Full: time and measures grow with the length	24 hours of a tone under noise
+D-hours-6_16-44.flac	honest	rustdoc Coverage::Full: time and measures grow with the length	6 hours of a tone under noise
+D-short-decode_16-44.flac	open	README Limitations: needs about 30 seconds of non-silent audio; nothing says whether a grid in 4 s is a likely transcode	4 s of the MP3 decode
+D-wav-past-2gb.wav	limited	a WAV's sizes are 32 bits: past them the header cannot state the length	8-bit mono WAV of 2 GB, sparse
+D-wav-past-4gb.wav	limited	a WAV's sizes are 32 bits: past them the header cannot state the length	8-bit mono WAV of 4 GB, sparse
