@@ -67,7 +67,6 @@ mod flags;
 pub mod grid;
 mod lattice;
 mod limitation;
-mod opus;
 pub mod picture;
 mod reading;
 mod resample;
@@ -85,11 +84,11 @@ mod tests;
 struct ReadmeDoctest;
 
 pub use aggregate::{CutoffBucket, Measures};
+pub use decode::opus::{OpusBandwidth, OpusMode, OpusUse};
 pub use decode::{Claimed, HeAac};
 pub use engine::{CancelCheck, Coverage, Error, Measured, Settings, measure, measure_bytes};
 pub use flags::Flag;
 pub use limitation::Limitation;
-pub use opus::{OpusBandwidth, OpusMode, OpusUse};
 pub use reading::{EncoderGuess, Reading, Verdict};
 pub use thresholds::{
   EncoderProfile, FraunhoferSteps, MeasureThresholds, RateEdge, ReadingThresholds,

@@ -28,14 +28,15 @@ use symphonia_common::apple::audio::alac::MagicCookie;
 use tracing::{debug, trace, warn};
 
 use crate::engine;
-use crate::opus::{self, OpusUse};
 
 mod aac;
 mod ape;
 pub(crate) mod dsd;
+pub(crate) mod opus;
 mod wavpack;
 
 use dsd::CODEC_ID_DSD;
+use opus::OpusUse;
 
 /// the most channels the analyzer reads; the rest of a surround file is left out
 const ANALYZED_CHANNELS: usize = 2;

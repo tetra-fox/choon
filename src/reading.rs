@@ -2,11 +2,11 @@
 //! weighed with the grid scan, with the findings beside it
 
 use crate::aggregate::{Measures, measures, middle, percentile, upsample_ratio};
+use crate::decode::opus::OpusUse;
 use crate::engine::Measured;
 use crate::flags::{Flag, findings};
 use crate::grid::{self, Codec, Evidence, Family, Found};
 use crate::limitation::{Limitation, khz};
-use crate::opus::OpusUse;
 use crate::thresholds::{EncoderProfile, ReadingThresholds};
 use crate::window::{Step, Window};
 
