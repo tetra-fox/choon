@@ -41,6 +41,17 @@
             pkgs.rust-bin.stable.${
               if lib.length (lib.splitString "." rustVersion) == 2 then "${rustVersion}.0" else rustVersion
             }.minimal;
+          # cargo-fuzz builds with -Zsanitizer, which only nightly accepts
+          nightly = pkgs.rust-bin.selectLatestNightlyWith (
+            toolchain: toolchain.minimal.override { extensions = [ "rust-src" ]; }
+          );
+          encoders = with pkgs; [
+            ffmpeg
+            lame
+            opus-tools
+            vorbis-tools
+            fdk-aac-encoder
+          ];
         in
         {
           # the test fixtures build LAME's C source with the shell's compiler and make, and
@@ -60,13 +71,26 @@
           msrv = pkgs.mkShell { packages = [ msrv ]; };
 
           # the encoders samples/make.sh runs
-          samples = pkgs.mkShell {
-            packages = with pkgs; [
-              ffmpeg
-              lame
-              opus-tools
-              vorbis-tools
-              fdk-aac-encoder
+          samples = pkgs.mkShell { packages = encoders; };
+
+          # what torture/make.sh runs beside them: the lossless formats' own programs
+          torture = pkgs.mkShell {
+            packages =
+              encoders
+              ++ (with pkgs; [
+                flac
+                wavpack
+                monkeysAudio
+                # torture/run.py
+                python3
+              ]);
+          };
+
+          fuzz = pkgs.mkShell {
+            packages = [
+              nightly
+              pkgs.cargo-fuzz
+              pkgs.just
             ];
           };
         }

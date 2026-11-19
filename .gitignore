@@ -10,3 +10,10 @@ result-*
 /samples/*
 !/samples/make.sh
 !/samples/README.md
+
+# written by `just torture`
+/torture/*
+!/torture/make.sh
+!/torture/run.py
+!/torture/README.md
+!/torture/manifest.tsv
