@@ -389,7 +389,7 @@ Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
 - Clipping hides the grid frame by frame, so a decode made louder until it clips can lose it
 - The grid thresholds were tuned on LAME's MP3 and ffmpeg's AAC; [Encoders](#encoders) lists
   what the scan finds of others
-- A grid shows that the samples were decoded from MP3 or AAC at some point, as in a master built
+- A grid shows that the samples were decoded from MP3, AAC or Opus at some point, as in a master built
   from such material
 - A cutoff near 20 kHz, where MP3 320 and AAC cut and many recordings are filtered anyway, reads
   as inconclusive; only a grid calls such a file a transcode
