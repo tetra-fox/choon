@@ -793,12 +793,13 @@ impl Decoder {
 
 /// the bits per sample `params` state of a codec whose samples are integers; ALAC states them
 /// in its magic cookie only. the decoder made from `params` read the same cookie, so one that
-/// does not read here never gets this far. a container can state a depth of any codec
+/// does not read here never gets this far. a container can state a depth of any codec, and
+/// CAF states 0 for a compressed one, which is none stated
 fn stated_bits(params: &AudioCodecParameters) -> Option<u32> {
   if !(keeps_every_bit(params.codec) || pcm(params.codec)) {
     return None;
   }
-  params.bits_per_sample.or_else(|| {
+  params.bits_per_sample.filter(|bits| *bits > 0).or_else(|| {
     let cookie = params.extra_data.as_deref()?;
     let read = (params.codec == CODEC_ID_ALAC).then(|| MagicCookie::read(cookie));
     Some(u32::from(read?.ok()?.bit_depth))
@@ -1301,6 +1302,23 @@ mod tests {
       why.contains("hybrid WavPack without its correction file"),
       "{why}"
     );
+  }
+
+  #[test]
+  fn a_depth_of_no_bits_is_not_a_stated_depth() {
+    // a CAF file states 0 bits a channel for a compressed codec, and its ALAC track's depth
+    // is in the cookie, the last 24 bytes of the sample entry's 36-byte `alac` box
+    let inner = TONE
+      .windows(8)
+      .position(|w| w == [0, 0, 0, 0x24, b'a', b'l', b'a', b'c'])
+      .unwrap();
+    let cookie = &TONE[inner + 12..inner + 36];
+    let mut params = AudioCodecParameters::new();
+    params
+      .for_codec(CODEC_ID_ALAC)
+      .with_bits_per_sample(0)
+      .with_extra_data(cookie.into());
+    assert_eq!(stated_bits(&params), Some(16));
   }
 
   #[test]
