@@ -1229,31 +1229,83 @@ pub(crate) fn scan(
       aac_sine: codec_scan(&other_sine),
       mp3: codec_scan(&other_mp3),
     });
-  let (aac, sine) = (codec_scan(&aac), codec_scan(&sine));
-  let aac_steps = |window, count: &CodecScan| {
-    aac_bands(rate).map(|bands| AacStepper::new(window).steps(segments, count.offset, bands))
-  };
-  let (aac_steps, aac_sine_steps) = (aac_steps(Window::Kbd, &aac), aac_steps(Window::Sine, &sine));
-  let mp3 = codec_scan(&mp3);
-  let mp3_steps = mp3_bands(rate).map(|bands| {
-    let analysis = Mp3::new();
+  let (aac, sine, mp3) = (codec_scan(&aac), codec_scan(&sine), codec_scan(&mp3));
+  // the quantizers' steps on the grids the counts found: each segment a task on the pool,
+  // which reads MP3's granules and AAC's frames under each window side by side. they take a
+  // small part of a count's time and are not among the jobs
+  let (mp3_bands, aac_bands) = (mp3_bands(rate), aac_bands(rate));
+  let stepped: Vec<SegmentSteps> = segments
+    .0
+    .par_iter()
+    .map(|segment| {
+      go_on().then(|| {
+        let mp3_steps = || {
+          mp3_bands.map(|bands| {
+            // below the hop, so it fits
+            let start = (segment.start % MP3_HOP as u64) as usize;
+            let offset = (mp3.offset + MP3_HOP - start) % MP3_HOP;
+            Mp3::new().steps(segment, offset, bands)
+          })
+        };
+        let aac_steps = |window, count: &CodecScan| {
+          aac_bands.map(|bands| AacStepper::new(window).steps(segment, count.offset, bands))
+        };
+        let (mp3_steps, (kbd, sine)) = rayon::join(mp3_steps, || {
+          rayon::join(
+            || aac_steps(Window::Kbd, &aac),
+            || aac_steps(Window::Sine, &sine),
+          )
+        });
+        SegmentSteps {
+          mp3: mp3_steps,
+          aac: kbd.zip(sine).map(<[_; 2]>::from),
+        }
+      })
+    })
+    .collect::<Option<_>>()?;
+  // the granules are summed in file order, so the sums of logarithms come out the same
+  // however the tasks ran
+  let mp3_steps = mp3_bands.map(|_| {
     let mut steps = Mp3Steps {
       tested: 0,
       stepped: 0,
       whole: 0,
       segment_whole: [0; SEGMENTS],
-      neighbours: Some(Mp3Neighbours::default()),
+      neighbours: None,
     };
-    for (segment, whole) in segments.0.iter().zip(0..) {
-      // below the hop, so it fits
-      let start = (segment.start % MP3_HOP as u64) as usize;
-      let offset = (mp3.offset + MP3_HOP - start) % MP3_HOP;
-      let before = steps.whole;
-      analysis.steps(segment, offset, bands, &mut steps);
-      steps.segment_whole[whole] = steps.whole - before;
+    let mut neighbours = Mp3Neighbours::default();
+    for (segment, in_segment) in stepped.iter().zip(&mut steps.segment_whole) {
+      for granule in segment.mp3.iter().flatten() {
+        steps.tested += granule.tested;
+        steps.stepped += granule.stepped;
+        steps.whole += granule.whole;
+        *in_segment += granule.whole;
+        neighbours.add(&granule.neighbours);
+      }
     }
+    steps.neighbours = Some(neighbours);
     steps
   });
+  let aac_steps = |window: usize| {
+    aac_bands.map(|_| {
+      let mut steps = AacSteps {
+        tested: 0,
+        stepped: 0,
+        whole: 0,
+        segment_whole: [0; SEGMENTS],
+      };
+      for (segment, in_segment) in stepped.iter().zip(&mut steps.segment_whole) {
+        for [tested, stepped, whole] in segment.aac.iter().map(|windows| windows[window]) {
+          steps.tested += tested;
+          steps.stepped += stepped;
+          steps.whole += whole;
+          *in_segment += whole;
+        }
+      }
+      steps
+    })
+  };
+  let (aac_steps, aac_sine_steps) = (aac_steps(0), aac_steps(1));
   Some(Scan {
     other_rate,
     aac,
@@ -1264,6 +1316,14 @@ pub(crate) fn scan(
     aac_sine_steps,
     opus: opus.map(|opus| opus_scan(&frames, &opus.uncut, &short, opus.uncut_short)),
   })
+}
+
+/// the quantizers' steps in one segment: MP3's by granule, and AAC's bands tested, on one step
+/// and on a whole one under the Kaiser-Bessel-derived window and under the sine one. each is
+/// `None` at a rate its steps are not read at
+struct SegmentSteps {
+  mp3: Option<Vec<GranuleSteps>>,
+  aac: Option<[[usize; 3]; 2]>,
 }
 
 /// the rate a segment is scanned at: the file's own, or the other of 44.1 and 48 kHz
@@ -1583,60 +1643,54 @@ impl AacStepper {
     }
   }
 
-  /// the bands of `segments`' long frames on the grid at `offset` from the file's first
-  /// sample, each band as left and right or as mid and side, whichever has more whole steps.
+  /// the bands of `segment`'s long frames on the grid at `offset` from the file's first
+  /// sample: how many were tested, sit on one step, and on a whole one. each band is taken as
+  /// left and right or as mid and side, whichever has more whole steps.
   ///
   /// in this transform's scale a step is a whole power of the fourth root of two as it is
   /// coded, and a mid or side value is the coded one times the square root of two, two such
   /// powers.
-  fn steps(&mut self, segments: &Segments, offset: usize, bands: &[usize; 50]) -> AacSteps {
+  fn steps(&mut self, segment: &Segment, offset: usize, bands: &[usize; 50]) -> [usize; 3] {
     let half = std::f64::consts::FRAC_1_SQRT_2;
-    let mut steps = AacSteps {
-      tested: 0,
-      stepped: 0,
-      whole: 0,
-      segment_whole: [0; SEGMENTS],
-    };
+    let mut counts = [0; 3];
     let mut lines = [const { Vec::new() }; 4];
-    for (segment, in_segment) in segments.0.iter().zip(&mut steps.segment_whole) {
-      // below the hop, so it fits
-      let start = (segment.start % AAC_HOP as u64) as usize;
-      let offset = (offset + AAC_HOP - start) % AAC_HOP;
-      // the frames every offset holds, as the count takes them
-      let frames = (segment.left.len() + 1 - 2 * AAC_HOP) / AAC_HOP;
-      for frame in 0..frames {
-        let at = offset + frame * AAC_HOP;
-        let [l, r, m, s] = &mut lines;
-        self.mdct(&segment.left[at..at + 2 * AAC_HOP], l);
-        self.mdct(&segment.right[at..at + 2 * AAC_HOP], r);
-        m.clear();
-        m.extend(l.iter().zip(r.iter()).map(|(l, r)| (l + r) * half));
-        s.clear();
-        s.extend(l.iter().zip(r.iter()).map(|(l, r)| (l - r) * half));
-        for band in bands.windows(2) {
-          // tested, stepped and whole, over the two channels of a pair
-          let count = |pair: [&Vec<f64>; 2]| {
-            pair.iter().fold([0; 3], |[tested, stepped, whole], lines| {
-              let step = band_step(&lines[band[0]..band[1]], NOISE16);
-              let fourths = step.flatten().map(|step| 4.0 * step.log2());
-              [
-                tested + usize::from(step.is_some()),
-                stepped + usize::from(fourths.is_some()),
-                whole + usize::from(fourths.is_some_and(|f| (f - f.round()).abs() < WHOLE_STEP)),
-              ]
-            })
-          };
-          let [l, r, m, s] = &lines;
-          let (apart, joint) = (count([l, r]), count([m, s]));
-          let [tested, stepped, whole] = if joint[2] > apart[2] { joint } else { apart };
-          steps.tested += tested;
-          steps.stepped += stepped;
-          steps.whole += whole;
-          *in_segment += whole;
+    let mut scratch = BandScratch::default();
+    // below the hop, so it fits
+    let start = (segment.start % AAC_HOP as u64) as usize;
+    let offset = (offset + AAC_HOP - start) % AAC_HOP;
+    // the frames every offset holds, as the count takes them
+    let frames = (segment.left.len() + 1 - 2 * AAC_HOP) / AAC_HOP;
+    for frame in 0..frames {
+      let at = offset + frame * AAC_HOP;
+      let [l, r, m, s] = &mut lines;
+      self.mdct(&segment.left[at..at + 2 * AAC_HOP], l);
+      self.mdct(&segment.right[at..at + 2 * AAC_HOP], r);
+      m.clear();
+      m.extend(l.iter().zip(r.iter()).map(|(l, r)| (l + r) * half));
+      s.clear();
+      s.extend(l.iter().zip(r.iter()).map(|(l, r)| (l - r) * half));
+      for band in bands.windows(2) {
+        // tested, stepped and whole, over the two channels of a pair
+        let mut count = |pair: [&Vec<f64>; 2]| {
+          pair.iter().fold([0; 3], |[tested, stepped, whole], lines| {
+            let step = band_step(&lines[band[0]..band[1]], NOISE16, &mut scratch);
+            let fourths = step.step().map(|step| 4.0 * step.log2());
+            [
+              tested + usize::from(step.tested()),
+              stepped + usize::from(fourths.is_some()),
+              whole + usize::from(fourths.is_some_and(|f| (f - f.round()).abs() < WHOLE_STEP)),
+            ]
+          })
+        };
+        let [l, r, m, s] = &lines;
+        let (apart, joint) = (count([l, r]), count([m, s]));
+        let more = if joint[2] > apart[2] { joint } else { apart };
+        for (count, more) in counts.iter_mut().zip(more) {
+          *count += more;
         }
       }
     }
-    steps
+    counts
   }
 
   /// the orthonormal MDCT of `input`, 2048 samples, windowed, into `lines`
@@ -2006,17 +2060,50 @@ fn mp3_bands(rate: u32) -> Option<&'static [usize; 23]> {
   }
 }
 
-/// the step of a band whose lines are `lines`, each with rounding noise of `sigma`: `None` when
-/// the band is not tested, `Some(None)` when no step puts every value over the noise on its
-/// lattice. the smallest such value is taken as 1, 2 and so on times the step in turn
-fn band_step(lines: &[f64], sigma: f64) -> Option<Option<f64>> {
-  let values: Vec<f64> = lines
-    .iter()
-    .map(|line| line.abs())
-    .filter(|value| *value > OVER_NOISE * sigma)
-    .collect();
+/// what a band's values show of a quantizer's step
+#[derive(Clone, Copy)]
+enum BandStep {
+  /// too few values over the noise, or the smallest too near it for a lattice to show
+  Untested,
+  /// no step puts every value over the noise on its lattice
+  Off,
+  /// the step that does
+  On(f64),
+}
+
+impl BandStep {
+  fn tested(self) -> bool {
+    !matches!(self, Self::Untested)
+  }
+
+  fn step(self) -> Option<f64> {
+    match self {
+      Self::On(step) => Some(step),
+      Self::Untested | Self::Off => None,
+    }
+  }
+}
+
+/// the vectors [`band_step`] fills for each band, kept from one band to the next
+#[derive(Default)]
+struct BandScratch {
+  values: Vec<f64>,
+  points: Vec<f64>,
+}
+
+/// the step of a band whose lines are `lines`, each with rounding noise of `sigma`. the
+/// smallest value over the noise is taken as 1, 2 and so on times the step in turn
+fn band_step(lines: &[f64], sigma: f64, scratch: &mut BandScratch) -> BandStep {
+  let BandScratch { values, points } = scratch;
+  values.clear();
+  values.extend(
+    lines
+      .iter()
+      .map(|line| line.abs())
+      .filter(|value| *value > OVER_NOISE * sigma),
+  );
   if values.len() < MIN_VALUES {
-    return None;
+    return BandStep::Untested;
   }
   let smallest = values.iter().copied().fold(f64::INFINITY, f64::min);
   let mut tested = false;
@@ -2027,30 +2114,46 @@ fn band_step(lines: &[f64], sigma: f64) -> Option<Option<f64>> {
     }
     tested = true;
     // each value's whole number to the power 4/3, and the step that fits them all best
-    let points: Vec<f64> = values
-      .iter()
-      .map(|value| (value / step).powf(0.75).round().max(1.0).powf(4.0 / 3.0))
-      .collect();
+    points.clear();
+    points.extend(
+      values
+        .iter()
+        .map(|value| (value / step).powf(0.75).round().max(1.0).powf(4.0 / 3.0)),
+    );
     let squares: f64 = points.iter().map(|point| point * point).sum();
-    let step = values.iter().zip(&points).map(|(v, p)| v * p).sum::<f64>() / squares;
+    let step = values.iter().zip(&*points).map(|(v, p)| v * p).sum::<f64>() / squares;
     // a value's own noise, and what the noise of the others leaves of the step's
     let near = |point: f64| ON_POINT * sigma * (1.0 + point / squares.sqrt());
     if values
       .iter()
-      .zip(&points)
+      .zip(&*points)
       .all(|(value, point)| (value - point * step).abs() < near(*point))
     {
-      return Some(Some(step));
+      return BandStep::On(step);
     }
   }
-  tested.then_some(None)
+  if tested {
+    BandStep::Off
+  } else {
+    BandStep::Untested
+  }
+}
+
+/// the bands of one granule: how many were tested, sit on one step, and on a whole one, and
+/// how the whole steps of neighbouring bands compare
+struct GranuleSteps {
+  tested: usize,
+  stepped: usize,
+  whole: usize,
+  neighbours: Mp3Neighbours,
 }
 
 impl Mp3 {
-  /// adds to `steps` the bands of `segment`'s granules on the grid at `offset` from its first
-  /// sample, each granule as left and right or as mid and side, whichever has more bands on
-  /// whole steps
-  fn steps(&self, segment: &Segment, offset: usize, bands: &[usize; 23], steps: &mut Mp3Steps) {
+  /// the bands of each of `segment`'s granules on the grid at `offset` from its first sample,
+  /// each granule as left and right or as mid and side, whichever has more bands on whole
+  /// steps
+  fn steps(&self, segment: &Segment, offset: usize, bands: &[usize; 23]) -> Vec<GranuleSteps> {
+    let mut scratch = BandScratch::default();
     let granules = (segment.left.len() - MP3_HOP - 512 - SUBBAND_SAMPLES * 32) / MP3_HOP;
     let (phase, from) = (offset % 32, offset / 32);
     let left = self.polyphase(&segment.left[phase..]);
@@ -2058,6 +2161,7 @@ impl Mp3 {
     let half = std::f64::consts::FRAC_1_SQRT_2;
     let (mut l, mut r) = ([0.0; MP3_HOP], [0.0; MP3_HOP]);
     let (mut m, mut s) = ([0.0; MP3_HOP], [0.0; MP3_HOP]);
+    let mut read = Vec::with_capacity(granules);
     for granule in 0..granules {
       let at = from + LINES * granule;
       self.hybrid(&left[at..at + SUBBAND_SAMPLES], &mut l);
@@ -2066,7 +2170,7 @@ impl Mp3 {
         m[k] = (l[k] + r[k]) * half;
         s[k] = (l[k] - r[k]) * half;
       }
-      let count = |pair: [&[f64; MP3_HOP]; 2]| {
+      let mut count = |pair: [&[f64; MP3_HOP]; 2]| {
         let (mut tested, mut stepped, mut whole) = (0, 0, 0);
         let mut neighbours = Mp3Neighbours::default();
         for lines in pair {
@@ -2074,9 +2178,9 @@ impl Mp3 {
           let mut under = None;
           for (at, band) in bands.windows(2).enumerate() {
             let lines = &lines[band[0]..band[1]];
-            let step = band_step(lines, NOISE16 * MP3_NOISE_GAIN);
-            tested += usize::from(step.is_some());
-            let fourths = step.flatten().and_then(|step| {
+            let step = band_step(lines, NOISE16 * MP3_NOISE_GAIN, &mut scratch);
+            tested += usize::from(step.tested());
+            let fourths = step.step().and_then(|step| {
               stepped += 1;
               let fourths = 4.0 * (step / MP3_UNIT).log2();
               ((fourths - fourths.round()).abs() < WHOLE_STEP).then(|| {
@@ -2092,17 +2196,21 @@ impl Mp3 {
             under = fourths;
           }
         }
-        (tested, stepped, whole, neighbours)
+        GranuleSteps {
+          tested,
+          stepped,
+          whole,
+          neighbours,
+        }
       };
       let (apart, joint) = (count([&l, &r]), count([&m, &s]));
-      let (tested, stepped, whole, neighbours) = if joint.2 > apart.2 { joint } else { apart };
-      steps.tested += tested;
-      steps.stepped += stepped;
-      steps.whole += whole;
-      if let Some(all) = &mut steps.neighbours {
-        all.add(&neighbours);
-      }
+      read.push(if joint.whole > apart.whole {
+        joint
+      } else {
+        apart
+      });
     }
+    read
   }
 }
 

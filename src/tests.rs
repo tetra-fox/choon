@@ -1011,7 +1011,8 @@ fn progress_goes_on_through_the_grid_scan() {
   let path = flac(dir.path(), "a.flac", &music(1, 44_100, pink), 16);
   let progress = Arc::new(std::sync::atomic::AtomicU32::new(0));
   let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
-  // the cancel check is asked between windows and before each job of the scan
+  // the cancel check is asked between windows, before each job of the scan and before each
+  // segment's quantizer steps, which are read once the last job has ended
   let (at, record) = (progress.clone(), seen.clone());
   let settings = Settings {
     progress: Some(progress.clone()),
@@ -1035,7 +1036,7 @@ fn progress_goes_on_through_the_grid_scan() {
     .windows(2)
     .filter(|pair| pair[1] - pair[0] >= 30)
     .count();
-  assert_eq!(jobs_ended, grid::jobs(true, true) - 1, "{seen:?}");
+  assert_eq!(jobs_ended, grid::jobs(true, true), "{seen:?}");
   assert_eq!(progress.load(std::sync::atomic::Ordering::Relaxed), 1000);
 }
 
