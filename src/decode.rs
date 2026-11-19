@@ -973,7 +973,7 @@ mod tests {
         assert_eq!(decoder.fill(&mut window, 48_000), Filled::Full);
         let from = second as usize * 48_000;
         let off = apart(&window[0], &straight[0][from..from + 48_000]);
-        assert!(off < 1e-5, "{container}, second {second}: {off}");
+        assert!(off < 1e-6, "{container}, second {second}: {off}");
       }
     }
   }
