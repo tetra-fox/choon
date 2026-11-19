@@ -14,7 +14,7 @@ use comfy_table::{CellAlignment, ContentArrangement, LineStyle, Table, TableStyl
 use console::{Alignment, Term};
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 
-use crate::{Checked, family_words, flag_words, flagged, label, named_guess};
+use crate::{Checked, family_words, flag_words, flagged, khz, label, named_guess};
 
 /// the verdicts in the order the summary counts them
 const VERDICTS: [Verdict; 5] = [
@@ -279,10 +279,6 @@ fn lines(table: &mut Table, indent: u16) -> String {
     text += "\n";
     text
   })
-}
-
-fn khz(hz: f64) -> String {
-  format!("{:.1} kHz", hz / 1000.0)
 }
 
 /// a length of time in words: seconds, to a tenth under ten of them, and minutes and seconds

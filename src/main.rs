@@ -762,13 +762,18 @@ fn kind(checked: &Checked) -> Option<String> {
   }
 }
 
+/// a frequency as kHz to one decimal
+fn khz(hz: f64) -> String {
+  format!("{:.1} kHz", hz / 1000.0)
+}
+
 /// what a reading found, a few words each: the grid and its encoder family, the cutoff and the
 /// encoder setting it matches, the flags, the confidence
 fn found(reading: &Reading) -> Vec<String> {
   let mut found = Vec::new();
   let cutoff = reading.cutoff_hz.map_or_else(
     || "no cutoff".to_string(),
-    |hz| format!("cutoff {:.1} kHz", hz / 1000.0),
+    |hz| format!("cutoff {}", khz(hz)),
   );
   let guess = named_guess(reading).map(str::to_string);
   if let Some(grid) = &reading.grid {
