@@ -1103,8 +1103,6 @@ pub(crate) struct Opus {
   pub(crate) uncut: lattice::Counted,
   /// the same for the short frames of each length, on the grid each delay of the encoder leaves
   pub(crate) uncut_short: [[[usize; 2]; 2]; 3],
-  /// whether MP3 and AAC are scanned for at the other rate too
-  pub(crate) other_rate: bool,
 }
 
 /// the jobs of one scan: MP3 and AAC under each of its windows in each segment. at a rate
@@ -1119,13 +1117,15 @@ pub(crate) fn jobs(opus: bool, other_rate: bool) -> usize {
 const TASKS: usize = 32;
 
 /// the scan of full `segments`, each codec of each segment a job on rayon's thread pool that
-/// splits its offsets into tasks on the same pool; Opus is among the codecs with `opus`. `go_on`
-/// is asked before each job, `None` once it says not to, and `ended` is called as each job ends.
-/// panics when a segment is not full.
+/// splits its offsets into tasks on the same pool; Opus is among the codecs with `opus`, and
+/// with `other_rate` a file at 44.1 or 48 kHz is scanned for MP3 and AAC at the other of the
+/// two too. `go_on` is asked before each job, `None` once it says not to, and `ended` is called
+/// as each job ends. panics when a segment is not full.
 pub(crate) fn scan(
   segments: &Segments,
   rate: u32,
   opus: Option<Opus>,
+  other_rate: bool,
   go_on: impl Fn() -> bool + Sync,
   ended: impl Fn() + Sync,
 ) -> Option<Scan> {
@@ -1139,11 +1139,12 @@ pub(crate) fn scan(
     lattice::Stretches::of(&stretches, opus.rate, opus.bits)
   });
   // the segments at the other rate, each brought there as a task on the pool
-  let other = opus.as_ref().filter(|opus| opus.other_rate).map(|opus| {
-    let (rate, resampler) = match opus.rate {
-      lattice::Rate::Native => (44_100, Resampler::to_44100()),
-      lattice::Rate::From44100 => (48_000, Resampler::to_48000()),
-    };
+  let to_other = match rate {
+    48_000 => Some((44_100, Resampler::to_44100())),
+    44_100 => Some((48_000, Resampler::to_48000())),
+    _ => None,
+  };
+  let other = to_other.filter(|_| other_rate).map(|(rate, resampler)| {
     let segments: Vec<Option<Segment>> = segments
       .0
       .par_iter()

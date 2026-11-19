@@ -538,7 +538,6 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
         bits,
         uncut: uncut.counted(),
         uncut_short: uncut.short_counted(),
-        other_rate: settings.thresholds.scan_other_rate,
       });
     measured.grid = scan_grid(segments, opus, &run, &mut measured)?;
   }
@@ -631,14 +630,13 @@ fn scan_grid(
     return Ok(None);
   }
   let ended = AtomicUsize::new(0);
-  let jobs = grid::jobs(
-    opus.is_some(),
-    opus.as_ref().is_some_and(|opus| opus.other_rate),
-  );
+  let other_rate = settings.thresholds.scan_other_rate;
+  let jobs = grid::jobs(opus.is_some(), other_rate);
   let scan = grid::scan(
     segments,
     measured.claimed.sample_rate,
     opus,
+    other_rate,
     || !is_canceled(settings.canceled.as_ref()) && !is_past(settings.deadline),
     || {
       let ended = ended.fetch_add(1, Ordering::Relaxed) + 1;
