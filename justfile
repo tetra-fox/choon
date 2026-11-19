@@ -16,6 +16,10 @@ lint:
     cargo clippy --no-default-features --features testing -- -D warnings
     RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --no-default-features --features serde
 
+# the sample files of samples/README.md, written again by the encoders' own programs
+samples:
+    nix develop .#samples -c samples/make.sh
+
 # the library alone and the program on the manifest's rust-version
 msrv:
     CARGO_TARGET_DIR=target/msrv nix develop .#msrv -c cargo build --locked --no-default-features

@@ -5,3 +5,8 @@ result
 result-*
 
 .direnv/
+
+# written by `just samples`
+/samples/*
+!/samples/make.sh
+!/samples/README.md

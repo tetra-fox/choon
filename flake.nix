@@ -58,6 +58,17 @@
           };
 
           msrv = pkgs.mkShell { packages = [ msrv ]; };
+
+          # the encoders samples/make.sh runs
+          samples = pkgs.mkShell {
+            packages = with pkgs; [
+              ffmpeg
+              lame
+              opus-tools
+              vorbis-tools
+              fdk-aac-encoder
+            ];
+          };
         }
       );
 
