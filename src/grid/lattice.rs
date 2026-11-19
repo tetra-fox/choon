@@ -22,11 +22,10 @@ use rayon::prelude::*;
 
 use super::mdct::{DctIv, fold};
 use super::resample::Resampler;
+use crate::decode::opus::RATE;
 
 /// a 20 ms frame at 48 kHz
 pub(crate) const FRAME: usize = 960;
-/// the rate CELT runs at
-const RATE: u32 = 48_000;
 /// the samples over which a frame's window rises and falls
 const OVERLAP: usize = 120;
 /// the encoder's pre-emphasis at 48 kHz, which the decoder's de-emphasis inverts
