@@ -1,9 +1,16 @@
-# a v* tag makes a draft release; publishing the draft by hand runs publish.yml
+# a v* tag makes a draft release with the program built for each platform; publishing the draft
+# by hand runs publish.yml. run by hand it only builds the program and keeps the binaries as the
+# run's artifacts
 name: release
 
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit to build, the run's own when empty
+        type: string
 
 # the checks run every dependency's code, so only the release job can write
 permissions:
@@ -11,6 +18,7 @@ permissions:
 
 jobs:
   check:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -28,15 +36,90 @@ jobs:
       - run: nix develop -c just ci
       - run: nix develop -c just publish-check
 
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            artifact: choon-linux-amd64
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            artifact: choon-linux-arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: choon-windows-amd64.exe
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            artifact: choon-windows-arm64.exe
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: choon-macos-amd64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: choon-macos-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      TARGET: ${{ matrix.target }}
+      ARTIFACT: ${{ matrix.artifact }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+      # rustup instead of the flake, which has no Windows; it installs the toolchain that
+      # rust-toolchain.toml names
+      - name: Set up Rust
+        run: |
+          rustup toolchain install
+          rustup target add "$TARGET"
+      # the program has no C dependency, so the musl targets link without a musl C compiler
+      - run: cargo build --release --locked --target "$TARGET"
+      - name: Name the binary
+        run: |
+          src="target/$TARGET/release/choon"
+          [[ "$RUNNER_OS" == Windows ]] && src="$src.exe"
+          mv "$src" "$ARTIFACT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
+
+  macos-universal:
+    needs: build
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: choon-macos-*
+          merge-multiple: true
+      - run: lipo -create -output choon-macos-universal choon-macos-amd64 choon-macos-arm64
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: choon-macos-universal
+          path: choon-macos-universal
+          if-no-files-found: error
+
   release:
-    needs: check
+    if: github.event_name == 'push'
+    needs: [check, build, macos-universal]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
     steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          merge-multiple: true
       - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
+          files: choon-*
+          fail_on_unmatched_files: true
           draft: true
           # a tag such as v0.2.0-rc1 is published as a prerelease, which is never marked latest
           prerelease: ${{ contains(github.ref_name, '-') }}
