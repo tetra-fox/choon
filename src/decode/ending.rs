@@ -1,10 +1,18 @@
-//! ends an Ogg file's source at its last page when more than a page's most bytes follow it.
+//! ends a file's source where its audio ends, for the two readers of symphonia that trip on
+//! what follows it.
 //!
 //! symphonia-format-ogg 0.6.1 looks for a stream's last page from a page's most bytes before
 //! the end of the file, and fails the open when no page starts from there on (physical.rs,
 //! `probe_stream_end`: the first `next_page` is not allowed to fail). a file with that much
 //! after its audio, or damaged over its end, is then not read at all
 //! TODO: remove once a symphonia release searches back for the last page
+//!
+//! symphonia-bundle-flac 0.6.1 takes a frame to run to the next frame's header, and the last
+//! one to the end of the file (parser.rs, `try_read_fragment`). with anything after the audio
+//! the last frame's checksum fails, the frame is dropped and the read ends as one cut short. an
+//! ID3v1 tag, which old taggers put after a FLAC file, is left out here. other bytes cannot
+//! be told from the frame's own without decoding it, and still cost the frame
+//! TODO: remove once a symphonia release ends a FLAC stream's last frame by its checksum
 
 use std::io::{self, Read, Seek, SeekFrom};
 
@@ -22,28 +30,65 @@ const STEP: usize = 1 << 16;
 /// how far back from the end of the file the last page is looked for
 const SEARCHED: u64 = 16 << 20;
 
-/// `source`, ended where its last Ogg page ends when the reader would not find that page, and
-/// the bytes left out then. any other source comes back as it is, at its start
+/// the marker of an ID3v1 tag, which is the last bytes of its file, and the tag's length
+const ID3V1: &[u8; 3] = b"TAG";
+const ID3V1_BYTES: u64 = 128;
+/// the marker a FLAC stream starts with, and the one of an ID3v2 tag that can come before it,
+/// whose header is this long and states the tag's length in its last four bytes, seven bits each
+const FLAC: &[u8; 4] = b"fLaC";
+const ID3V2: &[u8; 3] = b"ID3";
+const ID3V2_HEADER: usize = 10;
+
+/// `source`, ended where its audio ends: at an Ogg file's last page when the reader would not
+/// find that page, with the bytes left out then, and before the ID3v1 tag after a FLAC file,
+/// which is no audio left out. any other source comes back as it is, at its start
 pub(super) fn ended(mut source: Box<dyn MediaSource>) -> (Box<dyn MediaSource>, Option<u64>) {
   let Some(length) = source.byte_len().filter(|_| source.is_seekable()) else {
     return (source, None);
   };
   // a source that fails here fails the same way when the reader opens it
-  let end = last_page(source.as_mut(), length).ok().flatten();
+  let page = last_page(source.as_mut(), length).ok().flatten();
+  let tag = before_tag(source.as_mut(), length).ok().flatten();
   if source.seek(SeekFrom::Start(0)).is_err() {
     return (source, None);
   }
-  match end {
-    Some(end) => {
-      let ended = Ended {
-        inner: source,
-        length: end,
-        at: 0,
-      };
-      (Box::new(ended), Some(length - end))
-    }
-    None => (source, None),
+  let Some(end) = page.or(tag) else {
+    return (source, None);
+  };
+  let ended = Ended {
+    inner: source,
+    length: end,
+    at: 0,
+  };
+  (Box::new(ended), page.map(|end| length - end))
+}
+
+/// where the ID3v1 tag after a FLAC file of `length` bytes starts; `None` for a file that is
+/// not FLAC from its start, or after an ID3v2 tag, and for one without the tag
+fn before_tag(source: &mut dyn MediaSource, length: u64) -> io::Result<Option<u64>> {
+  let Some(end) = length.checked_sub(ID3V1_BYTES) else {
+    return Ok(None);
+  };
+  let mut header = [0; ID3V2_HEADER];
+  source.seek(SeekFrom::Start(0))?;
+  source.read_exact(&mut header)?;
+  let mut marker = [0; FLAC.len()];
+  if header.starts_with(ID3V2) {
+    let stated = header[6..]
+      .iter()
+      .fold(0, |size, byte| size << 7 | u64::from(byte & 0x7f));
+    source.seek(SeekFrom::Start(ID3V2_HEADER as u64 + stated))?;
+    source.read_exact(&mut marker)?;
+  } else {
+    marker.copy_from_slice(&header[..FLAC.len()]);
   }
+  if marker != *FLAC {
+    return Ok(None);
+  }
+  let mut tag = [0; ID3V1.len()];
+  source.seek(SeekFrom::Start(end))?;
+  source.read_exact(&mut tag)?;
+  Ok((tag == *ID3V1).then_some(end))
 }
 
 /// where the last page of an Ogg file of `length` bytes ends, when it starts more than a page's
@@ -176,6 +221,30 @@ mod tests {
     marked.extend(vec![0xff; 1000]);
     assert_eq!(end_of(marked), Some(audio));
     assert_eq!(end_of(vec![0; 100_000]), None, "no Ogg file");
+  }
+
+  #[test]
+  fn a_tag_is_found_after_flac_alone() {
+    let tag = [&b"TAG"[..], &[0; 125]].concat();
+    let before = |start: &[u8]| {
+      let bytes = [start, &[7; 500], &tag].concat();
+      let length = bytes.len() as u64;
+      before_tag(&mut io::Cursor::new(bytes), length).unwrap()
+    };
+    assert_eq!(before(b"fLaC"), Some(504));
+    // an ID3v2 tag of 300 bytes after its header, then the stream
+    let tagged = [&b"ID3\x04\0\0\0\0\x02\x2c"[..], &[0; 300], b"fLaC"].concat();
+    assert_eq!(before(&tagged), Some(tagged.len() as u64 + 500));
+    assert_eq!(before(b"RIFF"), None);
+    let untagged = [&b"fLaC"[..], &[7; 500]].concat();
+    assert_eq!(
+      before_tag(&mut io::Cursor::new(untagged), 504).unwrap(),
+      None
+    );
+    assert_eq!(
+      before_tag(&mut io::Cursor::new(b"fLaC".to_vec()), 4).unwrap(),
+      None
+    );
   }
 
   #[test]

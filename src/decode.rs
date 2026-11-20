@@ -32,7 +32,7 @@ use crate::engine;
 mod aac;
 mod ape;
 pub(crate) mod dsd;
-mod ogg;
+mod ending;
 pub(crate) mod opus;
 mod wavpack;
 
@@ -45,6 +45,10 @@ const ANALYZED_CHANNELS: usize = 2;
 /// the highest sample rate the analyzer reads; a window holds a second of samples, so a header
 /// claiming more is not trusted with the memory
 const MAX_RATE: u32 = 768_000;
+
+/// what is said of a read that came to the end of the file inside a packet. a FLAC file's
+/// last frame runs to the end of the file for its reader, so bytes after it read as this too
+const CUT_SHORT: &str = "the last packet is cut short, or bytes that are no audio follow it";
 
 /// how many undecodable packets are skipped before reading stops
 const MAX_SKIPPED: u32 = 1000;
@@ -302,7 +306,7 @@ impl Decoder {
   ) -> Result<Self, engine::Error> {
     let not_audio = |why: String| engine::Error::NotAudio(why);
     let unsupported = |why: &str| engine::Error::Unsupported(why.to_string());
-    let (source, left_out) = ogg::ended(source);
+    let (source, left_out) = ending::ended(source);
     let file_bytes = source.byte_len();
     let stream = MediaSourceStream::new(source, Default::default());
     // symphonia-format-riff 0.6.1 multiplies a WAVE file's channel count by its bytes a sample
@@ -752,7 +756,7 @@ impl Decoder {
         Ok(None) => return None,
         Err(Error::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
           debug!("audio ends early");
-          self.stopped = Some("the file ends before its last packet".to_string());
+          self.stopped = Some(CUT_SHORT.to_string());
           return None;
         }
         // symphonia asks for a new decoder where a stream ends and another begins, as in a

@@ -115,6 +115,26 @@ fn an_ogg_file_is_read_whatever_follows_its_last_page() {
 }
 
 #[test]
+fn a_flac_file_with_an_id3v1_tag_after_it_is_read_to_its_last_frame() {
+  let whole = fixtures::flac(&music_for(4, 1, 44_100, pink), 16, false);
+  let clean = measure_bytes(whole.clone(), &settings()).unwrap();
+  let mut tagged = whole;
+  tagged.extend_from_slice(b"TAG");
+  tagged.extend_from_slice(&[0; 125]);
+  let measured = measure_bytes(tagged, &settings()).unwrap();
+  assert_eq!(measured.duration, clean.duration);
+  let reading = read(&measured);
+  assert!(
+    !reading
+      .limitations
+      .iter()
+      .any(|l| matches!(l, Limitation::Decoder(_))),
+    "{:?}",
+    reading.limitations
+  );
+}
+
+#[test]
 fn a_second_stream_chained_after_the_first_is_named_as_left_out() {
   let audio = Audio {
     rate: 48_000,
