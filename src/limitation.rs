@@ -77,7 +77,7 @@ pub enum Limitation {
   FilteredAt20Khz,
   /// Cutoff that shows only the lowest of several lossy generations.
   LowestCutoffOnly,
-  /// AAC grid without AAC's quantizer steps, which a Vorbis decode's grid reads as too.
+  /// AAC grid without AAC's quantizer steps, which a Vorbis or WMA decode's grid reads as too.
   VorbisReadsAsAac,
   /// Cutoff at an encoder's without a frame grid.
   ///
@@ -180,7 +180,9 @@ impl fmt::Display for Limitation {
       Self::LowestCutoffOnly => {
         f.write_str("Of several lossy generations, only the lowest cutoff shows")
       }
-      Self::VorbisReadsAsAac => f.write_str("A Vorbis decode's frame grid reads as AAC's"),
+      Self::VorbisReadsAsAac => {
+        f.write_str("A Vorbis decode's frame grid reads as AAC's, and a WMA decode's can")
+      }
       Self::CutoffWithoutGrid => f.write_str(
         "A recording filtered where an encoder cuts, and a decode resampled afterwards, stop at \
          an encoder's cutoff without a frame grid",
