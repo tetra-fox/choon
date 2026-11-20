@@ -2,8 +2,8 @@
 //! their type, damaged files of each decoder here and arbitrary bytes, none of which may panic
 
 use super::{read, settings};
-use crate::engine::{Error, measure_bytes};
-use crate::fixtures::{self, music_for, pink};
+use crate::engine::{Error, Measured, measure_bytes};
+use crate::fixtures::{self, Audio, music, music_for, pink};
 use crate::limitation::Limitation;
 
 #[test]
@@ -81,6 +81,37 @@ fn an_mp4_whose_sample_counts_pass_32_bits_is_read_without_a_panic() {
     "{:?}",
     reading.limitations
   );
+}
+
+#[test]
+fn an_ogg_file_is_read_whatever_follows_its_last_page() {
+  let audio = Audio {
+    rate: 48_000,
+    ..music(1, 44_100, pink)
+  };
+  let whole = fixtures::opus(&audio, fixtures::OpusSettings::music(128)).ogg();
+  let trailing = |measured: &Measured| {
+    read(measured)
+      .limitations
+      .into_iter()
+      .find(|l| matches!(l, Limitation::Decoder(why) if why.contains("last Ogg page")))
+  };
+  let clean = measure_bytes(whole.clone(), &settings()).unwrap();
+  assert_eq!(trailing(&clean), None);
+  // under a page's most bytes after the audio, which the reader looks past, and over it,
+  // where the reader's search for the last page starts in what follows
+  for (after, said) in [(1000, false), (100_000, true)] {
+    let mut bytes = whole.clone();
+    bytes.extend(std::iter::repeat_n(0xa5u8, after));
+    let measured = measure_bytes(bytes, &settings()).unwrap_or_else(|e| panic!("{after}: {e}"));
+    assert_eq!(measured.duration, clean.duration, "{after}");
+    assert_eq!(measured.claimed.frames, clean.claimed.frames, "{after}");
+    let limitation = trailing(&measured).map(|l| l.to_string());
+    assert_eq!(limitation.is_some(), said, "{after}: {limitation:?}");
+    if let Some(limitation) = limitation {
+      assert!(limitation.contains("100000 bytes"), "{limitation}");
+    }
+  }
 }
 
 proptest::proptest! {

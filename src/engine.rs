@@ -552,6 +552,11 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
   if let Some(stopped) = decoder.stopped.take() {
     measured.problems.push(Limitation::Decoder(stopped));
   }
+  if let Some(bytes) = decoder.left_out {
+    measured.problems.push(Limitation::Decoder(format!(
+      "reading stopped at the last Ogg page, {bytes} bytes before the end of the file"
+    )));
+  }
   if unscanned {
     measured.problems.push(Limitation::GridNotScanned);
   }

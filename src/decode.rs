@@ -32,6 +32,7 @@ use crate::engine;
 mod aac;
 mod ape;
 pub(crate) mod dsd;
+mod ogg;
 pub(crate) mod opus;
 mod wavpack;
 
@@ -228,6 +229,8 @@ pub(crate) struct Decoder {
   pub(crate) skipped: u32,
   /// why decoding stopped before the end of the file, when it did
   pub(crate) stopped: Option<String>,
+  /// the bytes after an Ogg file's last page that the reader was not given
+  pub(crate) left_out: Option<u64>,
   /// what an Opus stream's header and packets state
   opus: Option<Opus>,
   /// what places the padding of an MPEG audio stream, whose packets are trimmed here
@@ -299,6 +302,7 @@ impl Decoder {
   ) -> Result<Self, engine::Error> {
     let not_audio = |why: String| engine::Error::NotAudio(why);
     let unsupported = |why: &str| engine::Error::Unsupported(why.to_string());
+    let (source, left_out) = ogg::ended(source);
     let file_bytes = source.byte_len();
     let stream = MediaSourceStream::new(source, Default::default());
     // symphonia-format-riff 0.6.1 multiplies a WAVE file's channel count by its bytes a sample
@@ -429,6 +433,7 @@ impl Decoder {
       densest: None,
       skipped: 0,
       stopped: None,
+      left_out,
       opus,
       mpeg,
       seek_decodes: (params.codec == CODEC_ID_MONKEYS_AUDIO)
