@@ -17,3 +17,6 @@ result-*
 !/torture/run.py
 !/torture/README.md
 !/torture/manifest.tsv
+
+# the tuning workspace: corpus, scripts and results, a repository of its own
+/tuning/
