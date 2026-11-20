@@ -34,6 +34,7 @@ mod ape;
 pub(crate) mod dsd;
 mod ending;
 pub(crate) mod opus;
+mod wave;
 mod wavpack;
 
 use dsd::CODEC_ID_DSD;
@@ -235,6 +236,10 @@ pub(crate) struct Decoder {
   pub(crate) stopped: Option<String>,
   /// the bytes after an Ogg file's last page that the reader was not given
   pub(crate) left_out: Option<u64>,
+  /// the audio tracks the file holds beside the one read
+  pub(crate) other_tracks: usize,
+  /// whether the file's source can be sought in
+  pub(crate) seekable: bool,
   /// what an Opus stream's header and packets state
   opus: Option<Opus>,
   /// what places the padding of an MPEG audio stream, whose packets are trimmed here
@@ -306,7 +311,8 @@ impl Decoder {
   ) -> Result<Self, engine::Error> {
     let not_audio = |why: String| engine::Error::NotAudio(why);
     let unsupported = |why: &str| engine::Error::Unsupported(why.to_string());
-    let (source, left_out) = ending::ended(source);
+    let (source, left_out) = ending::ended(wave::sized(source));
+    let seekable = source.is_seekable();
     let file_bytes = source.byte_len();
     let stream = MediaSourceStream::new(source, Default::default());
     // symphonia-format-riff 0.6.1 multiplies a WAVE file's channel count by its bytes a sample
@@ -344,6 +350,16 @@ impl Decoder {
     let track = format
       .default_track(TrackType::Audio)
       .ok_or_else(|| not_audio("the file holds no audio track".to_string()))?;
+    let audio_tracks = format
+      .tracks()
+      .iter()
+      .filter(|track| {
+        track
+          .codec_params
+          .as_ref()
+          .is_some_and(|p| p.audio().is_some())
+      })
+      .count();
     let mut params = track
       .codec_params
       .as_ref()
@@ -445,6 +461,8 @@ impl Decoder {
       skipped: 0,
       stopped: None,
       left_out,
+      other_tracks: audio_tracks.saturating_sub(1),
+      seekable,
       opus,
       mpeg,
       seek_decodes: (params.codec == CODEC_ID_MONKEYS_AUDIO)

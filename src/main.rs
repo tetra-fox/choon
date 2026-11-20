@@ -257,9 +257,6 @@ enum Unread {
   NotRead(String),
 }
 
-/// what is said of a file whose analysis panicked
-const PANICKED: &str = "the analyzer failed on this file, which is a bug in choon";
-
 /// how often a terminal's bars are brought up to date
 const TICK: Duration = Duration::from_millis(100);
 
@@ -369,9 +366,10 @@ fn run(check: &Check) -> Result<u8, Failed> {
       if events.send(event).is_err() {
         return;
       }
-      // a panic in a decoder or in the analysis is a bug, and one file's: it is caught here so
-      // that the run goes on to the other files. the panic's own message is on stderr by then.
-      // nothing the analysis borrows is left half changed, as it only reads what it is given
+      // the library makes a panic while it measures an error. one in a reading, or in this
+      // program's own part, is caught here, so that the run goes on to the other files either
+      // way. the panic's own message is on stderr by then. nothing the analysis borrows is left
+      // half changed, as it only reads what it is given
       let run = AssertUnwindSafe(|| analyzed(path, profiles, coverage, &progress, &canceled));
       let result = match catch_unwind(run) {
         Ok(Ok(checked)) => Ok(Box::new(checked)),
@@ -379,7 +377,7 @@ fn run(check: &Check) -> Result<u8, Failed> {
         Ok(Err(Error::Open(e))) => Err(Unread::Open(e)),
         Ok(Err(Error::NotAudio(why) | Error::Unsupported(why))) => Err(Unread::NotRead(why)),
         Ok(Err(Error::OutOfTime)) => unreachable!("no analysis has a deadline"),
-        Err(_) => Err(Unread::NotRead(PANICKED.to_string())),
+        Ok(Err(Error::Panicked)) | Err(_) => Err(Unread::NotRead(Error::Panicked.to_string())),
       };
       // as above: a closed output has no use for the result
       let _ = events.send(Event::Done { file, result });

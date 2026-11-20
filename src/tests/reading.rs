@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use super::{a_17_khz_cut, analyzed, explained, flac, read, settings, state};
+use super::{a_17_khz_cut, analyzed, explained, flac, read, settings};
 use crate::decode::HeAac;
 use crate::engine::{measure, measure_bytes};
 use crate::fixtures::{self, Audio, Bitrate, lo_fi, music, music_for, pink, tone};
@@ -651,12 +651,16 @@ fn a_17_khz_cut_at_48_khz_reads_as_an_encoders_cutoff() {
 #[test]
 fn a_17_khz_cut_whose_grid_was_not_scanned_is_possibly_lossy_too() {
   let dir = tempfile::tempdir().unwrap();
-  let path = a_17_khz_cut(dir.path());
-  // a total sample count of 0 is none stated, and a file that states no length is not scanned
-  state(&path, 0);
+  let audio = music_for(60, 1, 44_100, fixtures::cut_at(17_000.0));
+  let path = flac(dir.path(), "cut.flac", &audio, 16);
+  // cut short before the last of the scan's stretches, with enough left for a reading
+  let bytes = std::fs::read(&path).unwrap();
+  std::fs::write(&path, &bytes[..bytes.len() * 6 / 10]).unwrap();
   let (reading, why) = explained(&path);
   assert!(
-    reading.limitations.contains(&Limitation::GridNotScanned),
+    reading
+      .limitations
+      .contains(&Limitation::GridScanIncomplete),
     "{why}"
   );
   assert_eq!(reading.cutoff_verdict, Verdict::LikelyTranscode, "{why}");

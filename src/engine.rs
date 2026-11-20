@@ -6,6 +6,7 @@ use std::fmt;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::num::NonZeroUsize;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
@@ -13,7 +14,7 @@ use std::time::Instant;
 
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::io::MediaSource;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::decode::opus::OpusUse;
 use crate::decode::{self, Claimed, Decoder, Filled, HeAac, dsd};
@@ -263,6 +264,11 @@ pub enum Error {
   /// one the analyzer decodes, its decoder cannot start, or the sample rate is above what the
   /// analyzer reads.
   Unsupported(String),
+  /// Analysis that panicked, which is a bug in the analyzer or in a decoder.
+  ///
+  /// The panic's own message goes where the panic hook writes it. A build with
+  /// `panic = "abort"` aborts instead.
+  Panicked,
 }
 
 impl fmt::Display for Error {
@@ -272,6 +278,7 @@ impl fmt::Display for Error {
       Self::OutOfTime => f.write_str("the analysis ran out of time while opening the file"),
       Self::Open(_) => f.write_str("the file could not be opened"),
       Self::NotAudio(why) | Self::Unsupported(why) => f.write_str(why),
+      Self::Panicked => f.write_str("the analyzer failed on this file, which is a bug in choon"),
     }
   }
 }
@@ -280,7 +287,11 @@ impl std::error::Error for Error {
   fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
     match self {
       Self::Open(e) => Some(e),
-      Self::Canceled | Self::OutOfTime | Self::NotAudio(_) | Self::Unsupported(_) => None,
+      Self::Canceled
+      | Self::OutOfTime
+      | Self::NotAudio(_)
+      | Self::Unsupported(_)
+      | Self::Panicked => None,
     }
   }
 }
@@ -338,8 +349,8 @@ impl MediaSource for Watched {
 /// are read through a source that stops giving them at either, so a container that is slow to
 /// open or to seek in holds the thread no longer than a window does.
 ///
-/// Opening the file itself is not watched. A FIFO with no writer holds the thread until one
-/// opens it, whatever the deadline and the cancel check say.
+/// A FIFO waits for its writer when it is opened. That wait ends too when the analysis is
+/// canceled or its time is up.
 ///
 /// A file that claims a lossless format is then scanned for a codec's frame grid in four
 /// stretches of its samples ([`grid`]). The scan's eight jobs, each codec in each stretch, run
@@ -353,6 +364,7 @@ impl MediaSource for Watched {
 /// - [`Error::Unsupported`] if the audio is not one the analyzer reads.
 /// - [`Error::Canceled`] if [`Settings::canceled`] says so before the analysis ends.
 /// - [`Error::OutOfTime`] if [`Settings::deadline`] passes before the audio is opened.
+/// - [`Error::Panicked`] if the analysis panics.
 ///
 /// # Examples
 ///
@@ -387,17 +399,68 @@ impl MediaSource for Watched {
 /// ```
 pub fn measure(path: impl AsRef<Path>, settings: &Settings) -> Result<Measured, Error> {
   let path = path.as_ref();
-  let file = File::open(path).map_err(Error::Open)?;
+  let file = open(path, settings)?;
   // a directory opens on some systems and only fails when read
   if file.metadata().map_err(Error::Open)?.is_dir() {
     return Err(Error::Open(io::ErrorKind::IsADirectory.into()));
   }
   let source = Watched::new(Box::new(file), settings);
-  let opened = Decoder::from_source(Box::new(source), &decode::hint_of(path));
-  if let Err(problem) = &opened {
-    debug!(path = %path.display(), %problem, "audio not opened");
+  guarded(|| {
+    let opened = Decoder::from_source(Box::new(source), &decode::hint_of(path));
+    if let Err(problem) = &opened {
+      debug!(path = %path.display(), %problem, "audio not opened");
+    }
+    measure_opened(opened, settings)
+  })
+}
+
+/// opens the file at `path`. opening a FIFO waits for a writer and nothing cuts that wait
+/// short, so under a cancel check or a deadline a FIFO is opened on a thread of its own, which
+/// is left waiting when the analysis stops first and ends once a writer comes
+fn open(path: &Path, settings: &Settings) -> Result<File, Error> {
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::FileTypeExt;
+    use std::sync::mpsc::{RecvTimeoutError, channel};
+    use std::time::Duration;
+
+    let stoppable = settings.canceled.is_some() || settings.deadline.is_some();
+    let fifo = std::fs::metadata(path).is_ok_and(|file| file.file_type().is_fifo());
+    if stoppable && fifo {
+      // one message at most is ever sent
+      let (opened, waiting) = channel();
+      let path = path.to_path_buf();
+      std::thread::spawn(move || {
+        // nothing receives once the analysis has stopped, and the file is closed here
+        let _ = opened.send(File::open(path));
+      });
+      loop {
+        match waiting.recv_timeout(Duration::from_millis(20)) {
+          Ok(file) => return file.map_err(Error::Open),
+          Err(RecvTimeoutError::Timeout) if is_canceled(settings.canceled.as_ref()) => {
+            return Err(Error::Canceled);
+          }
+          Err(RecvTimeoutError::Timeout) if is_past(settings.deadline) => {
+            return Err(Error::OutOfTime);
+          }
+          Err(RecvTimeoutError::Timeout) => {}
+          Err(RecvTimeoutError::Disconnected) => return Err(Error::Panicked),
+        }
+      }
+    }
   }
-  measure_opened(opened, settings)
+  File::open(path).map_err(Error::Open)
+}
+
+/// `analysis`, with a panic in it made an error. the decoders are other crates' and young,
+/// and a caller reads files a stranger made on a thread it wants back. the analysis owns what
+/// it changes, so a panic leaves nothing of the caller's half changed. the grid scan's jobs
+/// run on rayon's pool, which hands their panic to the thread that waits for them
+fn guarded(analysis: impl FnOnce() -> Result<Measured, Error>) -> Result<Measured, Error> {
+  catch_unwind(AssertUnwindSafe(analysis)).unwrap_or_else(|_| {
+    warn!("the analysis panicked, the file not read");
+    Err(Error::Panicked)
+  })
 }
 
 /// Measures audio held in memory, as [`measure`] does a file's.
@@ -408,12 +471,15 @@ pub fn measure(path: impl AsRef<Path>, settings: &Settings) -> Result<Measured, 
 /// - [`Error::Unsupported`] if the audio is not one the analyzer reads.
 /// - [`Error::Canceled`] if [`Settings::canceled`] says so before the analysis ends.
 /// - [`Error::OutOfTime`] if [`Settings::deadline`] passes before the audio is opened.
+/// - [`Error::Panicked`] if the analysis panics.
 pub fn measure_bytes(bytes: Vec<u8>, settings: &Settings) -> Result<Measured, Error> {
   let source = Watched::new(Box::new(io::Cursor::new(bytes)), settings);
-  measure_opened(
-    Decoder::from_source(Box::new(source), &Hint::new()),
-    settings,
-  )
+  guarded(|| {
+    measure_opened(
+      Decoder::from_source(Box::new(source), &Hint::new()),
+      settings,
+    )
+  })
 }
 
 /// measures the audio of `opened`, or says why it did not open: the analysis's own stop when
@@ -484,6 +550,14 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
       1.0
     },
   };
+  // a sampled read's stretches are read before its windows where the source can be sought in.
+  // symphonia-format-caf 0.6.1 refuses every seek once its last packet is read (demuxer.rs,
+  // `seek`: "invalid packet index"), which the last window can do
+  // TODO: read them after the windows again once a symphonia release seeks from the end
+  let stretches_first = picks.is_some() && decoder.seekable;
+  if stretches_first && let Some(segments) = &mut segments {
+    read_segments(&mut decoder, segments, settings, &mut measured)?;
+  }
   let reached = match picks {
     Some(picks) => {
       measured.sampled = true;
@@ -512,20 +586,23 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
   match reached {
     Reached::End(seconds) => {
       measured.duration = seconds;
-      // a decoder that stopped says why itself
       if let Some(stated) = stated
         && stated - seconds > WHOLE_WITHIN
-        && decoder.length_is_counted()
-        && decoder.stopped.is_none()
       {
-        debug!(
-          stated,
-          read = seconds,
-          "the file holds less audio than it states"
-        );
-        measured.problems.push(Limitation::AudioMissing {
-          seconds: stated - seconds,
-        });
+        // a length the bytes could not hold is the header's mistake, whatever kind of length
+        // it is. short of one they could hold, audio is missing where the length is a count,
+        // and a decoder that stopped says why itself
+        let past = past_bytes(&decoder, stated, seconds, &mut measured).is_some();
+        if !past && decoder.length_is_counted() && decoder.stopped.is_none() {
+          debug!(
+            stated,
+            read = seconds,
+            "the file holds less audio than it states"
+          );
+          measured.problems.push(Limitation::AudioMissing {
+            seconds: stated - seconds,
+          });
+        }
       }
     }
     Reached::Short(seconds) if stated.is_none() => measured.duration = seconds,
@@ -536,9 +613,26 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
       }
     }
   }
+  // a file that states no length has shown it by the end of a read in full. where the source
+  // can be sought in and a timestamp places a sample, the stretches of the scan are read then,
+  // as a sampled read's are. Matroska counts in milliseconds, and symphonia 0.6.1's reader of it
+  // does not seek once it has read to the end, so a lossless file in it stays unscanned
+  let ended = !measured
+    .problems
+    .iter()
+    .any(|problem| matches!(problem, Limitation::LengthNotStated { .. }));
+  if unscanned
+    && decoder.seekable
+    && decoder.ticks_fit_frames()
+    && ended
+    && let Reached::End(seconds) = reached
+  {
+    segments = Segments::of((seconds * rate as f64).round() as u64);
+  }
   if let Some(segments) = &mut segments
     && !segments.complete()
-    && measured.sampled
+    && (measured.sampled || unscanned)
+    && !stretches_first
   {
     read_segments(&mut decoder, segments, settings, &mut measured)?;
   }
@@ -555,12 +649,17 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
   if let Some(stopped) = decoder.stopped.take() {
     measured.problems.push(Limitation::Decoder(stopped));
   }
+  if decoder.other_tracks > 0 {
+    measured.problems.push(Limitation::OtherTracks {
+      tracks: decoder.other_tracks + 1,
+    });
+  }
   if let Some(bytes) = decoder.left_out {
     measured.problems.push(Limitation::Decoder(format!(
       "reading stopped at the last Ogg page, {bytes} bytes before the end of the file"
     )));
   }
-  if unscanned {
+  if unscanned && segments.is_none() {
     measured.problems.push(Limitation::GridNotScanned);
   }
   if let Some(segments) = &segments {
@@ -953,6 +1052,12 @@ fn seeking_decodes_more(picks: &BTreeSet<u64>, unit: u64, rate: u64) -> bool {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn a_panic_in_an_analysis_is_an_error() {
+    let failed = guarded(|| panic!("a decoder failed"));
+    assert!(matches!(failed, Err(Error::Panicked)), "{failed:?}");
+  }
 
   #[test]
   fn a_file_of_long_packets_is_read_through_when_seeking_would_decode_more() {

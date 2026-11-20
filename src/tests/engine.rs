@@ -337,6 +337,105 @@ fn a_flac_with_a_damaged_frame_says_how_much_audio_is_missing() {
 }
 
 #[test]
+fn an_mp3_whose_header_counts_more_frames_than_its_bytes_hold_says_so() {
+  let dir = tempfile::tempdir().unwrap();
+  let path = dir.path().join("a.mp3");
+  fixtures::write_mp3(&music(1, 44_100, pink), Bitrate::Kbps128, &path);
+  let audio = std::fs::read(&path).unwrap();
+  // a first frame of 417 bytes that holds a Xing header in place of audio, after the 4 bytes
+  // of the frame's own header and the 32 of a stereo frame's side information: its marker,
+  // the flag that a count of frames follows, and a count of 4,000,000
+  let mut counted = audio[..4].to_vec();
+  counted[2] &= !0b10;
+  counted.resize(417, 0);
+  counted[36..40].copy_from_slice(b"Xing");
+  counted[40..44].copy_from_slice(&1u32.to_be_bytes());
+  counted[44..48].copy_from_slice(&4_000_000u32.to_be_bytes());
+  counted.extend_from_slice(&audio);
+  let measured = measure_bytes(counted, &Settings::default()).unwrap();
+  let stated = measured.claimed.frames.unwrap() as f64 / 44_100.0;
+  assert!(stated > 100_000.0, "{stated}");
+  assert!(
+    (measured.duration - fixtures::SECONDS as f64).abs() < 0.2,
+    "{}",
+    measured.duration
+  );
+  let reading = read(&measured);
+  assert!(
+    reading.limitations.contains(&Limitation::LengthPastBytes),
+    "{:?}",
+    reading.limitations
+  );
+}
+
+#[test]
+fn a_wave_file_that_states_no_size_of_its_samples_is_as_long_as_its_bytes() {
+  // two seconds of 16-bit mono PCM at 8 kHz that state 0 bytes, then 0xFFFFFFFF
+  let samples: Vec<u8> = (0..16_000i32)
+    .flat_map(|n| ((n * 37 % 2000 - 1000) as i16).to_le_bytes())
+    .collect();
+  for stated in [0u32, u32::MAX] {
+    let mut bytes = b"RIFF\0\0\0\0WAVEfmt \x10\0\0\0\x01\0\x01\0".to_vec();
+    bytes.extend(8000u32.to_le_bytes());
+    bytes.extend(16_000u32.to_le_bytes());
+    bytes.extend(b"\x02\0\x10\0data");
+    bytes.extend(stated.to_le_bytes());
+    bytes.extend(&samples);
+    let measured = measure_bytes(bytes, &Settings::default()).unwrap();
+    assert_eq!(measured.claimed.frames, Some(16_000), "{stated}");
+    assert_eq!(measured.duration, 2.0, "{stated}");
+  }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_fifo_no_writer_opens_holds_the_analysis_no_longer_than_it_may_run() {
+  use std::sync::atomic::{AtomicBool, Ordering};
+  use std::time::Duration;
+
+  let dir = tempfile::tempdir().unwrap();
+  let fifo = dir.path().join("audio.fifo");
+  let made = std::process::Command::new("mkfifo").arg(&fifo).status();
+  assert!(made.is_ok_and(|status| status.success()), "mkfifo ran");
+  let timed = Settings {
+    deadline: Some(Instant::now() + Duration::from_millis(50)),
+    ..Settings::default()
+  };
+  let out_of_time = measure(&fifo, &timed);
+  assert!(
+    matches!(out_of_time, Err(Error::OutOfTime)),
+    "{out_of_time:?}"
+  );
+  let stop = Arc::new(AtomicBool::new(false));
+  let flag = stop.clone();
+  let canceled = Settings {
+    canceled: Some(Arc::new(move || flag.load(Ordering::Relaxed))),
+    ..Settings::default()
+  };
+  stop.store(true, Ordering::Relaxed);
+  let stopped = measure(&fifo, &canceled);
+  assert!(matches!(stopped, Err(Error::Canceled)), "{stopped:?}");
+  // a writer and the analysis open a FIFO together, and what the writer gives is read. one
+  // of its own, as the first has two threads left waiting on it
+  let fifo = dir.path().join("written.fifo");
+  let made = std::process::Command::new("mkfifo").arg(&fifo).status();
+  assert!(made.is_ok_and(|status| status.success()), "mkfifo ran");
+  let writer = std::thread::spawn({
+    let fifo = fifo.clone();
+    // FLAC is read without seeking
+    move || {
+      std::fs::write(
+        fifo,
+        fixtures::flac(&music_for(2, 1, 44_100, pink), 16, false),
+      )
+    }
+  });
+  let read = measure(&fifo, &settings());
+  writer.join().unwrap().unwrap();
+  assert!(read.is_ok(), "{read:?}");
+}
+
+#[test]
 fn an_mp3_without_a_length_header_is_read_to_its_end() {
   let dir = tempfile::tempdir().unwrap();
   // 4 s at 320 kbps, then 30 s at 128 kbps: a reader that takes the length from the first

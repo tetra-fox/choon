@@ -399,7 +399,7 @@ fn weighed(
     // a Vorbis decode's values do not sit on AAC's steps
     let stepped = grid.quantizer.is_some() || matches!(grid.evidence, Evidence::AacSteps { .. });
     if grid.codec == Codec::Aac && !stepped {
-      limitations.push(Limitation::VorbisReadsAsAac);
+      limitations.push(Limitation::AacGridWithoutSteps);
     }
     let evidence = match &grid.evidence {
       Evidence::Count(scan) => format!(

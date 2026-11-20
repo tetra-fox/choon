@@ -54,6 +54,11 @@ pub enum Limitation {
     /// Number of one-second windows analyzed.
     windows: usize,
   },
+  /// File with several audio tracks, of which only the first was analyzed.
+  OtherTracks {
+    /// Number of audio tracks in the file.
+    tracks: usize,
+  },
   /// File with more than two channels, of which only the first two were analyzed.
   ChannelsLeftOut {
     /// Number of channels in the file.
@@ -78,7 +83,7 @@ pub enum Limitation {
   /// Cutoff that shows only the lowest of several lossy generations.
   LowestCutoffOnly,
   /// AAC grid without AAC's quantizer steps, which a Vorbis or WMA decode's grid reads as too.
-  VorbisReadsAsAac,
+  AacGridWithoutSteps,
   /// Cutoff at an encoder's without a frame grid.
   ///
   /// A recording filtered there and a decode resampled afterwards both look like this.
@@ -158,6 +163,9 @@ impl fmt::Display for Limitation {
         f,
         "Only {windows} one-second windows spread over the file were analyzed"
       ),
+      Self::OtherTracks { tracks } => {
+        write!(f, "Only the first of {tracks} audio tracks was analyzed")
+      }
       Self::ChannelsLeftOut { channels } => {
         write!(f, "Only the first two of {channels} channels were analyzed")
       }
@@ -180,7 +188,7 @@ impl fmt::Display for Limitation {
       Self::LowestCutoffOnly => {
         f.write_str("Of several lossy generations, only the lowest cutoff shows")
       }
-      Self::VorbisReadsAsAac => {
+      Self::AacGridWithoutSteps => {
         f.write_str("A Vorbis decode's frame grid reads as AAC's, and a WMA decode's can")
       }
       Self::CutoffWithoutGrid => f.write_str(

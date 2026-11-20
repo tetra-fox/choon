@@ -30,6 +30,9 @@ const PAGE_MAX: u64 = (HEADER + MAX_SEGMENTS + MAX_SEGMENTS * 255) as u64;
 const STEP: usize = 1 << 16;
 /// how far back from the end of the file the last page is looked for
 const SEARCHED: u64 = 16 << 20;
+/// the places with a page's marker and a length that fits whose checksums are read, each a
+/// read of up to a page, before the last page is given up on
+const TRIED: usize = 64;
 
 /// the marker an ID3v1 tag starts with, and the tag's length
 const ID3V1: &[u8] = b"TAG";
@@ -181,9 +184,8 @@ fn before<const N: usize>(source: &mut dyn MediaSource, end: u64) -> io::Result<
 /// most bytes before the end of the file. `None` for a file that does not start with a page,
 /// one whose last page the reader finds itself, and one with no page in the bytes searched.
 ///
-/// a page is taken by its marker, its version and a length that fits the file. its checksum is
-/// not read: a marker met by chance in what follows the audio gives a file the reader fails
-/// on, as it does without this.
+/// a page is one by its marker, its version, a length that fits the file and its checksum, so
+/// a marker met by chance in what follows the audio is passed over.
 fn last_page(source: &mut dyn MediaSource, length: u64) -> io::Result<Option<u64>> {
   let mut marker = [0; MARKER.len()];
   source.seek(SeekFrom::Start(0))?;
@@ -196,20 +198,29 @@ fn last_page(source: &mut dyn MediaSource, length: u64) -> io::Result<Option<u64
   let mut buffer = vec![0; STEP + overlap];
   let floor = length.saturating_sub(SEARCHED);
   let mut end = length;
-  while end > floor {
+  let mut tried_left = TRIED;
+  while end > floor && tried_left > 0 {
     let start = end.saturating_sub(STEP as u64).max(floor);
     let read_to = (end + overlap as u64).min(length);
     // at most a step and the overlap
     let bytes = &mut buffer[..(read_to - start) as usize];
     source.seek(SeekFrom::Start(start))?;
     source.read_exact(bytes)?;
-    let found = (0..(end - start) as usize).rev().find_map(|at| {
-      let page_start = start + at as u64;
-      let page_end = page_start + page_length(&bytes[at..])?;
-      (page_end <= length).then_some((page_start, page_end))
-    });
-    if let Some((page_start, page_end)) = found {
-      return Ok((length - page_start > PAGE_MAX).then_some(page_end));
+    // the places a page could start at, from the last: few, as each holds the marker
+    let starts: Vec<(u64, u64)> = (0..(end - start) as usize)
+      .rev()
+      .filter_map(|at| Some((start + at as u64, page_length(&bytes[at..])?)))
+      .filter(|(page_start, page_length)| page_start + page_length <= length)
+      .collect();
+    for (page_start, page_length) in starts.into_iter().take(tried_left) {
+      tried_left -= 1;
+      // at most a page's most bytes
+      let mut page = vec![0; page_length as usize];
+      source.seek(SeekFrom::Start(page_start))?;
+      source.read_exact(&mut page)?;
+      if sums(&page) {
+        return Ok((length - page_start > PAGE_MAX).then_some(page_start + page_length));
+      }
     }
     end = start;
   }
@@ -228,6 +239,27 @@ fn page_length(bytes: &[u8]) -> Option<u64> {
   let table = rest.get(..segments)?;
   let data: u64 = table.iter().map(|length| u64::from(*length)).sum();
   Some((HEADER + segments) as u64 + data)
+}
+
+/// where a page's header holds its checksum, which is counted as zeros
+const CHECKSUM: std::ops::Range<usize> = 22..26;
+
+/// whether `page`, a whole page, holds the checksum of its own bytes: a CRC of 32 bits with
+/// the polynomial 0x04c11db7, from zero, the high bit first
+fn sums(page: &[u8]) -> bool {
+  let crc = page.iter().enumerate().fold(0u32, |crc, (at, byte)| {
+    let byte = if CHECKSUM.contains(&at) { 0 } else { *byte };
+    (0..8).fold(crc ^ u32::from(byte) << 24, |crc, _| {
+      if crc & 0x8000_0000 == 0 {
+        crc << 1
+      } else {
+        crc << 1 ^ 0x04c1_1db7
+      }
+    })
+  });
+  page
+    .get(CHECKSUM)
+    .is_some_and(|stated| stated == crc.to_le_bytes())
 }
 
 /// a source that ends `length` bytes in, whatever its file holds after them
@@ -282,6 +314,17 @@ mod tests {
     page.push(segments);
     page.extend(std::iter::repeat_n(255, usize::from(segments)));
     page.extend(std::iter::repeat_n(7, usize::from(segments) * 255));
+    // the checksum of the page with zeros where it goes
+    let crc = page.iter().fold(0u32, |crc, byte| {
+      (0..8).fold(crc ^ u32::from(*byte) << 24, |crc, _| {
+        if crc & 0x8000_0000 == 0 {
+          crc << 1
+        } else {
+          crc << 1 ^ 0x04c1_1db7
+        }
+      })
+    });
+    page[CHECKSUM].copy_from_slice(&crc.to_le_bytes());
     page
   }
 
@@ -300,11 +343,15 @@ mod tests {
     let near = PAGE_MAX as usize - 283;
     assert_eq!(end_of(followed(near)), None, "the reader still finds it");
     assert_eq!(end_of(followed(near + 1)), Some(audio));
-    // past one step back, and with a marker in what follows whose page would pass the end
+    // past one step back, and with markers in what follows: one whose page would pass the
+    // end, and one whose page fits and does not sum
     assert_eq!(end_of(followed(3 * STEP + 5)), Some(audio));
     let mut marked = followed(3 * STEP);
     marked.extend_from_slice(b"OggS\0");
     marked.extend(vec![0xff; 1000]);
+    assert_eq!(end_of(marked.clone()), Some(audio));
+    marked.extend_from_slice(b"OggS\0");
+    marked.extend(vec![0xff; 100_000]);
     assert_eq!(end_of(marked), Some(audio));
     assert_eq!(end_of(vec![0; 100_000]), None, "no Ogg file");
   }

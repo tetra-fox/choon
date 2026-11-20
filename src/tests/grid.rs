@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use super::{flac, read, settings};
+use super::{flac, read, settings, state};
 use crate::engine::{measure, measure_bytes};
 use crate::fixtures::{self, Audio, Bitrate, LongWindow, music, pink};
 use crate::grid::{self, Codec, Evidence};
@@ -193,7 +193,7 @@ fn a_decode_of_aacs_quantizer_shows_its_steps_under_the_window_it_was_coded_with
     assert_eq!(showing(own), grid::SEGMENTS, "{name}: {scan:?}");
     assert_eq!(showing(other), 0, "{name}: {scan:?}");
     let reading = read(&measured);
-    let vorbis = Limitation::VorbisReadsAsAac;
+    let vorbis = Limitation::AacGridWithoutSteps;
     assert!(!reading.limitations.contains(&vorbis), "{reading:#?}");
     let on_steps = format!("{} scalefactor bands sit on whole steps", own.whole);
     assert!(reading.summary.contains(&on_steps), "{}", reading.summary);
@@ -226,7 +226,9 @@ fn a_decode_of_aacs_quantizer_shows_its_steps_under_the_window_it_was_coded_with
   let reading = read(&measured);
   assert_eq!(reading.grid.as_ref().map(|g| g.codec), Some(Codec::Aac));
   assert!(
-    reading.limitations.contains(&Limitation::VorbisReadsAsAac),
+    reading
+      .limitations
+      .contains(&Limitation::AacGridWithoutSteps),
     "{reading:#?}"
   );
   // and audio that was never coded none
@@ -478,6 +480,24 @@ fn audio_that_was_never_opus_carries_no_opus_frames() {
   let high = flac(dir.path(), "at-96000.flac", &music(1, 96_000, pink), 24);
   let measured = measure(high, &settings()).unwrap();
   assert_eq!(measured.grid.expect("scanned for MP3 and AAC").opus, None);
+}
+
+#[test]
+fn a_decode_that_states_no_length_is_scanned_once_it_is_read() {
+  let dir = tempfile::tempdir().unwrap();
+  let through = fixtures::through_mp3(&music(1, 44_100, pink), Bitrate::Kbps128, dir.path());
+  let path = flac(dir.path(), "piped.flac", &through, 16);
+  // a total sample count of 0 is none stated, as an encoder writing to a pipe leaves it
+  state(&path, 0);
+  let measured = measure(&path, &settings()).unwrap();
+  assert_eq!(measured.claimed.frames, None);
+  let reading = read(&measured);
+  assert_eq!(reading.grid.map(|grid| grid.codec), Some(Codec::Mp3));
+  assert!(
+    !reading.limitations.contains(&Limitation::GridNotScanned),
+    "{:?}",
+    reading.limitations
+  );
 }
 
 #[test]
