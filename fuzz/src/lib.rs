@@ -46,10 +46,13 @@ pub fn analyze(data: &[u8]) {
     },
     ..Settings::default()
   };
-  on_one_thread(|| {
-    if let Ok(measured) = choon::measure_bytes(bytes.to_vec(), &settings) {
+  on_one_thread(|| match choon::measure_bytes(bytes.to_vec(), &settings) {
+    Ok(measured) => {
       measured.read(&ReadingThresholds::default());
     }
+    // the library makes a panic of its own or of a decoder an error. here it is the find
+    Err(choon::Error::Panicked) => panic!("the analysis panicked"),
+    Err(_) => {}
   });
 }
 
