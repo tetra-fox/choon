@@ -9,9 +9,10 @@
 //!
 //! symphonia-bundle-flac 0.6.1 takes a frame to run to the next frame's header, and the last
 //! one to the end of the file (parser.rs, `try_read_fragment`). with anything after the audio
-//! the last frame's checksum fails, the frame is dropped and the read ends as one cut short. an
-//! ID3v1 tag, which old taggers put after a FLAC file, is left out here. other bytes cannot
-//! be told from the frame's own without decoding it, and still cost the frame
+//! the last frame's checksum fails, the frame is dropped and the read ends as one cut short.
+//! the tags that taggers put after a file's audio, ID3v1, Lyrics3 and APE, are left out here.
+//! other bytes cannot be told from the frame's own without decoding it, and still cost the
+//! frame
 //! TODO: remove once a symphonia release ends a FLAC stream's last frame by its checksum
 
 use std::io::{self, Read, Seek, SeekFrom};
@@ -30,9 +31,25 @@ const STEP: usize = 1 << 16;
 /// how far back from the end of the file the last page is looked for
 const SEARCHED: u64 = 16 << 20;
 
-/// the marker of an ID3v1 tag, which is the last bytes of its file, and the tag's length
-const ID3V1: &[u8; 3] = b"TAG";
-const ID3V1_BYTES: u64 = 128;
+/// the marker an ID3v1 tag starts with, and the tag's length
+const ID3V1: &[u8] = b"TAG";
+const ID3V1_BYTES: usize = 128;
+/// the marker both versions of a Lyrics3 tag start with, and the one each ends with. the
+/// second version states its length before its end marker, in six digits, and the first holds
+/// this many bytes of lyrics at most
+const LYRICS_START: &[u8] = b"LYRICSBEGIN";
+const LYRICS_END: &[u8] = b"LYRICSEND";
+const LYRICS2_END: &[u8] = b"LYRICS200";
+const LYRICS2_DIGITS: usize = 6;
+const LYRICS_MAX: usize = 5100;
+/// the marker an APE tag's footer and header start with, and the length of either. the footer
+/// states the tag's length without its header at byte 12, and whether it has one in the top
+/// bit of the flags at byte 20
+const APE: &[u8] = b"APETAGEX";
+const APE_FOOTER: usize = 32;
+const APE_HAS_HEADER: u32 = 1 << 31;
+/// the kinds of tag looked for after the audio: each comes once at most
+const KINDS: usize = 4;
 /// the marker a FLAC stream starts with, and the one of an ID3v2 tag that can come before it,
 /// whose header is this long and states the tag's length in its last four bytes, seven bits each
 const FLAC: &[u8; 4] = b"fLaC";
@@ -40,15 +57,15 @@ const ID3V2: &[u8; 3] = b"ID3";
 const ID3V2_HEADER: usize = 10;
 
 /// `source`, ended where its audio ends: at an Ogg file's last page when the reader would not
-/// find that page, with the bytes left out then, and before the ID3v1 tag after a FLAC file,
-/// which is no audio left out. any other source comes back as it is, at its start
+/// find that page, with the bytes left out then, and before the tags after a FLAC file, which
+/// are no audio left out. any other source comes back as it is, at its start
 pub(super) fn ended(mut source: Box<dyn MediaSource>) -> (Box<dyn MediaSource>, Option<u64>) {
   let Some(length) = source.byte_len().filter(|_| source.is_seekable()) else {
     return (source, None);
   };
   // a source that fails here fails the same way when the reader opens it
   let page = last_page(source.as_mut(), length).ok().flatten();
-  let tag = before_tag(source.as_mut(), length).ok().flatten();
+  let tag = before_tags(source.as_mut(), length).ok().flatten();
   if source.seek(SeekFrom::Start(0)).is_err() {
     return (source, None);
   }
@@ -63,12 +80,9 @@ pub(super) fn ended(mut source: Box<dyn MediaSource>) -> (Box<dyn MediaSource>, 
   (Box::new(ended), page.map(|end| length - end))
 }
 
-/// where the ID3v1 tag after a FLAC file of `length` bytes starts; `None` for a file that is
-/// not FLAC from its start, or after an ID3v2 tag, and for one without the tag
-fn before_tag(source: &mut dyn MediaSource, length: u64) -> io::Result<Option<u64>> {
-  let Some(end) = length.checked_sub(ID3V1_BYTES) else {
-    return Ok(None);
-  };
+/// where the tags after a FLAC file of `length` bytes start; `None` for a file that is not
+/// FLAC from its start, or after an ID3v2 tag, and for one with no tag after its audio
+fn before_tags(source: &mut dyn MediaSource, length: u64) -> io::Result<Option<u64>> {
   let mut header = [0; ID3V2_HEADER];
   source.seek(SeekFrom::Start(0))?;
   source.read_exact(&mut header)?;
@@ -85,10 +99,82 @@ fn before_tag(source: &mut dyn MediaSource, length: u64) -> io::Result<Option<u6
   if marker != *FLAC {
     return Ok(None);
   }
-  let mut tag = [0; ID3V1.len()];
-  source.seek(SeekFrom::Start(end))?;
-  source.read_exact(&mut tag)?;
-  Ok((tag == *ID3V1).then_some(end))
+  // the tags come in any order, each before the ones already found
+  let mut end = length;
+  for _ in 0..KINDS {
+    let Some(start) = tag_start(source, end)? else {
+      break;
+    };
+    end = start;
+  }
+  Ok((end < length).then_some(end))
+}
+
+/// where the tag that ends at byte `end` of the file starts; `None` when none ends there
+fn tag_start(source: &mut dyn MediaSource, end: u64) -> io::Result<Option<u64>> {
+  if let Some(tag) = before::<ID3V1_BYTES>(source, end)?
+    && tag.starts_with(ID3V1)
+  {
+    return Ok(Some(end - ID3V1_BYTES as u64));
+  }
+  if let Some(footer) = before::<APE_FOOTER>(source, end)?
+    && footer.starts_with(APE)
+  {
+    let word =
+      |at: usize| u32::from_le_bytes([footer[at], footer[at + 1], footer[at + 2], footer[at + 3]]);
+    let header = word(20) & APE_HAS_HEADER != 0;
+    let length = u64::from(word(12)) + if header { APE_FOOTER as u64 } else { 0 };
+    // the stated length holds the footer, and a header starts with the marker too
+    let start = end
+      .checked_sub(length)
+      .filter(|_| word(12) as usize >= APE_FOOTER);
+    let Some(start) = start else {
+      return Ok(None);
+    };
+    let marked = !header
+      || before::<APE_FOOTER>(source, start + APE_FOOTER as u64)?
+        .is_some_and(|h| h.starts_with(APE));
+    return Ok(marked.then_some(start));
+  }
+  if let Some(tail) = before::<{ LYRICS2_DIGITS + LYRICS2_END.len() }>(source, end)?
+    && tail.ends_with(LYRICS2_END)
+  {
+    let digits = std::str::from_utf8(&tail[..LYRICS2_DIGITS]).ok();
+    let stated = digits.and_then(|digits| digits.parse::<u64>().ok());
+    let start = stated.and_then(|stated| (end - tail.len() as u64).checked_sub(stated));
+    let Some(start) = start else {
+      return Ok(None);
+    };
+    let marked = before::<{ LYRICS_START.len() }>(source, start + LYRICS_START.len() as u64)?
+      .is_some_and(|marker| marker == LYRICS_START);
+    return Ok(marked.then_some(start));
+  }
+  if let Some(tail) = before::<{ LYRICS_END.len() }>(source, end)?
+    && tail == LYRICS_END
+  {
+    // the first version states no length: its start is looked for as far back as it can be
+    let reach = (LYRICS_START.len() + LYRICS_MAX + LYRICS_END.len()) as u64;
+    let from = end.saturating_sub(reach);
+    let mut bytes = vec![0; (end - from) as usize];
+    source.seek(SeekFrom::Start(from))?;
+    source.read_exact(&mut bytes)?;
+    let at = bytes
+      .windows(LYRICS_START.len())
+      .rposition(|window| window == LYRICS_START);
+    return Ok(at.map(|at| from + at as u64));
+  }
+  Ok(None)
+}
+
+/// the `N` bytes before byte `end` of the file; `None` when fewer come before it
+fn before<const N: usize>(source: &mut dyn MediaSource, end: u64) -> io::Result<Option<[u8; N]>> {
+  let Some(start) = end.checked_sub(N as u64) else {
+    return Ok(None);
+  };
+  let mut bytes = [0; N];
+  source.seek(SeekFrom::Start(start))?;
+  source.read_exact(&mut bytes)?;
+  Ok(Some(bytes))
 }
 
 /// where the last page of an Ogg file of `length` bytes ends, when it starts more than a page's
@@ -223,28 +309,96 @@ mod tests {
     assert_eq!(end_of(vec![0; 100_000]), None, "no Ogg file");
   }
 
-  #[test]
-  fn a_tag_is_found_after_flac_alone() {
-    let tag = [&b"TAG"[..], &[0; 125]].concat();
-    let before = |start: &[u8]| {
-      let bytes = [start, &[7; 500], &tag].concat();
-      let length = bytes.len() as u64;
-      before_tag(&mut io::Cursor::new(bytes), length).unwrap()
+  fn id3v1() -> Vec<u8> {
+    [ID3V1, &[0; ID3V1_BYTES - 3]].concat()
+  }
+
+  /// an APE tag of 100 bytes of items, with a header when `header`
+  fn ape(header: bool) -> Vec<u8> {
+    let block = |flags: u32| -> Vec<u8> {
+      let words = [2000, 100 + APE_FOOTER as u32, 1, flags];
+      let words = words.iter().flat_map(|word| word.to_le_bytes());
+      APE.iter().copied().chain(words).chain([0; 8]).collect()
     };
-    assert_eq!(before(b"fLaC"), Some(504));
+    let flags = if header { APE_HAS_HEADER } else { 0 };
+    let start = if header {
+      block(flags | 1 << 29)
+    } else {
+      Vec::new()
+    };
+    [start, vec![9; 100], block(flags)].concat()
+  }
+
+  fn lyrics2() -> Vec<u8> {
+    let body = [LYRICS_START, &[b'x'; 40]].concat();
+    [
+      &body[..],
+      format!("{:06}", body.len()).as_bytes(),
+      LYRICS2_END,
+    ]
+    .concat()
+  }
+
+  fn lyrics1() -> Vec<u8> {
+    [LYRICS_START, &[b'x'; 40], LYRICS_END].concat()
+  }
+
+  /// where the tags start in a file of `start`, 500 bytes and `tags`
+  fn tags_start(start: &[u8], tags: &[Vec<u8>]) -> Option<u64> {
+    let bytes = [start, &[7; 500], &tags.concat()].concat();
+    let length = bytes.len() as u64;
+    before_tags(&mut io::Cursor::new(bytes), length).unwrap()
+  }
+
+  #[test]
+  fn tags_are_found_after_flac_alone() {
+    assert_eq!(tags_start(b"fLaC", &[id3v1()]), Some(504));
     // an ID3v2 tag of 300 bytes after its header, then the stream
     let tagged = [&b"ID3\x04\0\0\0\0\x02\x2c"[..], &[0; 300], b"fLaC"].concat();
-    assert_eq!(before(&tagged), Some(tagged.len() as u64 + 500));
-    assert_eq!(before(b"RIFF"), None);
-    let untagged = [&b"fLaC"[..], &[7; 500]].concat();
     assert_eq!(
-      before_tag(&mut io::Cursor::new(untagged), 504).unwrap(),
-      None
+      tags_start(&tagged, &[id3v1()]),
+      Some(tagged.len() as u64 + 500)
     );
-    assert_eq!(
-      before_tag(&mut io::Cursor::new(b"fLaC".to_vec()), 4).unwrap(),
-      None
-    );
+    assert_eq!(tags_start(b"RIFF", &[id3v1()]), None);
+    assert_eq!(tags_start(b"fLaC", &[]), None);
+    let short = before_tags(&mut io::Cursor::new(b"fLaC\0\0\0\0\0\0".to_vec()), 10);
+    assert_eq!(short.unwrap(), None);
+  }
+
+  #[test]
+  fn each_kind_of_tag_is_found_alone_and_before_the_others() {
+    for tags in [
+      vec![ape(true)],
+      vec![ape(false)],
+      vec![lyrics2()],
+      vec![lyrics1()],
+      vec![ape(true), id3v1()],
+      vec![ape(false), lyrics2(), id3v1()],
+      vec![lyrics1(), ape(true), id3v1()],
+    ] {
+      assert_eq!(tags_start(b"fLaC", &tags), Some(504), "{tags:?}");
+    }
+  }
+
+  #[test]
+  fn a_tag_that_states_more_than_the_file_holds_is_not_one() {
+    // an APE footer that states 4 GB, one that states less than itself, and a Lyrics3 length
+    // that leads to no start marker
+    let mut long = ape(false);
+    let size = long.len() - APE_FOOTER + 12;
+    long[size..size + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+    let mut short = ape(false);
+    short[size..size + 4].copy_from_slice(&8u32.to_le_bytes());
+    let mut lyrics = lyrics2();
+    lyrics[..LYRICS_START.len()].fill(b'x');
+    let huge = [&[b'x'; 40][..], b"999999", LYRICS2_END].concat();
+    for tag in [long, short, lyrics, huge] {
+      assert_eq!(
+        tags_start(b"fLaC", std::slice::from_ref(&tag)),
+        None,
+        "{tag:?}"
+      );
+    }
   }
 
   #[test]

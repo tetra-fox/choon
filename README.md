@@ -211,9 +211,9 @@ A reading also holds:
 - A DSD reading cannot tell a DSD recording from PCM converted up, and the noise above the
   audio band reads as content
 - DST-compressed DSDIFF is refused by name
-- An ID3v1 tag after a FLAC file is left out. Other bytes after a FLAC file cost its last
-  frame, and the reading says the last packet is cut short or followed by bytes that are no
-  audio
+- ID3v1, Lyrics3 and APE tags after a FLAC file are left out. Other bytes after a FLAC file
+  cost its last frame, and the reading says the last packet is cut short or followed by bytes
+  that are no audio
 - PCM is read at 8, 16, 24 and 32 bits and as 32 and 64-bit float
 - A-law, mu-law and ADPCM in a WAV file are read as the lossy codecs they are
 - RF64 and Wave64 files are not read, and a WAV file that states a data size of 0 reads as no

@@ -115,23 +115,31 @@ fn an_ogg_file_is_read_whatever_follows_its_last_page() {
 }
 
 #[test]
-fn a_flac_file_with_an_id3v1_tag_after_it_is_read_to_its_last_frame() {
+fn a_flac_file_with_tags_after_it_is_read_to_its_last_frame() {
   let whole = fixtures::flac(&music_for(4, 1, 44_100, pink), 16, false);
   let clean = measure_bytes(whole.clone(), &settings()).unwrap();
-  let mut tagged = whole;
-  tagged.extend_from_slice(b"TAG");
-  tagged.extend_from_slice(&[0; 125]);
-  let measured = measure_bytes(tagged, &settings()).unwrap();
-  assert_eq!(measured.duration, clean.duration);
-  let reading = read(&measured);
-  assert!(
-    !reading
-      .limitations
-      .iter()
-      .any(|l| matches!(l, Limitation::Decoder(_))),
-    "{:?}",
-    reading.limitations
-  );
+  // an APE tag of one 9-byte item under a footer, then an ID3v1 tag
+  let item = b"\x01\0\0\0\0\0\0\0A\0b";
+  let mut ape = item.to_vec();
+  ape.extend_from_slice(b"APETAGEX");
+  for word in [2000u32, item.len() as u32 + 32, 1, 0] {
+    ape.extend_from_slice(&word.to_le_bytes());
+  }
+  ape.extend_from_slice(&[0; 8]);
+  let id3v1 = [&b"TAG"[..], &[0; 125]].concat();
+  for tags in [id3v1.clone(), ape.clone(), [ape, id3v1].concat()] {
+    let measured = measure_bytes([&whole[..], &tags].concat(), &settings()).unwrap();
+    assert_eq!(measured.duration, clean.duration, "{} bytes", tags.len());
+    let reading = read(&measured);
+    assert!(
+      !reading
+        .limitations
+        .iter()
+        .any(|l| matches!(l, Limitation::Decoder(_))),
+      "{:?}",
+      reading.limitations
+    );
+  }
 }
 
 #[test]
