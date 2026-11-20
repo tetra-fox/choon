@@ -855,7 +855,21 @@ fn verdict(
       khz(median)
     )
   } else {
-    "The windows do not fit one pattern.".to_string()
+    // what the windows show, where no rule reads it
+    let cutoffs: Vec<f64> = heard.windows.iter().filter_map(|w| w.cutoff_hz).collect();
+    let low = khz(percentile(&cutoffs, 0.1).unwrap_or(median));
+    let high = khz(percentile(&cutoffs, 0.9).unwrap_or(median));
+    let sharp = heard.share(|w| w.sharp);
+    let shelf = if sharp > 0.0 {
+      format!(", with a sharp shelf {} of the time", percent(sharp))
+    } else {
+      String::new()
+    };
+    if low == high {
+      format!("The content stops near {low}{shelf}, which fits no one pattern.")
+    } else {
+      format!("The cutoff moves between {low} and {high}{shelf}, which fits no one pattern.")
+    }
   };
   reading
 }
