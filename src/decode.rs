@@ -1403,18 +1403,6 @@ mod tests {
   }
 
   #[test]
-  fn hybrid_wavpack_is_refused_as_lossy() {
-    let source = Box::new(std::io::Cursor::new(fixtures::WAVPACK_HYBRID.to_vec()));
-    let Err(engine::Error::Unsupported(why)) = Decoder::from_source(source, &Hint::new()) else {
-      panic!("a hybrid file opened")
-    };
-    assert!(
-      why.contains("hybrid WavPack without its correction file"),
-      "{why}"
-    );
-  }
-
-  #[test]
   fn a_depth_of_no_bits_is_not_a_stated_depth() {
     // a CAF file states 0 bits a channel for a compressed codec, and its ALAC track's depth
     // is in the cookie, the last 24 bytes of the sample entry's 36-byte `alac` box

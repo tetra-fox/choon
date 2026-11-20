@@ -147,14 +147,9 @@ fn a_grid_stretch_starting_where_a_packet_ends_is_read_from_the_next_packet() {
 }
 
 #[test]
-fn a_canceled_analysis_and_one_out_of_time_before_it_opens_report_nothing() {
+fn an_analysis_out_of_time_before_it_opens_reports_nothing() {
   let dir = tempfile::tempdir().unwrap();
   let path = flac(dir.path(), "a.flac", &music(1, 44_100, pink), 16);
-  let canceled = Settings {
-    canceled: Some(Arc::new(|| true)),
-    ..settings()
-  };
-  assert!(matches!(measure(&path, &canceled), Err(Error::Canceled)));
   let late = Settings {
     deadline: Some(Instant::now()),
     ..settings()

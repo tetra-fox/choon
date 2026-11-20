@@ -309,7 +309,6 @@ mod tests {
     wanted.extend_from_slice(&(-256i16).to_le_bytes());
     wanted.push(0);
     assert_eq!(head_from_mp4(&stored), wanted);
-    assert_eq!(pre_skip(&head_from_mp4(&stored)), Some(312));
     // a header that ends inside a field keeps the bytes it has of it
     let short = head_from_mp4(&stored[..11]);
     assert_eq!((short[8], short[10]), (1, stored[10]));

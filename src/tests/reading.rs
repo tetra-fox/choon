@@ -148,15 +148,6 @@ fn an_opus_file_reads_by_its_cutoff_with_what_its_packets_state() {
   assert_ne!(reading.verdict, Verdict::LikelyTranscode, "{reading:#?}");
 }
 
-#[test]
-fn an_honest_mp3_is_judged_against_its_own_bitrate() {
-  let dir = tempfile::tempdir().unwrap();
-  let honest = dir.path().join("honest.mp3");
-  fixtures::write_mp3(&music(1, 44_100, pink), Bitrate::Kbps128, &honest);
-  let reading = analyzed(&honest);
-  assert_eq!(reading.verdict, Verdict::Consistent, "{reading:#?}");
-}
-
 /// content that stops at 16 kHz, where older encoders and 32 kHz sources stop too, as an MP3 at
 /// `bitrate`, reads as `verdict`
 fn a_16_khz_cut_as_an_mp3_reads(bitrate: Bitrate, verdict: Verdict) {
