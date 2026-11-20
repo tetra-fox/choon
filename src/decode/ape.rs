@@ -111,6 +111,12 @@ impl Stream {
   }
 }
 
+/// the sample frames in one frame of the stream whose track carries `extra_data`. a frame is
+/// decoded from its start, so a seek decodes up to this many before the position
+pub(super) fn frame_blocks(extra_data: &[u8]) -> Option<u32> {
+  Stream::from_bytes(extra_data).map(|stream| stream.frame_blocks)
+}
+
 pub(crate) struct ApeReader<'s> {
   reader: MediaSourceStream<'s>,
   info: ApeFileInfo,

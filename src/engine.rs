@@ -855,6 +855,10 @@ fn sampled(
 ) -> Result<Reached, Error> {
   let settings = run.settings;
   let rate = decoder.claimed.sample_rate as usize;
+  if seeking_decodes_more(picks, decoder.seek_decodes, rate as u64) {
+    debug!("seeking to the windows decodes more than reading through to them");
+    return through(decoder, measuring, buffer, picks, segments, run, measured);
+  }
   // where the furthest window read ends
   let mut furthest = 0.0;
   for (index, &second) in picks.iter().enumerate() {
@@ -877,18 +881,7 @@ fn sampled(
         return Ok(Reached::End(furthest));
       }
       debug!(problem, "the file cannot be sought in, reading it through");
-      return match whole(
-        decoder,
-        measuring,
-        buffer,
-        Windows::Only(picks),
-        segments,
-        run,
-        measured,
-      )? {
-        Reached::Short(_) => Ok(Reached::Sampled),
-        reached => Ok(reached),
-      };
+      return through(decoder, measuring, buffer, picks, segments, run, measured);
     }
     let filled = decoder.fill(buffer, rate);
     let length = match filled {
@@ -914,9 +907,59 @@ fn sampled(
   Ok(Reached::Sampled)
 }
 
+/// measures the windows at `picks` on a read from where the decoder is to the last of them
+fn through(
+  decoder: &mut Decoder,
+  measuring: &mut Measuring<'_>,
+  buffer: &mut [Vec<f32>],
+  picks: &BTreeSet<u64>,
+  segments: &mut Option<Segments>,
+  run: &Run<'_>,
+  measured: &mut Measured,
+) -> Result<Reached, Error> {
+  let read = Windows::Only(picks);
+  match whole(decoder, measuring, buffer, read, segments, run, measured)? {
+    Reached::Short(_) => Ok(Reached::Sampled),
+    reached => Ok(reached),
+  }
+}
+
+/// whether seeking to each of `picks` decodes more audio than one read through the file does.
+/// a seek lands where a packet starts, up to `unit` sample frames long at `rate`, and what is
+/// decoded from there to the window is dropped, once for every window in the packet
+fn seeking_decodes_more(picks: &BTreeSet<u64>, unit: u64, rate: u64) -> bool {
+  if unit == 0 {
+    return false;
+  }
+  // each window's own second, and the frames from its packet's start to it
+  let seeking: u128 = picks
+    .iter()
+    .map(|second| u128::from(rate) + u128::from(second.saturating_mul(rate) % unit))
+    .sum();
+  let through = picks
+    .last()
+    .map_or(0, |last| u128::from(last + 1) * u128::from(rate));
+  seeking > through
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn a_file_of_long_packets_is_read_through_when_seeking_would_decode_more() {
+    // the frames of Monkey's Audio at its highest level, 26.7 s at 44.1 kHz
+    let (frame, rate) = (1_179_648, 44_100);
+    assert!(seeking_decodes_more(&picks(34.0, 20), frame, rate));
+    assert!(!seeking_decodes_more(
+      &picks(6.0 * 3600.0, 240),
+      frame,
+      rate
+    ));
+    // its first levels' frames, 1.7 s
+    assert!(!seeking_decodes_more(&picks(600.0, 20), 73_728, rate));
+    assert!(!seeking_decodes_more(&picks(34.0, 20), 0, rate));
+  }
 
   #[test]
   fn more_windows_than_a_file_has_seconds_pick_each_second_once() {

@@ -232,6 +232,9 @@ pub(crate) struct Decoder {
   opus: Option<Opus>,
   /// what places the padding of an MPEG audio stream, whose packets are trimmed here
   mpeg: Option<Mpeg>,
+  /// the sample frames a seek can decode and drop before its position, where the format's
+  /// packets are long enough for that to matter: Monkey's Audio's frames, of up to 27 s
+  pub(crate) seek_decodes: u64,
   /// what an HE-AAC stream's decoder rebuilt
   pub(crate) he_aac: Option<HeAac>,
   /// the one-bit sample rate of a DSD file
@@ -428,6 +431,10 @@ impl Decoder {
       stopped: None,
       opus,
       mpeg,
+      seek_decodes: (params.codec == CODEC_ID_MONKEYS_AUDIO)
+        .then(|| params.extra_data.as_deref().and_then(ape::frame_blocks))
+        .flatten()
+        .map_or(0, u64::from),
       he_aac: None,
       // the reader passes the decoder the one-bit rate as its extra data
       dsd_rate: (params.codec == CODEC_ID_DSD)
