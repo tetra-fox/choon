@@ -21,8 +21,8 @@ use std::time::{Duration, Instant};
 
 use choon::grid::{Evidence, Family, Scan};
 use choon::{
-  CancelCheck, Claimed, Coverage, Error, Flag, HeAac, MeasureThresholds, Measured, OpusUse,
-  Reading, ReadingThresholds, Settings, Verdict,
+  CancelCheck, Claimed, Coverage, Error, Flag, HeAac, Limitation, MeasureThresholds, Measured,
+  OpusUse, Reading, ReadingThresholds, Settings, Verdict,
 };
 use clap::{Args, ColorChoice, Parser, Subcommand};
 use rayon::iter::{ParallelBridge, ParallelIterator};
@@ -878,7 +878,9 @@ fn found(reading: &Reading, scanned: bool) -> Vec<String> {
     found.push(cutoff);
     found.extend(guess);
     found.push(
-      if scanned {
+      if reading.limitations.contains(&Limitation::GridShort) {
+        "MP3 grid short of a transcode"
+      } else if scanned {
         "no grid"
       } else {
         "grid not scanned"

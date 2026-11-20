@@ -165,6 +165,10 @@ for its long blocks, so a grid's offset and window fit an encoder family:
 | possibly lossy   | the cutoff reads as a transcode or mixed sources, and no frame grid shows   |
 | inconclusive     | too little audio, no pattern, or a cut indistinguishable from an honest one |
 
+- A file is possibly lossy too when every stretch scanned puts an MP3 grid at one offset and the
+  grid falls just short of a likely transcode
+- A file that would read consistent is inconclusive when over a tenth of its samples are clipped
+  and a codec's count comes most of the way to a grid
 - A lossy file is also consistent when it stops where its own bitrate cuts
 - In a lossy file and a DSD file, where no grid is looked for, a likely transcode is nearly every
   window stopping at one known encoder cutoff with a sharp shelf
@@ -424,6 +428,8 @@ Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
   after any other conversion it can read as possibly lossy
 - A Vorbis decode's grid mostly reads as AAC's, without AAC's quantizer steps, and a WMA
   decode's can too
+- A decode made louder until it clips loses most of its frame grid. It reads as inconclusive
+  where a count still comes most of the way to one, and as consistent where none does
 - Opus is found in frames with the pitch post-filter off; a decode made mostly of filtered
   frames and one in SILK voice mode read as possibly lossy at most
 - An Opus decode of frames under 20 ms whose level was changed afterwards is not found

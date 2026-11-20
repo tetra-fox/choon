@@ -205,6 +205,12 @@ pub struct ReadingThresholds {
   ///
   /// [`CodecScan::segments_agreeing`]: crate::grid::CodecScan::segments_agreeing
   pub mp3_grid_segments_agreeing: usize,
+  /// Robust z over which an MP3 count every segment agrees on makes a file possibly lossy.
+  ///
+  /// It is compared with [`CodecScan::z`](crate::grid::CodecScan::z) of an MP3 count under
+  /// `mp3_grid_z` whose segments all put their lowest count at the file's offset. Lossless
+  /// audio rarely agrees in every segment this far out.
+  pub mp3_near_grid_z: f64,
   /// Robust z over which the AAC scan at the other rate finds a frame grid.
   ///
   /// It is compared with the z of [`OtherRate::aac`](crate::grid::OtherRate::aac) and of
@@ -275,6 +281,18 @@ pub struct ReadingThresholds {
   /// The two bands a hybrid frame is tested on land on the lattice by chance in a few frames
   /// of a hundred, which in a long file is more pairs of steps than `opus_hybrid_steps`.
   pub opus_hybrid_share: f64,
+  /// Share of clipped samples, in percent, over which a count short of a grid is a doubt.
+  ///
+  /// It is compared with
+  /// [`Measures::clipped_samples_pct`](crate::Measures::clipped_samples_pct). A decode made
+  /// louder until it clips loses most of its frame grid, and a file clipped this much whose
+  /// count reaches `clipped_grid_share` reads as inconclusive in place of consistent.
+  pub clipped_pct: f64,
+  /// Share of its z threshold, from 0 to 1, a count reaches in a clipped file that is a doubt.
+  ///
+  /// It is compared with the z of the MP3 count and of each AAC count over `mp3_grid_z` and
+  /// `aac_grid_z`, whichever comes nearest its threshold, in a file over `clipped_pct`.
+  pub clipped_grid_share: f64,
 }
 
 /// Weights that read the steps of an MP3 decode as Fraunhofer's encoder.
@@ -460,6 +478,9 @@ impl Default for ReadingThresholds {
       aac_grid_segments_agreeing: 0,
       mp3_grid_z: 12.0,
       mp3_grid_segments_agreeing: 3,
+      // of the tuning's files that show no grid, five decodes from four masters reach this
+      // with every segment agreeing and no lossless file does
+      mp3_near_grid_z: 8.0,
       // the tuning's files with no AAC behind a conversion reach 9.63 there, and its converted
       // AAC decodes that show a grid start at 16.7
       other_rate_aac_z: 13.0,
@@ -484,6 +505,10 @@ impl Default for ReadingThresholds {
       // share of 0.04 with this many pairs
       opus_hybrid_steps: 30,
       opus_hybrid_share: 0.1,
+      // the tuning's lossless files over a tenth clipped reach 0.57 of a threshold, and six of
+      // its sixteen decodes that 3 dB of gain clipped out of a grid reach this
+      clipped_pct: 10.0,
+      clipped_grid_share: 0.6,
     }
   }
 }

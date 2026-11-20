@@ -90,6 +90,16 @@ pub enum Limitation {
   CutoffWithoutGrid,
   /// Early roll-off, as old masters, speech and transfers have by nature.
   EarlyRollOff,
+  /// MP3 count that every segment agrees on and that falls short of a frame grid.
+  GridShort,
+  /// Clipped samples beside a count short of a frame grid.
+  ///
+  /// A decode made louder until it clips loses most of its grid, and loud lossless audio
+  /// clips too.
+  Clipped {
+    /// Share of the samples that are clipped, in percent.
+    percent: f64,
+  },
   /// DSD file, measured as PCM filtered from its one-bit samples.
   ///
   /// The noise the one-bit samples carry above the audio band is in the PCM too, where it
@@ -206,6 +216,15 @@ impl fmt::Display for Limitation {
         "The decoder rebuilt the band above the HE-AAC core, which ends at or under {}, from \
          the band below, so the cutoff is not where an encoder's lowpass sits",
         khz(*hz)
+      ),
+      Self::GridShort => f.write_str(
+        "Every stretch scanned puts an MP3 frame grid at the same offset, without the grid \
+         standing out enough to call a transcode",
+      ),
+      Self::Clipped { percent } => write!(
+        f,
+        "{percent:.0}% of the samples are clipped: a decode made louder until it clips loses \
+         most of its frame grid, and loud lossless audio clips too"
       ),
       Self::EarlyRollOff => f.write_str(
         "Old masters, speech, lo-fi material and vinyl or cassette transfers roll off early, and \

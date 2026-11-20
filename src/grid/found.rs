@@ -173,6 +173,28 @@ pub struct Found {
   pub quantizer: Option<AacSteps>,
 }
 
+/// the MP3 count of a `scan` that shows no grid, where it stands out past `mp3_near_grid_z`
+/// with every segment at the file's offset
+pub(crate) fn mp3_near<'a>(
+  scan: &'a Scan,
+  thresholds: &ReadingThresholds,
+) -> Option<&'a CodecScan> {
+  let count = &scan.mp3;
+  (count.z > thresholds.mp3_near_grid_z && count.segments_agreeing == super::SEGMENTS)
+    .then_some(count)
+}
+
+/// how near its z threshold the count of `scan` nearest it comes, as a share of the threshold:
+/// MP3's and AAC's under each window, at the file's own rate
+pub(crate) fn nearest_share(scan: &Scan, thresholds: &ReadingThresholds) -> f64 {
+  let aac = scan
+    .aac_sine
+    .as_ref()
+    .map_or(0.0, |sine| sine.z)
+    .max(scan.aac.z);
+  (scan.mp3.z / thresholds.mp3_grid_z).max(aac / thresholds.aac_grid_z)
+}
+
 /// the grid `scan` shows under `thresholds`, with the encoder family its offset fits
 pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found> {
   let (codec, evidence, sine) = shown(scan, thresholds)?;

@@ -524,3 +524,74 @@ fn a_file_stuck_at_negative_full_scale_carries_no_grid() {
     assert_ne!(reading.verdict, Verdict::LikelyTranscode, "{reading:#?}");
   }
 }
+
+/// `audio` made `gain` times louder, with what passes full scale clipped
+fn clipped(audio: &Audio, gain: f32) -> Audio {
+  let mut loud = audio.clone();
+  for sample in loud.channels.iter_mut().flatten() {
+    *sample = (*sample * gain).clamp(-1.0, 1.0);
+  }
+  loud
+}
+
+#[test]
+fn a_decode_clipped_out_of_its_grid_is_a_doubt_where_a_count_falls_short() {
+  let dir = tempfile::tempdir().unwrap();
+  let through = fixtures::through_mp3(&music(1, 44_100, pink), Bitrate::Kbps192, dir.path());
+  // nearly half the samples clip, which fills the band the encoder cut and takes the count
+  // of every segment under the threshold
+  let loud = clipped(&through, 16.0);
+  let measured = measure(flac(dir.path(), "loud.flac", &loud, 16), &settings()).unwrap();
+  let defaults = ReadingThresholds::default();
+  let scan = measured.grid.as_ref().expect("scanned");
+  assert!(grid::found(scan, &defaults).is_none(), "{scan:?}");
+  assert_eq!(scan.mp3.segments_agreeing, 4, "{scan:?}");
+  assert!(
+    scan.mp3.z > defaults.mp3_near_grid_z && scan.mp3.z < defaults.mp3_grid_z,
+    "{scan:?}"
+  );
+
+  let reading = measured.read(&defaults);
+  assert_eq!(reading.cutoff_verdict, Verdict::Consistent, "{reading:?}");
+  assert_eq!(reading.verdict, Verdict::PossiblyLossy, "{reading:?}");
+  assert!(reading.limitations.contains(&Limitation::GridShort));
+
+  // without the rule for a count every segment agrees on, the clipping is what is left to say
+  let no_near = ReadingThresholds {
+    mp3_near_grid_z: defaults.mp3_grid_z,
+    ..defaults.clone()
+  };
+  let reading = measured.read(&no_near);
+  assert_eq!(reading.verdict, Verdict::Inconclusive, "{reading:?}");
+  assert!(
+    reading
+      .limitations
+      .iter()
+      .any(|l| matches!(l, Limitation::Clipped { percent } if *percent > 40.0)),
+    "{reading:?}"
+  );
+  // and a file is consistent where neither rule looks
+  let neither = ReadingThresholds {
+    clipped_pct: 100.0,
+    ..no_near
+  };
+  assert_eq!(measured.read(&neither).verdict, Verdict::Consistent);
+}
+
+#[test]
+fn loud_audio_that_was_never_coded_stays_consistent() {
+  let dir = tempfile::tempdir().unwrap();
+  let loud = clipped(&music(1, 44_100, pink), 16.0);
+  let measured = measure(flac(dir.path(), "loud.flac", &loud, 16), &settings()).unwrap();
+  let reading = read(&measured);
+  let clipped = reading.measures.clipped_samples_pct.expect("counted");
+  assert!(clipped > 40.0, "{clipped}");
+  assert_eq!(reading.verdict, Verdict::Consistent, "{reading:?}");
+  assert!(
+    !reading
+      .limitations
+      .iter()
+      .any(|l| matches!(l, Limitation::Clipped { .. } | Limitation::GridShort)),
+    "{reading:?}"
+  );
+}
