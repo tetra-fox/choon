@@ -3,6 +3,7 @@
 
 use std::io::{Seek, SeekFrom};
 use std::num::NonZeroU32;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use symphonia::core::audio::{
   AsGenericAudioBufferRef, AudioBuffer, AudioMut, AudioSpec, Channels, GenericAudioBufferRef,
@@ -27,7 +28,7 @@ use symphonia::core::io::{MediaSource, MediaSourceStream, ReadBytes, ScopedStrea
 use symphonia::core::meta::{Metadata, MetadataLog};
 use symphonia::core::packet::{Packet, PacketRef};
 use symphonia::core::units::{Duration, TimeBase, Timestamp};
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 use super::{refused, seek_timestamp};
 
@@ -161,7 +162,10 @@ impl<'s> WavPackReader<'s> {
         return refused("wavpack: the file holds no block with audio");
       }
     };
-    let decoded = match wavicle::decode_stream(&block) {
+    let Some(decoded) = guarded(|| wavicle::decode_stream(&block)) else {
+      return refused("wavpack: the decoder failed on the file's first block");
+    };
+    let decoded = match decoded {
       Ok(decoded) => decoded,
       Err(e) => {
         debug!(error = %e, "wavpack first block not decoded");
@@ -337,6 +341,20 @@ enum Samples {
   Float(AudioBuffer<f32>),
 }
 
+/// what `decode` gives, or `None` when it panicked. wavicle 0.1.0 negates a value it read
+/// unchecked (entropy.rs, `wp_exp2s`), which panics in a build with overflow checks on a
+/// damaged block and wraps, as the format's own decoder does, in one without. every block is
+/// decoded on its own, so nothing of the decoder is left to use again. the default panic hook
+/// still prints it, and panic = "abort" still aborts
+/// TODO: remove once a wavicle release negates with wrapping arithmetic
+fn guarded<T>(decode: impl FnOnce() -> T) -> Option<T> {
+  let decoded = catch_unwind(AssertUnwindSafe(decode));
+  if decoded.is_err() {
+    warn!("a panic in the WavPack decoder was caught, its block skipped");
+  }
+  decoded.ok()
+}
+
 pub(crate) struct WavPackDecoder {
   params: AudioCodecParameters,
   samples: Samples,
@@ -346,7 +364,12 @@ pub(crate) struct WavPackDecoder {
 impl WavPackDecoder {
   fn decode(&mut self, block: &[u8]) -> Result<()> {
     self.clear();
-    let decoded = wavicle::decode_stream(block).map_err(|e| {
+    let Some(decoded) = guarded(|| wavicle::decode_stream(block)) else {
+      return Err(Error::DecodeError(
+        "wavpack: the decoder panicked on the block",
+      ));
+    };
+    let decoded = decoded.map_err(|e| {
       trace!(error = %e, "wavpack block not decoded");
       Error::DecodeError("wavpack: the block could not be decoded")
     })?;
