@@ -192,7 +192,10 @@ pub(crate) fn nearest_share(scan: &Scan, thresholds: &ReadingThresholds) -> f64 
     .as_ref()
     .map_or(0.0, |sine| sine.z)
     .max(scan.aac.z);
-  (scan.mp3.z / thresholds.mp3_grid_z).max(aac / thresholds.aac_grid_z)
+  let vorbis = scan.vorbis.as_ref().map_or(0.0, |vorbis| vorbis.z);
+  (scan.mp3.z / thresholds.mp3_grid_z)
+    .max(aac / thresholds.aac_grid_z)
+    .max(vorbis / thresholds.vorbis_grid_z)
 }
 
 /// the grid `scan` shows under `thresholds`, with the encoder family its offset fits
@@ -200,7 +203,7 @@ pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found
   let (codec, evidence, sine) = shown(scan, thresholds)?;
   // AAC's steps, which are read at the file's own rate
   let stepped = match (&evidence, codec) {
-    (Evidence::CountAt { .. }, _) | (_, Codec::Mp3 | Codec::Opus) => None,
+    (Evidence::CountAt { .. }, _) | (_, Codec::Mp3 | Codec::Opus | Codec::Vorbis) => None,
     (_, Codec::Aac) => aac_stepped(scan, thresholds),
   };
   let family = match (&evidence, codec) {
@@ -238,6 +241,8 @@ pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found
       .any(|length| length.uncut_offsets().contains(&short.most().0))
       .then_some(Family::Libopus),
     (_, Codec::Opus) => (evidence.offset() == OPUS_UNCUT_OFFSET).then_some(Family::Libopus),
+    // no encoder of Vorbis is told from another by its offset
+    (_, Codec::Vorbis) => None,
   };
   let quantizer = stepped
     .filter(|_| matches!(evidence, Evidence::Count(_)))
@@ -327,7 +332,7 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
     z: thresholds.mp3_grid_z,
     agreeing: thresholds.mp3_grid_segments_agreeing,
   };
-  fn clearest<'a>(counts: [Option<Counted<'a>>; 3]) -> Option<Counted<'a>> {
+  fn clearest<'a, const N: usize>(counts: [Option<Counted<'a>>; N]) -> Option<Counted<'a>> {
     counts
       .into_iter()
       .flatten()
@@ -337,6 +342,15 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
   let own = clearest([
     Some(aac(&scan.aac, false)),
     scan.aac_sine.as_ref().map(|scan| aac(scan, true)),
+    // a Vorbis long block has AAC's length and hop, so each count finds the other's grid
+    // weakly, and the window the encoder used stands furthest out
+    scan.vorbis.as_ref().map(|scan| Counted {
+      codec: Codec::Vorbis,
+      sine: false,
+      scan,
+      z: thresholds.vorbis_grid_z,
+      agreeing: 0,
+    }),
     Some(mp3(&scan.mp3)),
   ])
   .map(|count| (count.codec, Evidence::Count(count.scan.clone()), count.sine));
@@ -455,6 +469,7 @@ mod tests {
     let scan = |kbd: f64, sine: f64, kbd_steps: usize, sine_steps: usize| Scan {
       aac: count(448, kbd),
       aac_sine: Some(count(448, sine)),
+      vorbis: None,
       mp3: count(0, 2.0),
       opus: None,
       other_rate: None,
@@ -516,6 +531,7 @@ mod tests {
     let scan = |aac: (f64, usize), mp3: (f64, usize)| Scan {
       aac: codec_scan(aac.0, aac.1),
       aac_sine: None,
+      vorbis: None,
       mp3: codec_scan(mp3.0, mp3.1),
       opus: None,
       other_rate: None,

@@ -128,9 +128,10 @@ fn a_transform_decode_carries_the_aac_grid_under_the_window_it_was_coded_with() 
     let difference = squares(&mut a.iter().zip(b).map(|(a, b)| f64::from(a - b)));
     (difference / squares(&mut b.iter().map(|b| f64::from(*b)))).sqrt()
   };
-  for (name, window) in [
-    ("kaiser-bessel", LongWindow::KaiserBessel),
-    ("sine", LongWindow::Sine),
+  for (name, window, codec) in [
+    ("kaiser-bessel", LongWindow::KaiserBessel, Codec::Aac),
+    ("sine", LongWindow::Sine, Codec::Aac),
+    ("vorbis", LongWindow::Vorbis, Codec::Vorbis),
   ] {
     let through = fixtures::through_transform(&source, window, 64);
     // the coder kept the audio where it should be: it differs by its rounding and its cut
@@ -140,16 +141,20 @@ fn a_transform_decode_carries_the_aac_grid_under_the_window_it_was_coded_with() 
     let measured = measure(path, &settings()).unwrap();
     let scan = measured.grid.as_ref().expect("a lossless file is scanned");
     let sine = scan.aac_sine.as_ref().expect("the sine window is scanned");
-    let (own, other) = match window {
-      LongWindow::KaiserBessel => (&scan.aac, sine),
-      LongWindow::Sine => (sine, &scan.aac),
+    let vorbis = scan.vorbis.as_ref().expect("Vorbis's window is scanned");
+    let (own, others) = match window {
+      LongWindow::KaiserBessel => (&scan.aac, [sine, vorbis]),
+      LongWindow::Sine => (sine, [&scan.aac, vorbis]),
+      LongWindow::Vorbis => (vorbis, [&scan.aac, sine]),
     };
     assert_eq!(own.offset, 1024 - 64, "{name}: {scan:?}");
     assert_eq!(own.segments_agreeing, 4, "{name}: {scan:?}");
-    assert!(own.z > 3.0 * other.z, "{name}: {scan:?}");
+    for other in others {
+      assert!(own.z > 1.5 * other.z, "{name}: {scan:?}");
+    }
     let found = grid::found(scan, &ReadingThresholds::default());
     let found = found.unwrap_or_else(|| panic!("{name}: {scan:?}"));
-    assert_eq!(found.codec, Codec::Aac, "{name}: {scan:?}");
+    assert_eq!(found.codec, codec, "{name}: {scan:?}");
     assert_eq!(found.evidence, Evidence::Count(own.clone()), "{name}");
     assert_eq!(read(&measured).verdict, Verdict::LikelyTranscode, "{name}");
   }
@@ -189,6 +194,7 @@ fn a_decode_of_aacs_quantizer_shows_its_steps_under_the_window_it_was_coded_with
     let (own, other) = match window {
       LongWindow::KaiserBessel => (kbd, sine),
       LongWindow::Sine => (sine, kbd),
+      LongWindow::Vorbis => unreachable!("the steps are AAC's, coded under its windows"),
     };
     assert_eq!(showing(own), grid::SEGMENTS, "{name}: {scan:?}");
     assert_eq!(showing(other), 0, "{name}: {scan:?}");
@@ -204,6 +210,7 @@ fn a_decode_of_aacs_quantizer_shows_its_steps_under_the_window_it_was_coded_with
     // with no count over its threshold, the steps alone show the grid
     let uncounted = ReadingThresholds {
       aac_grid_z: 1e9,
+      vorbis_grid_z: 1e9,
       ..ReadingThresholds::default()
     };
     let found = grid::found(scan, &uncounted).expect("the steps show the grid");

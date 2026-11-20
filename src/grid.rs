@@ -1,4 +1,4 @@
-//! Frame grids that MP3, AAC and Opus encoders leave in decoded audio.
+//! Frame grids that MP3, AAC, Vorbis and Opus encoders leave in decoded audio.
 //!
 //! An encoder transforms its input in frames on a fixed grid and quantizes what the transform
 //! gives. The decoder's synthesis inverts the encoder's analysis, so running that analysis again
@@ -26,7 +26,9 @@
 //! runs once with each of the two windows the format gives a long block, the
 //! Kaiser-Bessel-derived one, which ffmpeg's encoder uses, and the sine one, which Apple's
 //! uses. The values an encoder zeroed come back only under its own window, so each analysis
-//! finds the other's grid weakly. The MP3 analysis is the layer III hybrid filterbank: the
+//! finds the other's grid weakly. A Vorbis long block has the same length and hop under a
+//! window of its own, and the analysis runs with that window too, at the file's rate alone.
+//! The MP3 analysis is the layer III hybrid filterbank: the
 //! 512-tap polyphase filterbank, an 18-line MDCT per subband and the alias-reduction
 //! butterflies, at a hop of 576. Short blocks are not analyzed.
 //!
@@ -118,8 +120,10 @@ const NOISE16: f64 = 8.809_710_218_959_115e-6;
 pub enum Codec {
   /// AAC, read with a long block's transform under either of its windows.
   ///
-  /// Vorbis decodes read as AAC too.
+  /// A Vorbis decode whose grid does not show under Vorbis's own window can read as AAC.
   Aac,
+  /// Vorbis, read with a long block's transform under its window.
+  Vorbis,
   /// MP3, layer III.
   Mp3,
   /// Opus, by the band energies of its CELT layer.
@@ -130,6 +134,7 @@ impl fmt::Display for Codec {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     f.write_str(match self {
       Self::Aac => "AAC",
+      Self::Vorbis => "Vorbis",
       Self::Mp3 => "MP3",
       Self::Opus => "Opus",
     })
@@ -352,7 +357,7 @@ impl OpusShifted {
   }
 }
 
-/// Scan of a file for the frame grids of MP3, AAC and Opus.
+/// Scan of a file for the frame grids of MP3, AAC, Vorbis and Opus.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
@@ -364,6 +369,11 @@ pub struct Scan {
   /// `None` in measures kept by a version of the analyzer that did not scan with it.
   #[cfg_attr(feature = "serde", serde(default))]
   pub aac_sine: Option<CodecScan>,
+  /// Vorbis's grid, with the window of its long blocks.
+  ///
+  /// `None` in measures kept by a version of the analyzer that did not scan with it.
+  #[cfg_attr(feature = "serde", serde(default))]
+  pub vorbis: Option<CodecScan>,
   /// MP3's grid.
   pub mp3: CodecScan,
   /// MP3's quantizer steps on that grid.

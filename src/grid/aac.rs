@@ -19,6 +19,8 @@ pub(crate) enum Window {
   /// Kaiser-Bessel derived, with an alpha of 4
   Kbd,
   Sine,
+  /// the window of a Vorbis long block, whose transform has the same length and hop
+  Vorbis,
 }
 
 impl Window {
@@ -34,6 +36,13 @@ impl Window {
       Self::Kbd => kbd_window(length, 4.0),
       Self::Sine => (0..length)
         .map(|n| (std::f64::consts::PI * (n as f64 + 0.5) / length as f64).sin())
+        .collect(),
+      // sin(pi/2 sin^2(pi (n + 1/2) / N))
+      Self::Vorbis => (0..length)
+        .map(|n| {
+          let sine = (std::f64::consts::PI * (n as f64 + 0.5) / length as f64).sin();
+          (std::f64::consts::FRAC_PI_2 * sine * sine).sin()
+        })
         .collect(),
     }
   }

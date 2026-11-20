@@ -789,6 +789,8 @@ pub enum LongWindow {
   KaiserBessel,
   /// Sine window, as Apple's AAC encoder uses.
   Sine,
+  /// Window of a Vorbis long block.
+  Vorbis,
 }
 
 /// Returns `audio` through a transform coder with AAC's long blocks and decoded again.
@@ -852,6 +854,7 @@ fn transform_coded(
   let window = match window {
     LongWindow::KaiserBessel => Window::Kbd,
     LongWindow::Sine => Window::Sine,
+    LongWindow::Vorbis => Window::Vorbis,
   }
   .samples();
   let kept = (16_000.0 * 2.0 * AAC_HOP as f64 / f64::from(audio.rate)) as usize;

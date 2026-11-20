@@ -48,13 +48,14 @@ spread across all windows.
 ### Frame grid
 
 In a file that claims a lossless format, four stretches of the samples are also scanned for the
-frame grid of an MP3 or AAC encoder. The encoder transforms its input in frames on a fixed grid
+frame grid of an MP3, AAC or Vorbis encoder. The encoder transforms its input in frames on a fixed grid
 and zeroes many transform values. Running its transform again on the decoded samples, with frames
 where the encoder put them, finds those values back at the level of the samples' rounding noise.
 
 AAC gives a long block one of two windows, and the zeroed values come back only under the one
 the encoder used. The scan runs under both: the Kaiser-Bessel-derived window of ffmpeg, fdk-aac
-and Nero, and the sine window of Apple and FAAC.
+and Nero, and the sine window of Apple and FAAC. A Vorbis long block has the same length and hop
+under a window of its own, and the scan runs under that one too.
 
 The scan counts the values above that noise at every offset of each codec's grid. A grid is one
 offset that counts far fewer than the rest; an MP3 grid also needs at least three stretches
@@ -160,7 +161,7 @@ for its long blocks, so a grid's offset and window fit an encoder family:
 | Verdict          | Description                                                                 |
 | ---------------- | --------------------------------------------------------------------------- |
 | consistent       | nearly every window reaches the top of the claimed band                     |
-| likely transcode | the samples carry an MP3, AAC or Opus frame grid                            |
+| likely transcode | the samples carry an MP3, AAC, Vorbis or Opus frame grid                    |
 | mixed sources    | part of the time or of the band is band-limited, the rest full band         |
 | possibly lossy   | the cutoff reads as a transcode or mixed sources, and no frame grid shows   |
 | inconclusive     | too little audio, no pattern, or a cut indistinguishable from an honest one |
@@ -411,7 +412,7 @@ Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
 
 - FAAC at 256 kbps codes nearly every frame as short blocks, which the scan does not analyse
 - An HE-AAC decode's core was coded at half the sample rate under the decoder's filterbank
-- A Vorbis decode is found by the AAC scan, whose windows are not Vorbis's
+- The Vorbis rows were counted by the AAC scan, before the scan ran under Vorbis's own window
 - AAC's quantizer steps show in 828 of the 880 AAC-LC decodes, 6 of which the count misses, in
   none of the 680 Vorbis decodes and none of the 280 HE-AAC ones
 - Fraunhofer's MP3 encoder, as the codec Windows ships, was checked on 44 other recordings at
@@ -426,11 +427,8 @@ Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
   from a pipe are not scanned, and a decode in one reads as possibly lossy at most
 - An MP3 or AAC decode converted to another rate is looked for between 44.1 and 48 kHz only;
   after any other conversion it can read as possibly lossy
-- A Vorbis decode's grid mostly reads as AAC's, without AAC's quantizer steps, and a WMA
-  decode's can too
-- A decode made louder until it clips loses most of its frame grid. The scan reads stretches that
-  are not clipped where the file has them. A file clipped throughout reads as inconclusive where
-  a count still comes most of the way to a grid, and as consistent where none does
+- A Vorbis decode whose grid does not stand out under Vorbis's own window can read as AAC,
+  without AAC's quantizer steps, and a WMA decode's can too
 - Opus is found in frames with the pitch post-filter off; a decode made mostly of filtered
   frames and one in SILK voice mode read as possibly lossy at most
 - An Opus decode of frames under 20 ms whose level was changed afterwards is not found
@@ -440,11 +438,14 @@ Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
 - Opus is looked for at 44.1 and 48 kHz only
 - An Opus decode folded to mono, with one channel copied to both, turned to mid and side, or
   truncated to 8 bits is not found
-- Clipping hides the grid frame by frame, so a decode made louder until it clips can lose it
+- Clipping hides the grid frame by frame, so a decode made louder until it clips can lose it. The
+  scan reads stretches that are not clipped where the file has them. A file clipped throughout
+  reads as inconclusive where a count still comes most of the way to a grid, and as consistent
+  where none does
 - The grid thresholds were tuned on LAME's MP3 and ffmpeg's AAC; [Encoders](#encoders) lists
   what the scan finds of others
-- A grid shows that the samples were decoded from MP3, AAC or Opus at some point, as in a master built
-  from such material
+- A grid shows that the samples were decoded from MP3, AAC, Vorbis or Opus at some point, as in a
+  master built from such material
 - A cutoff near 20 kHz, where MP3 320 and AAC cut and many recordings are filtered anyway, reads
   as inconclusive; only a grid calls such a file a transcode
 - Naturally band-limited audio (old, lo-fi, dark) can stop near an encoder cutoff by chance

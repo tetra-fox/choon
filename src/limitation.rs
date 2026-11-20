@@ -199,7 +199,7 @@ impl fmt::Display for Limitation {
         f.write_str("Of several lossy generations, only the lowest cutoff shows")
       }
       Self::AacGridWithoutSteps => {
-        f.write_str("A Vorbis decode's frame grid reads as AAC's, and a WMA decode's can")
+        f.write_str("A Vorbis decode's frame grid can read as AAC's, and so can a WMA decode's")
       }
       Self::CutoffWithoutGrid => f.write_str(
         "A recording filtered where an encoder cuts, and a decode resampled afterwards, stop at \
