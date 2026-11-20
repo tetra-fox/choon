@@ -620,3 +620,30 @@ fn a_clipped_decode_is_scanned_where_it_does_not_clip() {
   assert_eq!(scan.mp3.segments_agreeing, 4, "{scan:?}");
   assert_eq!(read(&measured).verdict, Verdict::LikelyTranscode);
 }
+
+#[test]
+fn an_mp2_decode_carries_its_grid_on_the_filterbanks_phases() {
+  let dir = tempfile::tempdir().unwrap();
+  let mp2 = dir.path().join("clip.mp2");
+  std::fs::write(&mp2, fixtures::MP2).unwrap();
+  let through = fixtures::decoded(&mp2);
+  let measured = measure(flac(dir.path(), "decoded.flac", &through, 16), &settings()).unwrap();
+  let scan = measured.grid.as_ref().expect("a lossless file is scanned");
+  let count = scan.mp2.as_ref().expect("the subband samples are counted");
+  assert_eq!(count.segments_agreeing, 4, "{scan:?}");
+  let found = grid::found(scan, &ReadingThresholds::default());
+  let found = found.unwrap_or_else(|| panic!("{scan:?}"));
+  assert_eq!(found.codec, Codec::Mp2, "{scan:?}");
+  // audio that was never coded and a decode of MP3 show none
+  let source = music(1, 44_100, pink);
+  let mp3 = fixtures::through_mp3(&source, Bitrate::Kbps192, dir.path());
+  for (name, audio) in [("source", &source), ("mp3", &mp3)] {
+    let measured = measure(flac(dir.path(), "other.flac", audio, 16), &settings()).unwrap();
+    let scan = measured.grid.as_ref().expect("a lossless file is scanned");
+    let count = scan.mp2.as_ref().expect("the subband samples are counted");
+    assert!(
+      count.z < ReadingThresholds::default().mp2_grid_z,
+      "{name}: {count:?}"
+    );
+  }
+}

@@ -14,6 +14,10 @@ use super::{MP3_HOP, Mp3Neighbours, NOISE16};
 /// level at the 16-bit rounding noise of the filterbank's output
 const MP3_NOISE_GAIN: f64 = 0.527_861_394_696_74;
 
+/// the same for a subband sample of the polyphase filterbank, before the MDCT: the noise level
+/// of the values layer II quantizes
+const SUBBAND_NOISE_GAIN: f64 = 0.176_776_736_260_801_6;
+
 /// half of the MPEG audio synthesis window D in units of 2^-16, as ffmpeg's encoder carries it;
 /// the analysis window C is D / 32
 const ENWINDOW: [i32; 257] = [
@@ -173,30 +177,40 @@ impl Mp3<f32> {
   /// the active count summed over the granules of `segment`, for each offset of the granule
   /// grid from its first sample. every offset counts the same number of granules. the 32
   /// phases of the polyphase filterbank are tasks on rayon's thread pool.
-  pub(super) fn curve(&self, segment: &Segment) -> Vec<f64> {
+  ///
+  /// beside it, the active count of the subband samples themselves at each of the 32 phases:
+  /// layer II quantizes those, so its decode counts fewest at the phase of its frames
+  pub(super) fn curves(&self, segment: &Segment) -> (Vec<f64>, Vec<f64>) {
     let left: Vec<f32> = segment.left.iter().map(|s| *s as f32).collect();
     let right: Vec<f32> = segment.right.iter().map(|s| *s as f32).collect();
     // the granules every offset holds
     let granules = (left.len() - MP3_HOP - 512 - SUBBAND_SAMPLES * 32) / MP3_HOP;
-    let phases: Vec<[f64; LINES]> = (0..32)
+    let phases: Vec<([f64; LINES], f64)> = (0..32)
       .into_par_iter()
       .map(|phase| self.phase(&left[phase..], &right[phase..], granules))
       .collect();
-    (0..MP3_HOP)
-      .map(|offset| phases[offset % 32][offset / 32])
-      .collect()
+    let hybrid = (0..MP3_HOP)
+      .map(|offset| phases[offset % 32].0[offset / 32])
+      .collect();
+    (hybrid, phases.iter().map(|phase| phase.1).collect())
   }
 
   /// the counts over `granules` granules of the offsets 32 g from the first sample of `left`
   /// and `right`, for g in 0..18: the granules that start at subband sample g of the
-  /// filterbank run from there. the two are a segment's channels from one of the 32 phases on
-  fn phase(&self, left: &[f32], right: &[f32], granules: usize) -> [f64; LINES] {
+  /// filterbank run from there. the two are a segment's channels from one of the 32 phases on.
+  /// with them, the count of the phase's subband samples over as many as the granules span
+  fn phase(&self, left: &[f32], right: &[f32], granules: usize) -> ([f64; LINES], f64) {
     let t2 = (NOISE16 * MP3_NOISE_GAIN).powi(2) as f32;
     let half = std::f32::consts::FRAC_1_SQRT_2;
     let (mut l, mut r) = ([0.0; MP3_HOP], [0.0; MP3_HOP]);
     let (mut m, mut s) = ([0.0; MP3_HOP], [0.0; MP3_HOP]);
     let left = self.polyphase(left);
     let right = self.polyphase(right);
+    // layer II has no mid and side, so the two channels are counted as they are
+    let subband_t2 = (NOISE16 * SUBBAND_NOISE_GAIN).powi(2) as f32;
+    let spanned = LINES * granules;
+    let subbands = active(left[..spanned].as_flattened(), subband_t2)
+      + active(right[..spanned].as_flattened(), subband_t2);
     let mut counts = [0.0; LINES];
     for (g, count) in counts.iter_mut().enumerate() {
       *count = (0..granules)
@@ -214,7 +228,7 @@ impl Mp3<f32> {
         })
         .sum();
     }
-    counts
+    (counts, subbands)
   }
 }
 

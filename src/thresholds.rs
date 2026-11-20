@@ -211,6 +211,17 @@ pub struct ReadingThresholds {
   /// `mp3_grid_z` whose segments all put their lowest count at the file's offset. Lossless
   /// audio rarely agrees in every segment this far out.
   pub mp3_near_grid_z: f64,
+  /// Robust z over which the MP2 scan finds a frame grid.
+  ///
+  /// It is compared with [`CodecScan::z`](crate::grid::CodecScan::z) of
+  /// [`Scan::mp2`](crate::grid::Scan::mp2), where no MP3, AAC or Vorbis grid shows.
+  pub mp2_grid_z: f64,
+  /// Fewest segments that put their lowest count at the file's phase, for an MP2 grid.
+  ///
+  /// It is compared with [`CodecScan::segments_agreeing`], as `mp3_grid_segments_agreeing` is.
+  ///
+  /// [`CodecScan::segments_agreeing`]: crate::grid::CodecScan::segments_agreeing
+  pub mp2_grid_segments_agreeing: usize,
   /// Robust z over which the Vorbis scan finds a frame grid.
   ///
   /// It is compared with [`CodecScan::z`](crate::grid::CodecScan::z) of
@@ -488,6 +499,8 @@ impl Default for ReadingThresholds {
       // with every segment agreeing and no lossless file does
       mp3_near_grid_z: 8.0,
       vorbis_grid_z: 12.0,
+      mp2_grid_z: 8.0,
+      mp2_grid_segments_agreeing: 3,
       // the tuning's files with no AAC behind a conversion reach 9.63 there, and its converted
       // AAC decodes that show a grid start at 16.7
       other_rate_aac_z: 13.0,

@@ -84,6 +84,9 @@ pub const WAVPACK: &[u8] = include_bytes!("fixtures/clip.wv");
 /// Without the correction file the stream is lossy.
 pub const WAVPACK_HYBRID: &[u8] = include_bytes!("fixtures/clip-hybrid.wv");
 
+/// Six seconds of pink noise in two channels as MP2 at 64 kbit/s, made by ffmpeg 9.0.2.
+pub const MP2: &[u8] = include_bytes!("fixtures/clip.mp2");
+
 /// [`CLIP_PCM`] as Monkey's Audio at its normal level, made by `mac` 13.45.
 pub const APE_NORMAL: &[u8] = include_bytes!("fixtures/clip-normal.ape");
 /// [`CLIP_PCM`] as Monkey's Audio at its insane level, made by `mac` 13.45.

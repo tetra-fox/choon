@@ -1,4 +1,4 @@
-//! Frame grids that MP3, AAC, Vorbis and Opus encoders leave in decoded audio.
+//! Frame grids that MP3, MP2, AAC, Vorbis and Opus encoders leave in decoded audio.
 //!
 //! An encoder transforms its input in frames on a fixed grid and quantizes what the transform
 //! gives. The decoder's synthesis inverts the encoder's analysis, so running that analysis again
@@ -31,6 +31,10 @@
 //! The MP3 analysis is the layer III hybrid filterbank: the
 //! 512-tap polyphase filterbank, an 18-line MDCT per subband and the alias-reduction
 //! butterflies, at a hop of 576. Short blocks are not analyzed.
+//!
+//! MP2 quantizes the subband samples of the same polyphase filterbank, with no MDCT after it.
+//! The scan counts those samples too, at each of the filterbank's 32 phases, and the phase an
+//! MP2 decode's frames sit at counts the fewest ([`Scan::mp2`]).
 //!
 //! The values an MP3 encoder kept are whole numbers to the power 4/3 times their scalefactor
 //! band's step. With the granules at the count's offset, the bands whose values sit on one
@@ -126,6 +130,8 @@ pub enum Codec {
   Vorbis,
   /// MP3, layer III.
   Mp3,
+  /// MP2, layer II, read by the subband samples of the filterbank it shares with MP3.
+  Mp2,
   /// Opus, by the band energies of its CELT layer.
   Opus,
 }
@@ -136,6 +142,7 @@ impl fmt::Display for Codec {
       Self::Aac => "AAC",
       Self::Vorbis => "Vorbis",
       Self::Mp3 => "MP3",
+      Self::Mp2 => "MP2",
       Self::Opus => "Opus",
     })
   }
@@ -357,7 +364,7 @@ impl OpusShifted {
   }
 }
 
-/// Scan of a file for the frame grids of MP3, AAC, Vorbis and Opus.
+/// Scan of a file for the frame grids of MP3, MP2, AAC, Vorbis and Opus.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
@@ -376,6 +383,11 @@ pub struct Scan {
   pub vorbis: Option<CodecScan>,
   /// MP3's grid.
   pub mp3: CodecScan,
+  /// MP2's grid, over the 32 phases of the filterbank.
+  ///
+  /// `None` in measures kept by a version of the analyzer that did not scan for it.
+  #[cfg_attr(feature = "serde", serde(default))]
+  pub mp2: Option<CodecScan>,
   /// MP3's quantizer steps on that grid.
   ///
   /// `None` at a sample rate other than 32, 44.1 and 48 kHz, and in measures kept by a version

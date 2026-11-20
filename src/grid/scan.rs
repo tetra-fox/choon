@@ -120,7 +120,12 @@ pub(crate) fn scan(
             in_file(&Aac::curve(segment, window), segment.start),
           ),
           Job::Mp3(segment, rate) => {
-            Curve::Mp3(rate, in_file(&Mp3::new().curve(segment), segment.start))
+            let (hybrid, subbands) = Mp3::new().curves(segment);
+            Curve::Mp3(
+              rate,
+              in_file(&hybrid, segment.start),
+              in_file(&subbands, segment.start),
+            )
           }
           // the counts come in the file's offsets
           Job::Opus(stretches, from) => Curve::Opus(stretches.counted(from..from + part)),
@@ -133,8 +138,8 @@ pub(crate) fn scan(
     .collect::<Option<_>>()?;
   // each codec's curves at the file's rate and at the other
   let (mut aac, mut sine, mut mp3) = <[[Vec<Vec<f64>>; 2]; 3]>::default().into();
-  // Vorbis's, which is scanned at the file's rate alone
-  let mut vorbis = Vec::new();
+  // Vorbis's and layer II's, which are scanned at the file's rate alone
+  let (mut vorbis, mut mp2) = (Vec::new(), Vec::new());
   let mut frames = Vec::new();
   let mut short = Vec::new();
   for curve in curves {
@@ -142,7 +147,12 @@ pub(crate) fn scan(
       Curve::Aac(Window::Kbd, rate, curve) => aac[rate as usize].push(curve),
       Curve::Aac(Window::Sine, rate, curve) => sine[rate as usize].push(curve),
       Curve::Aac(Window::Vorbis, _, curve) => vorbis.push(curve),
-      Curve::Mp3(rate, curve) => mp3[rate as usize].push(curve),
+      Curve::Mp3(rate, curve, subbands) => {
+        mp3[rate as usize].push(curve);
+        if matches!(rate, Rate::Own) {
+          mp2.push(subbands);
+        }
+      }
       // the jobs come back in the order of their offsets
       Curve::Opus(counted) => frames.extend(counted),
       // and these in the order of the lengths
@@ -243,6 +253,7 @@ pub(crate) fn scan(
     aac,
     aac_sine: Some(sine),
     vorbis: Some(codec_scan(&vorbis)),
+    mp2: Some(codec_scan(&mp2)),
     mp3,
     mp3_steps,
     aac_steps,
@@ -281,7 +292,8 @@ enum Job<'a> {
 /// of the file's grid at the job's rate, Opus's counts of frames at each of the job's offsets
 enum Curve {
   Aac(Window, Rate, Vec<f64>),
-  Mp3(Rate, Vec<f64>),
+  /// with the counts of the subband samples at the 32 phases of the filterbank
+  Mp3(Rate, Vec<f64>, Vec<f64>),
   Opus(Vec<lattice::Counted>),
   /// at each offset, the short frames on the lattice after the frame before, and those with
   /// the ones on it without the frame before

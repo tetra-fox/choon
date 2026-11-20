@@ -1,7 +1,7 @@
 //! Audio analysis that tells whether a file is what its format claims.
 //!
 //! The usual case is a FLAC made from an MP3. The analyzer judges from the file's spectrum and
-//! from the frame grid an MP3, AAC, Vorbis or Opus encoder leaves in decoded samples.
+//! from the frame grid an MP3, MP2, AAC, Vorbis or Opus encoder leaves in decoded samples.
 //!
 //! # Examples
 //!

@@ -506,7 +506,7 @@ fn weighed(
       let mut limitations = found.limitations;
       limitations.push(Limitation::CutoffWithoutGrid);
       let unconfirmed = if scan.is_some() {
-        "No MP3, AAC, Vorbis or Opus frame grid shows in the samples"
+        "No MP3, MP2, AAC, Vorbis or Opus frame grid shows in the samples"
       } else {
         "The samples were not scanned for a codec's frame grid"
       };

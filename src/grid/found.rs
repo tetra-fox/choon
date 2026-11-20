@@ -203,7 +203,9 @@ pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found
   let (codec, evidence, sine) = shown(scan, thresholds)?;
   // AAC's steps, which are read at the file's own rate
   let stepped = match (&evidence, codec) {
-    (Evidence::CountAt { .. }, _) | (_, Codec::Mp3 | Codec::Opus | Codec::Vorbis) => None,
+    (Evidence::CountAt { .. }, _) | (_, Codec::Mp3 | Codec::Mp2 | Codec::Opus | Codec::Vorbis) => {
+      None
+    }
     (_, Codec::Aac) => aac_stepped(scan, thresholds),
   };
   let family = match (&evidence, codec) {
@@ -241,8 +243,8 @@ pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found
       .any(|length| length.uncut_offsets().contains(&short.most().0))
       .then_some(Family::Libopus),
     (_, Codec::Opus) => (evidence.offset() == OPUS_UNCUT_OFFSET).then_some(Family::Libopus),
-    // no encoder of Vorbis is told from another by its offset
-    (_, Codec::Vorbis) => None,
+    // no encoder of Vorbis or of layer II is told from another by its offset
+    (_, Codec::Vorbis | Codec::Mp2) => None,
   };
   let quantizer = stepped
     .filter(|_| matches!(evidence, Evidence::Count(_)))
@@ -439,9 +441,18 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
     };
     Some((Codec::Opus, evidence, false))
   };
+  // layer II quantizes the filterbank's subband samples, which an MP3 decode's count does not
+  // show
+  let subbands = || {
+    let count = scan.mp2.as_ref()?;
+    (count.z > thresholds.mp2_grid_z
+      && count.segments_agreeing >= thresholds.mp2_grid_segments_agreeing)
+      .then(|| (Codec::Mp2, Evidence::Count(count.clone()), false))
+  };
   own
     .or_else(stepped)
     .or_else(stepped_aac)
+    .or_else(subbands)
     .or_else(opus)
     .or_else(converted)
 }
@@ -471,6 +482,7 @@ mod tests {
       aac_sine: Some(count(448, sine)),
       vorbis: None,
       mp3: count(0, 2.0),
+      mp2: None,
       opus: None,
       other_rate: None,
       mp3_steps: None,
@@ -533,6 +545,7 @@ mod tests {
       aac_sine: None,
       vorbis: None,
       mp3: codec_scan(mp3.0, mp3.1),
+      mp2: None,
       opus: None,
       other_rate: None,
       mp3_steps: None,
