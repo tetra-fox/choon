@@ -10,6 +10,7 @@ mod cli {
 use std::borrow::Cow;
 use std::io::{self, IsTerminal, Write};
 use std::num::NonZeroUsize;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -103,7 +104,7 @@ struct Check {
   ///
   /// Without this option N is the number of cores. A file's grid scan runs on the same threads,
   /// so one file alone uses them all.
-  #[arg(short, long, value_name = "N")]
+  #[arg(short, long, value_name = "N", value_parser = jobs)]
   jobs: Option<NonZeroUsize>,
 
   /// Take the paths on stdin as ended by NUL in place of a newline
@@ -170,6 +171,9 @@ struct Checked {
 #[serde(rename_all = "camelCase")]
 struct Analyzed<'a> {
   file: Cow<'a, str>,
+  /// left out for a path that `file` holds whole
+  #[serde(skip_serializing_if = "Option::is_none")]
+  file_bytes: Option<&'a [u8]>,
   claimed: &'a Claimed,
   duration_seconds: f64,
   bitrate_kbps: Option<u32>,
@@ -202,8 +206,12 @@ struct Read {
 
 /// what is printed with `--json` for a file not read as audio
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct NotAudio<'a> {
   file: Cow<'a, str>,
+  /// left out for a path that `file` holds whole
+  #[serde(skip_serializing_if = "Option::is_none")]
+  file_bytes: Option<&'a [u8]>,
   error: String,
 }
 
@@ -236,9 +244,21 @@ enum Event {
   },
   Done {
     file: usize,
-    result: Result<Box<Checked>, Error>,
+    result: Result<Box<Checked>, Unread>,
   },
 }
+
+/// why a file has no reading
+enum Unread {
+  /// the file could not be opened
+  Open(io::Error),
+  /// it was opened and is not audio the analyzer reads, or its analysis failed, with why in
+  /// words
+  NotRead(String),
+}
+
+/// what is said of a file whose analysis panicked
+const PANICKED: &str = "the analyzer failed on this file, which is a bug in choon";
 
 /// how often a terminal's bars are brought up to date
 const TICK: Duration = Duration::from_millis(100);
@@ -341,10 +361,18 @@ fn run(check: &Check) -> Result<u8, Failed> {
       if events.send(event).is_err() {
         return;
       }
-      let result = analyzed(path, profiles, coverage, &progress, &canceled).map(Box::new);
-      if matches!(result, Err(Error::Canceled)) {
-        return;
-      }
+      // a panic in a decoder or in the analysis is a bug, and one file's: it is caught here so
+      // that the run goes on to the other files. the panic's own message is on stderr by then.
+      // nothing the analysis borrows is left half changed, as it only reads what it is given
+      let run = AssertUnwindSafe(|| analyzed(path, profiles, coverage, &progress, &canceled));
+      let result = match catch_unwind(run) {
+        Ok(Ok(checked)) => Ok(Box::new(checked)),
+        Ok(Err(Error::Canceled)) => return,
+        Ok(Err(Error::Open(e))) => Err(Unread::Open(e)),
+        Ok(Err(Error::NotAudio(why) | Error::Unsupported(why))) => Err(Unread::NotRead(why)),
+        Ok(Err(Error::OutOfTime)) => unreachable!("no analysis has a deadline"),
+        Err(_) => Err(Unread::NotRead(PANICKED.to_string())),
+      };
       // as above: a closed output has no use for the result
       let _ = events.send(Event::Done { file, result });
     }
@@ -365,7 +393,7 @@ fn run(check: &Check) -> Result<u8, Failed> {
 }
 
 /// the exit status `result` asks for
-fn status(result: &Result<Box<Checked>, Error>) -> u8 {
+fn status(result: &Result<Box<Checked>, Unread>) -> u8 {
   match result {
     Ok(checked)
       if checked
@@ -402,6 +430,7 @@ fn printed(
           // the readings are numbers, strings and lists of them, which always serialize
           serde_json::to_string(&Analyzed {
             file: file.to_string_lossy(),
+            file_bytes: raw(file),
             claimed: &checked.claimed,
             duration_seconds: checked.duration,
             bitrate_kbps: checked.bitrate_kbps,
@@ -418,23 +447,21 @@ fn printed(
           piped(file, &checked)
         }
       }
-      Err(Error::Open(e)) => {
+      Err(Unread::Open(e)) => {
         eprintln!("{}", complaint(file, e));
         continue;
       }
-      Err(Error::NotAudio(why) | Error::Unsupported(why)) => {
+      Err(Unread::NotRead(why)) => {
         if json {
           serde_json::to_string(&NotAudio {
             file: file.to_string_lossy(),
+            file_bytes: raw(file),
             error: why,
           })
-          .expect("two strings serialize")
+          .expect("strings and bytes serialize")
         } else {
           format!("{}: {NOT_READ} ({why})", file.display())
         }
-      }
-      Err(Error::Canceled | Error::OutOfTime) => {
-        unreachable!("a canceled analysis is not sent, and none has a deadline")
       }
     };
     if !print(&mut out, &line)? {
@@ -488,18 +515,15 @@ fn shown(
             }
             Ok(checked)
           }
-          Err(Error::Open(e)) => {
+          Err(Unread::Open(e)) => {
             bars.complain(&complaint(path, &e));
             Err(e.to_string())
           }
-          Err(Error::NotAudio(why) | Error::Unsupported(why)) => {
+          Err(Unread::NotRead(why)) => {
             bars
               .say(&not_read(path, &why, colour))
               .map_err(Failed::Output)?;
             Err(why)
-          }
-          Err(Error::Canceled | Error::OutOfTime) => {
-            unreachable!("a canceled analysis is not sent, and none has a deadline")
           }
         };
         rows.push(Row { path, outcome });
@@ -532,6 +556,24 @@ fn shown(
   };
   print(&mut io::stdout().lock(), text.trim_end())?;
   Ok(code)
+}
+
+/// the bytes of a path that is not Unicode. the JSON's `file` holds such a path with a
+/// replacement character where it is not, so two paths can be the same `file`. serde writes
+/// the bytes as a list of numbers, which a script reads without a decoder.
+///
+/// a piped line holds the path as it is and has no such key: a newline or a colon in a name
+/// reads as the line's own, so a script that matches files to readings reads the JSON
+#[cfg(unix)]
+fn raw(path: &Path) -> Option<&[u8]> {
+  use std::os::unix::ffi::OsStrExt;
+  path.to_str().is_none().then(|| path.as_os_str().as_bytes())
+}
+
+/// off Unix a path's bytes are the system's own encoding, which nothing else reads
+#[cfg(not(unix))]
+fn raw(_: &Path) -> Option<&[u8]> {
+  None
 }
 
 /// an error about `path` as stderr shows it, with the path made legible when stderr is a
@@ -604,6 +646,20 @@ fn encoder(reading: &Reading) -> Option<String> {
     (Some(family), None) => Some(format!("{codec} ({family})")),
     (Some(family), Some(setting)) => Some(format!("{codec} ({family}) {setting}")),
   }
+}
+
+/// the most threads `--jobs` starts. reading is work for a core, so threads past the cores only
+/// wait their turn, and each costs memory and time to start: rayon stops at 65,536 of them,
+/// which keep every core busy for minutes before a file is read
+const MAX_JOBS: usize = 1024;
+
+/// the number of jobs `text` names, from 1 to [`MAX_JOBS`]
+fn jobs(text: &str) -> Result<NonZeroUsize, String> {
+  let jobs: NonZeroUsize = text.parse().map_err(|e| format!("{e}"))?;
+  if jobs.get() > MAX_JOBS {
+    return Err(format!("more than {MAX_JOBS} jobs"));
+  }
+  Ok(jobs)
 }
 
 /// the minutes `text` names, refusing an endless length and one of no time, under which a file

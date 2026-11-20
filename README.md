@@ -282,10 +282,15 @@ music/honest.flac: consistent (confidence 0.73)
 | `--max-full-minutes M --sampled-windows N` | read files longer than M minutes at N one-second windows  |
 
 - A walk skips hidden files and directories; `choon check --help` lists the extensions it reads
-- `--jobs` defaults to the number of cores; a file's grid scan runs on the same threads
+- `--jobs` defaults to the number of cores and takes up to 1024; a file's grid scan runs on the
+  same threads
 - A JSON line holds the claimed format, the length, the windows read, the grid scan, an Opus
   file's modes and bandwidths, an HE-AAC file's core rate, a DSD file's one-bit rate, and every
   reading
+- A path that is not Unicode has its bytes beside `file` on Unix, as `fileBytes`, a list of
+  numbers. A line holds a path as it is, so a script that matches files to readings reads the
+  JSON
+- A file the analyzer fails on is not read and says so, and the other files are still read
 - A profile is `{"measure": {...}, "reading": {...}}`; keys left out keep their default and
   unknown keys are refused
 - Repeating `--profile` reads each file with several profiles; those with the same `measure`

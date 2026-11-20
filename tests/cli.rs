@@ -208,6 +208,7 @@ fn a_wrong_argument_is_refused_before_any_file_is_read() {
     ],
     vec!["--max-full-minutes", "15", "--sampled-windows", "0", &audio],
     vec!["--jobs", "0", &audio],
+    vec!["--jobs", "1025", &audio],
     vec![],
   ] {
     let output = choon(&args);
@@ -219,6 +220,45 @@ fn a_wrong_argument_is_refused_before_any_file_is_read() {
   assert_eq!(status(&output), 0, "{output:?}");
   let defaults: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
   assert_eq!(defaults["reading"]["sharpShelfDb"], 30.0);
+}
+
+#[cfg(unix)]
+#[test]
+fn json_holds_the_bytes_of_a_path_that_is_not_unicode() {
+  use std::ffi::OsStr;
+  use std::os::unix::ffi::OsStrExt;
+
+  let dir = tempfile::tempdir().unwrap();
+  // two names that differ where neither is Unicode, one audio and one not
+  let names: [&[u8]; 2] = [b"bad\xff\xfe.m4a", b"bad\xff\xfd.m4a"];
+  let [tone, text] = names.map(|name| dir.path().join(OsStr::from_bytes(name)));
+  std::fs::write(&tone, fixtures::TONE).unwrap();
+  std::fs::write(&text, "not audio\n").unwrap();
+  let plain = dir.path().join("plain.m4a");
+  std::fs::write(&plain, fixtures::TONE).unwrap();
+  let output = Command::new(env!("CARGO_BIN_EXE_choon"))
+    .args(["check", "--json"])
+    .args([&tone, &text, &plain])
+    .output()
+    .unwrap();
+  assert_eq!(status(&output), 2, "{output:?}");
+  let lines: Vec<serde_json::Value> = String::from_utf8(output.stdout)
+    .unwrap()
+    .lines()
+    .map(|line| serde_json::from_str(line).unwrap())
+    .collect();
+  let bytes = |path: &Path| -> serde_json::Value { path.as_os_str().as_bytes().into() };
+  let of = |wanted: serde_json::Value| lines.iter().find(|line| line["fileBytes"] == wanted);
+  let read = of(bytes(&tone)).expect("the file read is named by its bytes");
+  assert!(read["readings"].is_array(), "{read}");
+  let unread = of(bytes(&text)).expect("the file not read is named by its bytes");
+  assert!(unread["error"].is_string(), "{unread}");
+  assert_eq!(
+    read["file"], unread["file"],
+    "the names differ in their bytes only"
+  );
+  let plain = of(serde_json::Value::Null).expect("a Unicode path has no bytes beside it");
+  assert_eq!(plain["file"], path(&dir.path().join("plain.m4a")));
 }
 
 #[test]
