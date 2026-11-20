@@ -308,6 +308,58 @@ fn a_file_shorter_than_it_states_reports_the_length_read() {
   );
 }
 
+/// the seconds of audio a reading says its file states and does not hold
+fn missing(measured: &Measured) -> Option<f64> {
+  read(measured)
+    .limitations
+    .into_iter()
+    .find_map(|limitation| match limitation {
+      Limitation::AudioMissing { seconds } => Some(seconds),
+      _ => None,
+    })
+}
+
+#[test]
+fn a_flac_with_a_damaged_frame_says_how_much_audio_is_missing() {
+  let whole = fixtures::flac(&music(1, 44_100, pink), 16, false);
+  assert_eq!(
+    missing(&measure_bytes(whole.clone(), &settings()).unwrap()),
+    None
+  );
+  // one bit of the audio: the frame's checksum fails and its reader drops the frame unsaid
+  let mut damaged = whole;
+  let middle = damaged.len() / 2;
+  damaged[middle] ^= 1;
+  let measured = measure_bytes(damaged, &settings()).unwrap();
+  let short = missing(&measured).expect("a frame is missing");
+  let block = fixtures::FLAC_BLOCK as f64 / 44_100.0;
+  assert!((short - block).abs() < 0.001, "{short}");
+}
+
+#[test]
+fn an_mp3_without_a_length_header_is_read_to_its_end() {
+  let dir = tempfile::tempdir().unwrap();
+  // 4 s at 320 kbps, then 30 s at 128 kbps: a reader that takes the length from the first
+  // frames' bitrate and the file's size makes it 16 s
+  let loud = dir.path().join("320.mp3");
+  let rest = dir.path().join("128.mp3");
+  fixtures::write_mp3(&music_for(4, 1, 44_100, pink), Bitrate::Kbps320, &loud);
+  fixtures::write_mp3(&music_for(30, 2, 44_100, pink), Bitrate::Kbps128, &rest);
+  let mut bytes = std::fs::read(&loud).unwrap();
+  bytes.extend(std::fs::read(&rest).unwrap());
+  let measured = measure_bytes(bytes, &settings()).unwrap();
+  let stated = measured.claimed.frames.expect("a length is guessed") as f64 / 44_100.0;
+  assert!(stated < 20.0, "{stated}");
+  assert!(
+    (measured.duration - 34.0).abs() < 0.2,
+    "{}",
+    measured.duration
+  );
+  assert_eq!(measured.windows.len(), 34);
+  // a guessed length is none to fall short of
+  assert_eq!(missing(&measured), None);
+}
+
 #[test]
 fn a_file_stating_a_huge_length_reports_only_what_was_read() {
   let dir = tempfile::tempdir().unwrap();

@@ -33,6 +33,15 @@ pub enum Limitation {
     /// Seconds the analysis stopped after.
     seconds: u64,
   },
+  /// File read in full that holds less audio than it states.
+  ///
+  /// Noted only of a length a header counts. The length of an MP3 without a LAME tag can be
+  /// a guess from its bitrate and its size, which a file falls short of without lacking
+  /// anything.
+  AudioMissing {
+    /// Length of the audio stated and not there, in seconds.
+    seconds: f64,
+  },
   /// Packets that could not be decoded and were skipped.
   PacketsSkipped {
     /// Number of packets skipped.
@@ -121,6 +130,12 @@ impl fmt::Display for Limitation {
         "The file runs longer than it states, so the analysis stopped after {}",
         minutes(*seconds)
       ),
+      Self::AudioMissing { seconds } if *seconds < 1.0 => {
+        write!(f, "The file holds {seconds:.2} s less audio than it states")
+      }
+      Self::AudioMissing { seconds } => {
+        write!(f, "The file holds {seconds:.1} s less audio than it states")
+      }
       Self::PacketsSkipped { count: 1 } => {
         f.write_str("1 packet could not be decoded and was skipped")
       }

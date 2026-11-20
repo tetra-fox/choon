@@ -507,7 +507,24 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
   // the length is what was read when the read came to an end the file set, or when the file
   // states none; a read whose time ran out says nothing against the stated length
   match reached {
-    Reached::End(seconds) => measured.duration = seconds,
+    Reached::End(seconds) => {
+      measured.duration = seconds;
+      // a decoder that stopped says why itself
+      if let Some(stated) = stated
+        && stated - seconds > WHOLE_WITHIN
+        && decoder.length_is_counted()
+        && decoder.stopped.is_none()
+      {
+        debug!(
+          stated,
+          read = seconds,
+          "the file holds less audio than it states"
+        );
+        measured.problems.push(Limitation::AudioMissing {
+          seconds: stated - seconds,
+        });
+      }
+    }
     Reached::Short(seconds) if stated.is_none() => measured.duration = seconds,
     Reached::Short(_) | Reached::Sampled => {
       let read = measured.windows.last().map_or(0.0, |w| w.start + 1.0);
@@ -712,6 +729,11 @@ fn stopped_by_us(
   }
   Ok(ours)
 }
+
+/// a read in full that ends within this many seconds of the stated length holds all of it. a
+/// DSD file's filter ends it a few samples early, and a lost packet of MP3, AAC or Opus as
+/// they are mostly made takes 0.02 s or more
+const WHOLE_WITHIN: f64 = 0.01;
 
 /// how far a read went
 enum Reached {

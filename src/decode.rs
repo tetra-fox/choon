@@ -11,8 +11,8 @@ use symphonia::core::audio::GenericAudioBufferRef;
 use symphonia::core::audio::sample::{i24, u24};
 use symphonia::core::audio::{Audio, AudioBuffer};
 use symphonia::core::codecs::audio::well_known::{
-  CODEC_ID_AAC, CODEC_ID_ALAC, CODEC_ID_FLAC, CODEC_ID_MONKEYS_AUDIO, CODEC_ID_OPUS,
-  CODEC_ID_PCM_ALAW, CODEC_ID_PCM_MULAW, CODEC_ID_WAVPACK,
+  CODEC_ID_AAC, CODEC_ID_ALAC, CODEC_ID_FLAC, CODEC_ID_MONKEYS_AUDIO, CODEC_ID_MP1, CODEC_ID_MP2,
+  CODEC_ID_MP3, CODEC_ID_OPUS, CODEC_ID_PCM_ALAW, CODEC_ID_PCM_MULAW, CODEC_ID_WAVPACK,
 };
 use symphonia::core::codecs::audio::{
   AudioCodecId, AudioCodecParameters, AudioDecoder, AudioDecoderOptions,
@@ -230,6 +230,8 @@ pub(crate) struct Decoder {
   pub(crate) stopped: Option<String>,
   /// what an Opus stream's header and packets state
   opus: Option<Opus>,
+  /// what places the padding of an MPEG audio stream, whose packets are trimmed here
+  mpeg: Option<Mpeg>,
   /// what an HE-AAC stream's decoder rebuilt
   pub(crate) he_aac: Option<HeAac>,
   /// the one-bit sample rate of a DSD file
@@ -243,6 +245,21 @@ struct Opus {
   /// frames the track's timestamps count before the audio starts
   delay: u64,
   tally: opus::Tally,
+}
+
+/// what the analyzer keeps of an MPEG audio stream beside its samples.
+///
+/// symphonia-bundle-mp3 0.6.1 states a length for a file with no Xing or VBRI header too, a
+/// guess from the first frames' bitrate and the file's size (demuxer.rs, `try_new`), and marks
+/// every frame past the length it states as trim. its decoder drops what is marked, so a file
+/// longer than the guess, or than a header's wrong count, loses its end. the decoder is made
+/// without that trimming, and a packet's end is trimmed here only inside the padding
+/// TODO: let the decoder trim once symphonia's reader says whether its length is a guess
+struct Mpeg {
+  /// the timestamp the padding after the audio ends at, when the track states a length
+  padded_end: Option<u64>,
+  /// whether a LAME tag states the padding, which comes with a header's count of the frames
+  counted: bool,
 }
 
 /// a packet decoded: where the container puts it, and the frames at its ends that are not audio
@@ -359,8 +376,16 @@ impl Decoder {
       .get_audio_decoder(params.codec)
       .map(|registered| registered.codec.info.short_name.to_string())
       .ok_or_else(|| unsupported("the codec is not one the analyzer can decode"))?;
+    let mpeg = matches!(params.codec, CODEC_ID_MP1 | CODEC_ID_MP2 | CODEC_ID_MP3).then(|| Mpeg {
+      padded_end: track
+        .num_frames
+        .map(|frames| frames.saturating_add(u64::from(track.padding.unwrap_or(0)))),
+      counted: track.padding.is_some(),
+    });
+    let mut options = AudioDecoderOptions::default();
+    options.gapless = mpeg.is_none();
     let decoder = codecs
-      .make_audio_decoder(&params, &AudioDecoderOptions::default())
+      .make_audio_decoder(&params, &options)
       .map_err(|e| unsupported(&format!("the decoder could not start: {e}")))?;
     let sample_rate = params
       .sample_rate
@@ -402,6 +427,7 @@ impl Decoder {
       skipped: 0,
       stopped: None,
       opus,
+      mpeg,
       he_aac: None,
       // the reader passes the decoder the one-bit rate as its extra data
       dsd_rate: (params.codec == CODEC_ID_DSD)
@@ -479,6 +505,12 @@ impl Decoder {
       let seconds = frames as f64 / f64::from(self.claimed.sample_rate);
       (bytes as f64 * 8.0 / seconds / 1000.0).round() as u32
     })
+  }
+
+  /// whether the length the file states is a count its header holds. an MPEG audio file's is
+  /// taken for one only beside a LAME tag: without one it can be the reader's guess
+  pub(crate) fn length_is_counted(&self) -> bool {
+    self.mpeg.as_ref().is_none_or(|mpeg| mpeg.counted)
   }
 
   /// the most seconds of audio the file's bytes can hold at the densest packet decoded so far.
@@ -756,7 +788,22 @@ impl Decoder {
       );
       let stated = dur.checked_add(lead).and_then(|d| d.checked_add(tail));
       // each is at most the frames decoded, which fit a usize
-      let trim = if self.opus.is_none() {
+      let trim = if let Some(mpeg) = &self.mpeg {
+        // a packet that ends past the padding holds audio the stated length leaves out
+        let end = packet.pts.get().checked_add_unsigned(frames);
+        let padding = mpeg
+          .padded_end
+          .zip(end)
+          .is_some_and(|(padded, end)| u64::try_from(end).is_ok_and(|end| end <= padded));
+        (
+          lead.min(frames) as usize,
+          if padding {
+            tail.min(frames) as usize
+          } else {
+            0
+          },
+        )
+      } else if self.opus.is_none() {
         (0, 0)
       } else if stated == Some(frames) {
         (lead as usize, tail as usize)
