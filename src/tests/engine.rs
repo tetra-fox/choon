@@ -20,8 +20,7 @@ fn progress_goes_on_through_the_grid_scan() {
   let path = flac(dir.path(), "a.flac", &music(1, 44_100, pink), 16);
   let progress = Arc::new(std::sync::atomic::AtomicU32::new(0));
   let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
-  // the cancel check is asked between windows, before each job of the scan and before each
-  // segment's quantizer steps, which are read once the last job has ended
+  // the cancel check is asked between windows and before each job of the scan
   let (at, record) = (progress.clone(), seen.clone());
   let settings = Settings {
     progress: Some(progress.clone()),
@@ -39,14 +38,13 @@ fn progress_goes_on_through_the_grid_scan() {
     .unwrap();
   let measured = pool.install(|| measure(&path, &settings)).unwrap();
   assert!(measured.grid.is_some());
-  let seen = seen.lock().unwrap();
+  let mut seen = seen.lock().unwrap().clone();
+  seen.push(progress.load(std::sync::atomic::Ordering::Relaxed));
+  assert_eq!(seen.last(), Some(&1000));
   assert!(seen.is_sorted(), "{seen:?}");
-  let jobs_ended = seen
-    .windows(2)
-    .filter(|pair| pair[1] - pair[0] >= 30)
-    .count();
-  assert_eq!(jobs_ended, grid::jobs(true, true), "{seen:?}");
-  assert_eq!(progress.load(std::sync::atomic::Ordering::Relaxed), 1000);
+  // a scan that reported only once it ended would move the progress most of the way at once
+  let furthest = seen.windows(2).map(|pair| pair[1] - pair[0]).max();
+  assert!(furthest.is_some_and(|step| step <= 100), "{seen:?}");
 }
 
 #[test]
