@@ -458,15 +458,15 @@ for point in $(seq 1 $((points - 1))); do
 done
 note C-seektable-wrong.flac "as:C-honest_16-44.flac" "$wraps" "a seek table whose every point is the first frame"
 ff -i "$work/s44.wav" -c:a flac -f flac pipe:1 > C-flac-piped.flac
-note C-flac-piped.flac limited "rustdoc Limitation::GridNotScanned" "a FLAC written to a pipe, which states no length"
+note C-flac-piped.flac consistent "README Limitations: a file written to a pipe is scanned once it is read" "a FLAC written to a pipe, which states no length"
 ff -i "$work/s44.wav" -c:a pcm_s16le -f wav pipe:1 > C-wav-piped.wav
-note C-wav-piped.wav limited "rustdoc Limitation::GridNotScanned" "a WAV written to a pipe, its data size 0xFFFFFFFF"
+note C-wav-piped.wav consistent "README Supported formats: a WAV that states no size is as long as its bytes" "a WAV written to a pipe, its data size 0xFFFFFFFF"
 cp C-honest-plain.wav C-wav-size-0.wav
 poke C-wav-size-0.wav $(($(find_at C-wav-size-0.wav 'data') + 4)) '\x00\x00\x00\x00'
-note C-wav-size-0.wav limited "rustdoc Limitation::GridNotScanned" "a WAV whose data size is 0"
+note C-wav-size-0.wav consistent "README Supported formats: a WAV that states no size is as long as its bytes" "a WAV whose data size is 0"
 cp "$work/lame128.mp3" C-xing-lies.mp3
 poke C-xing-lies.mp3 $(($(find_at C-xing-lies.mp3 'Xing|Info') + 8)) "$(be32 12)"
-note C-xing-lies.mp3 limited "rustdoc Limitation::LongerThanStated" "a Xing header that states 12 frames"
+note C-xing-lies.mp3 consistent "README Supported formats: an MP3 is read to its last frame" "a Xing header that states 12 frames"
 cp "$work/lame128.mp3" C-xing-lies-long.mp3
 poke C-xing-lies-long.mp3 $(($(find_at C-xing-lies-long.mp3 'Xing|Info') + 8)) "$(be32 4000000)"
 note C-xing-lies-long.mp3 limited "rustdoc Limitation::LengthPastBytes" "a Xing header that states 4,000,000 frames"

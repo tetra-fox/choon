@@ -318,7 +318,7 @@ C-flac-named.ogg	as:C-honest_16-44.flac	the reading must not depend on the exten
 C-flac-named.opus	as:C-honest_16-44.flac	the reading must not depend on the extension	a flac file named .opus
 C-flac-named.wav	as:C-honest_16-44.flac	the reading must not depend on the extension	a flac file named .wav
 C-flac-named.wv	as:C-honest_16-44.flac	the reading must not depend on the extension	a flac file named .wv
-C-flac-piped.flac	limited	rustdoc Limitation::GridNotScanned	a FLAC written to a pipe, which states no length
+C-flac-piped.flac	consistent	README Limitations: a file written to a pipe is scanned once it is read	a FLAC written to a pipe, which states no length
 C-flip-audio.flac	limited	a damaged file reads with a limitation or is not read	one bit flipped in a FLAC frame's audio, so its CRC fails
 C-flip-audio.mp3	open	MP3 frames have no checksum here: nothing can tell	one bit flipped in the middle of an MP3
 C-flip-frame-header.flac	limited	a damaged file reads with a limitation or is not read	one bit flipped in a FLAC frame's header
@@ -463,8 +463,8 @@ C-wav-named.mp3	as:C-honest-plain.wav	the reading must not depend on the extensi
 C-wav-named.ogg	as:C-honest-plain.wav	the reading must not depend on the extension	a wav file named .ogg
 C-wav-named.opus	as:C-honest-plain.wav	the reading must not depend on the extension	a wav file named .opus
 C-wav-named.wv	as:C-honest-plain.wav	the reading must not depend on the extension	a wav file named .wv
-C-wav-piped.wav	limited	rustdoc Limitation::GridNotScanned	a WAV written to a pipe, its data size 0xFFFFFFFF
-C-wav-size-0.wav	limited	rustdoc Limitation::GridNotScanned	a WAV whose data size is 0
+C-wav-piped.wav	consistent	README Supported formats: a WAV that states no size is as long as its bytes	a WAV written to a pipe, its data size 0xFFFFFFFF
+C-wav-size-0.wav	consistent	README Supported formats: a WAV that states no size is as long as its bytes	a WAV whose data size is 0
 C-wavpack-32bit.wv	honest	README Supported formats: WavPack at 32 bits	wavpack of 32-bit samples
 C-wavpack-6ch.wv	refused:channels	README Supported formats	wavpack of six channels
 C-wavpack-8bit.wv	refused:8-bit	README Supported formats	wavpack of 8-bit samples
@@ -483,7 +483,7 @@ C-wv-named.ogg	as:B-lame128_16-44.wv	the reading must not depend on the extensio
 C-wv-named.opus	as:B-lame128_16-44.wv	the reading must not depend on the extension	a wv file named .opus
 C-wv-named.wav	as:B-lame128_16-44.wv	the reading must not depend on the extension	a wv file named .wav
 C-xing-lies-long.mp3	limited	rustdoc Limitation::LengthPastBytes	a Xing header that states 4,000,000 frames
-C-xing-lies.mp3	limited	rustdoc Limitation::LongerThanStated	a Xing header that states 12 frames
+C-xing-lies.mp3	consistent	README Supported formats: an MP3 is read to its last frame	a Xing header that states 12 frames
 D-frames-163840_16-44.flac	honest	README Limitations: needs about 30 seconds of non-silent audio	163840 sample frames of the noise
 D-frames-40959_16-44.flac	honest	README Limitations: needs about 30 seconds of non-silent audio	40959 sample frames of the noise
 D-frames-40960_16-44.flac	honest	README Limitations: needs about 30 seconds of non-silent audio	40960 sample frames of the noise
