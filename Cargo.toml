@@ -114,6 +114,13 @@ unsafe_code = "forbid"
 [lints.clippy]
 all = { level = "warn", priority = -1 }
 
+# a release build with these reads about 2% faster and is about a quarter smaller, and takes
+# three to four times as long to compile. `cargo install` builds with this profile, a crate
+# that depends on the library builds it with its own
+[profile.release]
+lto = "fat"
+codegen-units = 1
+
 # the transforms and decoders are slow unoptimized; tests analyze audio
 [profile.dev.package.choon]
 opt-level = 3
