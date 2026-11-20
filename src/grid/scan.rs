@@ -419,7 +419,8 @@ const LANES: usize = 16;
 ///
 /// the log of a product is the sum of the logs, so the values' exponents are summed and their
 /// mantissas, each in [1, 2), multiplied in [`LANES`] products of up to 32 each, which stay
-/// under 2^32, with one log per product.
+/// under 2^32. the products are multiplied in double precision, where they stay under 2^512,
+/// with one log for all of them.
 pub(super) fn active(values: &[f32], t2: f32) -> f64 {
   let mut exponents = [0i32; LANES];
   let mut products = [1.0f32; LANES];
@@ -432,11 +433,19 @@ pub(super) fn active(values: &[f32], t2: f32) -> f64 {
       *product *= f32::from_bits((bits & !EXPONENT_BITS) | ONE);
     }
     if i % 32 == 31 {
-      logs += products.iter().map(|p| f64::from(*p).log2()).sum::<f64>();
+      logs += products
+        .iter()
+        .map(|p| f64::from(*p))
+        .product::<f64>()
+        .log2();
       products = [1.0; LANES];
     }
   }
-  logs += products.iter().map(|p| f64::from(*p).log2()).sum::<f64>();
+  logs += products
+    .iter()
+    .map(|p| f64::from(*p))
+    .product::<f64>()
+    .log2();
   let exponents: i32 = exponents.iter().sum();
   (f64::from(exponents) + logs - values.len() as f64 * f64::from(t2).log2())
     * std::f64::consts::LOG10_2
