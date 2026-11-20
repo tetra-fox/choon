@@ -211,6 +211,18 @@ A reading also holds:
 - A DSD reading cannot tell a DSD recording from PCM converted up, and the noise above the
   audio band reads as content
 - DST-compressed DSDIFF is refused by name
+- PCM is read at 8, 16, 24 and 32 bits and as 32 and 64-bit float
+- A-law, mu-law and ADPCM in a WAV file are read as the lossy codecs they are
+- RF64 and Wave64 files are not read, and a WAV file that states a data size of 0 reads as no
+  audio
+- MP3 is read as MPEG-1, MPEG-2 and MPEG-2.5 Layer III, from 8 kHz up; a free-format MP3 is not
+  read
+- The length of an MP3 with no Xing or VBRI header is a guess from its bitrate, and the file
+  is read to its last frame whatever the guess
+- AAC-LD and AAC-ELD are read too, each tried on one file from fdk-aac
+- Of several audio tracks in a file the first is read, and of the streams chained in an Ogg
+  file the first, which the reading says
+- No audio is read of an MP4 file cut short
 - Opus is read in Ogg (`.opus`, `.ogg`), Matroska/WebM (`.mka`, `.webm`) and MP4
 - An Opus file starts after its pre-skip and has its header's output gain applied
 - Matroska does not say where the last Opus packet's audio ends, so up to 20 ms of padding is
@@ -282,6 +294,9 @@ music/honest.flac: consistent (confidence 0.73)
 | `--max-full-minutes M --sampled-windows N` | read files longer than M minutes at N one-second windows  |
 
 - A walk skips hidden files and directories; `choon check --help` lists the extensions it reads
+- A file named twice, or named and inside a directory named, is read once
+- With no audio file to read, `choon: no audio files found` goes to stderr and the exit is 0
+- A FIFO is read as a file is once a writer opens it, and waits for one until then
 - `--jobs` defaults to the number of cores and takes up to 1024; a file's grid scan runs on the
   same threads
 - A JSON line holds the claimed format, the length, the windows read, the grid scan, an Opus
@@ -294,7 +309,8 @@ music/honest.flac: consistent (confidence 0.73)
 - A profile is `{"measure": {...}, "reading": {...}}`; keys left out keep their default and
   unknown keys are refused
 - Repeating `--profile` reads each file with several profiles; those with the same `measure`
-  thresholds share one decode
+  thresholds share one decode. A reading is named after its profile's file, so two files of
+  one name are refused
 
 | Exit code | Description                                           |
 | --------- | ----------------------------------------------------- |
@@ -390,9 +406,10 @@ Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
 - A lossless master filtered sharply where an encoder cuts (16 or 19 kHz) reads as possibly lossy
 - The grid is scanned only in a file that states its length. A FLAC or WAV written to a pipe and
   FLAC in Matroska state none, and a decode in one reads as possibly lossy at most
-- An MP3 or AAC decode converted to another rate is found between 44.1 and 48 kHz only; after
-  any other conversion it reads as possibly lossy at most
-- A Vorbis decode's grid mostly reads as AAC's, without AAC's quantizer steps
+- An MP3 or AAC decode converted to another rate is looked for between 44.1 and 48 kHz only;
+  after any other conversion it can read as possibly lossy
+- A Vorbis decode's grid mostly reads as AAC's, without AAC's quantizer steps, and a WMA
+  decode's can too
 - Opus is found in frames with the pitch post-filter off; a decode made mostly of filtered
   frames and one in SILK voice mode read as possibly lossy at most
 - An Opus decode of frames under 20 ms whose level was changed afterwards is not found
@@ -400,6 +417,8 @@ Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
 - A level that changes over time after an Opus decode, as under a fade or a limiter, hides the
   lattice where it changes
 - Opus is looked for at 44.1 and 48 kHz only
+- An Opus decode folded to mono, with one channel copied to both, turned to mid and side, or
+  truncated to 8 bits is not found
 - Clipping hides the grid frame by frame, so a decode made louder until it clips can lose it
 - The grid thresholds were tuned on LAME's MP3 and ffmpeg's AAC; [Encoders](#encoders) lists
   what the scan finds of others

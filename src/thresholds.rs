@@ -9,6 +9,9 @@ const FULL_BAND: f64 = 0.9;
 /// Thresholds each window is measured with.
 ///
 /// Changing one means measuring the audio again.
+///
+/// No value is checked against a range. One outside what its field describes, or not a number,
+/// gives measures that mean nothing, and no panic.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
@@ -77,6 +80,9 @@ impl Default for MeasureThresholds {
 /// Thresholds the measures are read with.
 ///
 /// A reading is quick, so these can be swept over audio measured once.
+///
+/// No value is checked against a range. One outside what its field describes, or not a number,
+/// gives a reading that means nothing, and no panic.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
@@ -156,7 +162,10 @@ pub struct ReadingThresholds {
   /// At or below this level of the side channel relative to the mid channel, the two channels
   /// hold the same audio.
   pub mono_side_db: f64,
-  /// Highest confidence a reading has.
+  /// Highest confidence a reading has, from 0 to 1.
+  ///
+  /// A reading by a grid has this confidence itself, so a cap that is negative or not a number
+  /// is the confidence of such a reading.
   pub confidence_cap: f64,
   /// Median window level in dBFS under which a file is quiet.
   ///

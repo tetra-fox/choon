@@ -45,7 +45,7 @@ pub enum Coverage {
     /// Longest file analyzed in full, in seconds.
     ///
     /// A file that does not state its length, or runs longer than it states, is read no
-    /// further than this, so not at all when it is 0.
+    /// further than this, so not at all when it is 0 or not a number.
     over_seconds: f64,
     /// Number of windows a longer file is analyzed at.
     ///
@@ -337,6 +337,9 @@ impl MediaSource for Watched {
 /// promptly when canceled, and stops with what it has when its time is up. The file's bytes
 /// are read through a source that stops giving them at either, so a container that is slow to
 /// open or to seek in holds the thread no longer than a window does.
+///
+/// Opening the file itself is not watched. A FIFO with no writer holds the thread until one
+/// opens it, whatever the deadline and the cancel check say.
 ///
 /// A file that claims a lossless format is then scanned for a codec's frame grid in four
 /// stretches of its samples ([`grid`]). The scan's eight jobs, each codec in each stretch, run
