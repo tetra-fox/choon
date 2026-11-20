@@ -403,6 +403,8 @@ Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
 - A cutoff near 20 kHz, where MP3 320 and AAC cut and many recordings are filtered anyway, reads
   as inconclusive; only a grid calls such a file a transcode
 - Naturally band-limited audio (old, lo-fi, dark) can stop near an encoder cutoff by chance
+- A damaged file is read as far as its decoder gets, and a reading does not always say that
+  audio is missing
 - Needs about 30 seconds of non-silent audio
 - Reads only the first two channels of a surround file
 
