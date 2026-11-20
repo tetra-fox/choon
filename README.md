@@ -169,7 +169,7 @@ for its long blocks, so a grid's offset and window fit an encoder family:
 - In a lossy file and a DSD file, where no grid is looked for, a likely transcode is nearly every
   window stopping at one known encoder cutoff with a sharp shelf
 - Mixed sources is read only in such a file
-- A file whose grid scan did not run, as one that states no length, is possibly lossy at most
+- A file whose grid scan did not run, as FLAC in Matroska, is possibly lossy at most
 
 A reading also holds:
 
@@ -216,15 +216,16 @@ A reading also holds:
   that are no audio
 - PCM is read at 8, 16, 24 and 32 bits and as 32 and 64-bit float
 - A-law, mu-law and ADPCM in a WAV file are read as the lossy codecs they are
-- RF64 and Wave64 files are not read, and a WAV file that states a data size of 0 reads as no
-  audio
+- RF64 files are read, and Wave64 files are not
+- A WAV file that states no size of its samples, 0 or all ones as a program writing to a pipe
+  leaves it, or one that wrapped past 4 GB, is as long as its bytes
 - MP3 is read as MPEG-1, MPEG-2 and MPEG-2.5 Layer III, from 8 kHz up; a free-format MP3 is not
   read
 - The length of an MP3 with no Xing or VBRI header is a guess from its bitrate, and the file
   is read to its last frame whatever the guess
 - AAC-LD and AAC-ELD are read too, each tried on one file from fdk-aac
 - Of several audio tracks in a file the first is read, and of the streams chained in an Ogg
-  file the first, which the reading says
+  file the first. The reading says so of both
 - No audio is read of an MP4 file cut short
 - Opus is read in Ogg (`.opus`, `.ogg`), Matroska/WebM (`.mka`, `.webm`) and MP4
 - An Opus file starts after its pre-skip and has its header's output gain applied
@@ -354,6 +355,10 @@ fn main() -> Result<(), choon::Error> {
 - Measuring is slow and reading is quick: measure once, read under many thresholds
 - `picture` holds each window's spectrogram and waveform data
 - Logs through `tracing`
+- A panic while a file is measured is the error `Error::Panicked`, and the panic's message
+  goes where the panic hook writes it; a build with `panic = "abort"` aborts
+- A FIFO waits for its writer when it is opened, no longer than the deadline or the cancel
+  check lets the analysis run
 - ape-decoder 0.3.2 can panic on a damaged Monkey's Audio file in a build with overflow checks
 - That panic is caught, logged at `warn` and the frame skipped; a build with `panic = "abort"`
   aborts
@@ -407,8 +412,9 @@ Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
 ## Limitations
 
 - A lossless master filtered sharply where an encoder cuts (16 or 19 kHz) reads as possibly lossy
-- The grid is scanned only in a file that states its length. A FLAC or WAV written to a pipe and
-  FLAC in Matroska state none, and a decode in one reads as possibly lossy at most
+- The grid is scanned in a file whose length is known: one that states it, and a FLAC or WAV
+  file written to a pipe once it has been read to its end. FLAC in Matroska and audio read
+  from a pipe are not scanned, and a decode in one reads as possibly lossy at most
 - An MP3 or AAC decode converted to another rate is looked for between 44.1 and 48 kHz only;
   after any other conversion it can read as possibly lossy
 - A Vorbis decode's grid mostly reads as AAC's, without AAC's quantizer steps, and a WMA
