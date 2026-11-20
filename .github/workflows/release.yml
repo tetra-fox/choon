@@ -7,10 +7,6 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
-    inputs:
-      ref:
-        description: Branch, tag or commit to build, the run's own when empty
-        type: string
 
 # the checks run every dependency's code, so only the release job can write
 permissions:
@@ -68,8 +64,6 @@ jobs:
       ARTIFACT: ${{ matrix.artifact }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.ref }}
       # rustup instead of the flake, which has no Windows; it installs the toolchain that
       # rust-toolchain.toml names
       - name: Set up Rust
