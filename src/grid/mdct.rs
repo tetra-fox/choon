@@ -33,6 +33,27 @@ pub(super) fn fold_with<T, U>(
   }
 }
 
+/// [`fold`] of `frame` times `window`, sample by sample, without the windowed frame in between
+pub(crate) fn fold_windowed<T: Float>(frame: &[T], window: &[T], folded: &mut [T]) {
+  let q = folded.len() / 2;
+  // the quarters a, b, c, d
+  fn quarters<T>(all: &[T], q: usize) -> [&[T]; 4] {
+    let (ab, cd) = all.split_at(2 * q);
+    let ((a, b), (c, d)) = (ab.split_at(q), cd.split_at(q));
+    [a, b, c, d]
+  }
+  let ([a, b, c, d], [wa, wb, wc, wd]) = (quarters(frame, q), quarters(window, q));
+  let (low, high) = folded.split_at_mut(q);
+  let reversed = c.iter().zip(wc).rev();
+  for ((folded, (c, wc)), (d, wd)) in low.iter_mut().zip(reversed).zip(d.iter().zip(wd)) {
+    *folded = -(*c * *wc) - *d * *wd;
+  }
+  let reversed = b.iter().zip(wb).rev();
+  for ((folded, (a, wa)), (b, wb)) in high.iter_mut().zip(a.iter().zip(wa)).zip(reversed) {
+    *folded = *a * *wa - *b * *wb;
+  }
+}
+
 /// the orthonormal DCT-IV of length N through a complex FFT of length N/2:
 /// X_k = sqrt(2/N) sum_n u_n cos(pi/N (n + 1/2)(k + 1/2))
 pub(crate) struct DctIv<T = f32> {

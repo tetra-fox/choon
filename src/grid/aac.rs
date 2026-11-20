@@ -3,7 +3,7 @@
 
 use rayon::prelude::*;
 
-use super::mdct::{DctIv, fold};
+use super::mdct::{DctIv, fold_windowed};
 use super::scan::active;
 use super::segments::Segment;
 use super::steps::{BandScratch, WHOLE_STEP, band_step};
@@ -44,7 +44,6 @@ impl Window {
 pub(super) struct Aac {
   window: Vec<f32>,
   dct: DctIv,
-  frame: Vec<f32>,
   folded: Vec<f32>,
   /// the transform of left and right
   values: [Vec<f32>; 2],
@@ -57,7 +56,6 @@ impl Aac {
     Self {
       window: window.samples(),
       dct: DctIv::new(AAC_HOP),
-      frame: vec![0.0; 2 * AAC_HOP],
       folded: vec![0.0; AAC_HOP],
       values: std::array::from_fn(|_| vec![0.0; AAC_HOP]),
       mid_side: std::array::from_fn(|_| vec![0.0; AAC_HOP]),
@@ -106,10 +104,7 @@ impl Aac {
 
   /// the orthonormal MDCT of `input`, 2048 samples, windowed, into `values[into]`
   fn mdct(&mut self, input: &[f32], into: usize) {
-    for ((f, x), w) in self.frame.iter_mut().zip(input).zip(&self.window) {
-      *f = x * w;
-    }
-    fold(&self.frame, &mut self.folded);
+    fold_windowed(input, &self.window, &mut self.folded);
     self.dct.process(&self.folded, &mut self.values[into]);
   }
 }
@@ -129,7 +124,6 @@ pub(crate) fn aac_bands(rate: u32) -> Option<&'static [usize; 50]> {
 pub(super) struct AacStepper {
   window: Vec<f64>,
   dct: DctIv<f64>,
-  frame: Vec<f64>,
   folded: Vec<f64>,
 }
 
@@ -138,7 +132,6 @@ impl AacStepper {
     Self {
       window: window.exact(),
       dct: DctIv::new(AAC_HOP),
-      frame: vec![0.0; 2 * AAC_HOP],
       folded: vec![0.0; AAC_HOP],
     }
   }
@@ -200,10 +193,7 @@ impl AacStepper {
 
   /// the orthonormal MDCT of `input`, 2048 samples, windowed, into `lines`
   fn mdct(&mut self, input: &[f64], lines: &mut Vec<f64>) {
-    for ((f, x), w) in self.frame.iter_mut().zip(input).zip(&self.window) {
-      *f = x * w;
-    }
-    fold(&self.frame, &mut self.folded);
+    fold_windowed(input, &self.window, &mut self.folded);
     lines.resize(AAC_HOP, 0.0);
     self.dct.process(&self.folded, lines);
   }
