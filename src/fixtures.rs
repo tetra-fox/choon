@@ -64,6 +64,11 @@ pub const HE_AAC_ADTS: &[u8] = include_bytes!("fixtures/he-aac.aac");
 ///
 /// It is made as [`HE_AAC`] is.
 pub const HE_AAC_V2: &[u8] = include_bytes!("fixtures/he-aac-v2.m4a");
+/// AAC-ELD file, a second of stereo pink noise at 44.1 kHz and 64 kbit/s.
+///
+/// It is made by fdkaac from generated noise. Its MP4 track states no channels, which only
+/// its config does.
+pub const AAC_ELD: &[u8] = include_bytes!("fixtures/aac-eld.m4a");
 
 /// Quarter of a second of 16-bit stereo noise and tones at 44.1 kHz.
 ///

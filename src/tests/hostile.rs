@@ -114,6 +114,27 @@ fn an_ogg_file_is_read_whatever_follows_its_last_page() {
   }
 }
 
+#[test]
+fn a_second_stream_chained_after_the_first_is_named_as_left_out() {
+  let audio = Audio {
+    rate: 48_000,
+    ..music(1, 44_100, pink)
+  };
+  let stream = fixtures::opus(&audio, fixtures::OpusSettings::music(128)).ogg();
+  let alone = measure_bytes(stream.clone(), &settings()).unwrap();
+  let measured = measure_bytes([stream.clone(), stream].concat(), &settings()).unwrap();
+  assert_eq!(measured.duration, alone.duration);
+  let reading = read(&measured);
+  assert!(
+    reading
+      .limitations
+      .iter()
+      .any(|l| l.to_string() == "Another stream follows the first, which alone was read"),
+    "{:?}",
+    reading.limitations
+  );
+}
+
 proptest::proptest! {
   #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
 

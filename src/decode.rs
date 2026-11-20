@@ -403,12 +403,19 @@ impl Decoder {
         "the sample rate of {sample_rate} Hz is above the {MAX_RATE} Hz the analyzer reads"
       )));
     }
-    let all = params.channels.as_ref().map_or(0, |c| c.count());
+    let core = (params.codec == CODEC_ID_AAC).then(|| aac::core(&params));
+    // an AAC stream's config states its channels where its track does not, as symphonia's MP4
+    // reader leaves them out for an object type it does not know, AAC-ELD among them
+    let all = params
+      .channels
+      .as_ref()
+      .map(|c| c.count())
+      .or_else(|| core.flatten().map(|core| core.channels))
+      .unwrap_or(0);
     if all == 0 {
       return Err(unsupported("the number of channels is not stated"));
     }
     let channels = all.min(ANALYZED_CHANNELS);
-    let core = (params.codec == CODEC_ID_AAC).then(|| aac::core(&params));
     let ticks = track.num_frames;
     let mut opened = Self {
       format,
@@ -748,6 +755,13 @@ impl Decoder {
           self.stopped = Some("the file ends before its last packet".to_string());
           return None;
         }
+        // symphonia asks for a new decoder where a stream ends and another begins, as in a
+        // chained Ogg file. the next stream can be of another rate or codec, and is not read
+        Err(Error::ResetRequired) => {
+          debug!("another stream follows the one read");
+          self.stopped = Some("another stream follows the first, which alone was read".to_string());
+          return None;
+        }
         Err(e) => {
           debug!(error = %e, "audio could not be read on");
           self.stopped = Some(format!("reading stopped: {e}"));
@@ -1073,6 +1087,21 @@ mod tests {
       decoder.seek(5.0),
       Err("the container sought past the position".to_string())
     );
+  }
+
+  #[test]
+  fn aac_eld_is_read_with_the_channels_its_config_states() {
+    let (claimed, samples) = decoded(fixtures::AAC_ELD.to_vec());
+    assert_eq!((claimed.sample_rate, claimed.channels), (44_100, 2));
+    assert_eq!(claimed.frames, Some(samples[0].len() as u64));
+    assert!(
+      (44_100..45_200).contains(&samples[0].len()),
+      "{}",
+      samples[0].len()
+    );
+    // pink noise at 0.3 of full scale
+    let level = rms(&samples[0][4410..]);
+    assert!((0.02..0.2).contains(&level), "{level}");
   }
 
   #[test]
