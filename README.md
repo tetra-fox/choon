@@ -234,6 +234,9 @@ A reading also holds:
 
 ## Installation
 
+Prebuilt binaries are available on the
+[releases page](https://github.com/tetra-fox/choon/releases), or with cargo:
+
 ```sh
 cargo install choon
 ```
