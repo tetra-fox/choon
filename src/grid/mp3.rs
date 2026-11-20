@@ -2,6 +2,7 @@
 //! offsets and for the quantizer's steps
 
 use rayon::prelude::*;
+use rustfft::num_traits::Float;
 
 use super::mdct::fold_with;
 use super::scan::active;
@@ -47,25 +48,27 @@ const SUBBANDS: usize = 32;
 /// the subbands whose line sums [`Mp3::hybrid`] keeps side by side
 const SIDE_BY_SIDE: usize = 16;
 
-/// the MP3 analysis: the layer III hybrid filterbank, in double precision
-pub(super) struct Mp3 {
+/// the MP3 analysis: the layer III hybrid filterbank. the count of a grid's offsets runs it in
+/// single precision, the quantizer's steps in double
+pub(super) struct Mp3<T = f64> {
   /// the analysis window C over 512 taps in blocks of 64, each block's last tap first, which is
   /// the order the taps meet the input samples in
-  window: [[f64; 64]; 8],
+  window: [[T; 64]; 8],
   /// cos((2i + 1)(k - 16) pi / 64) for k in 0..64, by subband i
-  matrix: [[f64; SUBBANDS]; 64],
+  matrix: [[T; SUBBANDS]; 64],
   /// the sine window over 36 subband samples, by subband: every odd sample of an odd subband is
   /// negated
-  windows: [[f64; SUBBANDS]; SUBBAND_SAMPLES],
+  windows: [[T; SUBBANDS]; SUBBAND_SAMPLES],
   /// cos(pi/18 (n + 1/2)(k + 1/2)), the DCT-IV that gives the 18-line MDCT
   /// sum_n w_n z_n cos(pi/72 (2n + 1 + 18)(2k + 1)) of the folded windowed samples, by line
-  dct: Vec<[f64; LINES]>,
+  dct: Vec<[T; LINES]>,
   /// cs and ca of each butterfly
-  butterflies: [(f64, f64); 8],
+  butterflies: [(T, T); 8],
 }
 
-impl Mp3 {
+impl<T: Float> Mp3<T> {
   pub(super) fn new() -> Self {
+    let narrowed = |value: f64| T::from(value).expect("a float holds a number of size one");
     let mut d = [0.0; 512];
     for (i, v) in ENWINDOW.iter().enumerate() {
       let v = f64::from(*v);
@@ -76,22 +79,28 @@ impl Mp3 {
     }
     let pi = std::f64::consts::PI;
     Self {
-      window: std::array::from_fn(|j| std::array::from_fn(|i| d[64 * j + 63 - i] / 65536.0 / 32.0)),
+      window: std::array::from_fn(|j| {
+        std::array::from_fn(|i| narrowed(d[64 * j + 63 - i] / 65536.0 / 32.0))
+      }),
       matrix: std::array::from_fn(|k| {
-        std::array::from_fn(|i| ((2 * i + 1) as f64 * (k as f64 - 16.0) * pi / 64.0).cos())
+        std::array::from_fn(|i| {
+          narrowed(((2 * i + 1) as f64 * (k as f64 - 16.0) * pi / 64.0).cos())
+        })
       }),
       windows: std::array::from_fn(|n| {
         std::array::from_fn(|sb| {
           let sign = if n % 2 == 1 && sb % 2 == 1 { -1.0 } else { 1.0 };
-          sign * (pi / 36.0 * (n as f64 + 0.5)).sin()
+          narrowed(sign * (pi / 36.0 * (n as f64 + 0.5)).sin())
         })
       }),
       dct: (0..LINES)
-        .map(|k| std::array::from_fn(|n| (pi / 18.0 * (n as f64 + 0.5) * (k as f64 + 0.5)).cos()))
+        .map(|k| {
+          std::array::from_fn(|n| narrowed((pi / 18.0 * (n as f64 + 0.5) * (k as f64 + 0.5)).cos()))
+        })
         .collect(),
       butterflies: ALIAS.map(|c| {
         let norm = (1.0 + c * c).sqrt();
-        (1.0 / norm, c / norm)
+        (narrowed(1.0 / norm), narrowed(c / norm))
       }),
     }
   }
@@ -101,23 +110,23 @@ impl Mp3 {
   ///
   /// every sum here and in [`Mp3::hybrid`] adds its terms in the order of the formula, in one
   /// running total per output, so the inner loops run over the outputs side by side.
-  fn polyphase(&self, x: &[f64]) -> Vec<[f64; SUBBANDS]> {
+  fn polyphase(&self, x: &[T]) -> Vec<[T; SUBBANDS]> {
     let count = (x.len() - 512) / 32 + 1;
     (0..count)
       .map(|t| {
         // with the newest input at 32 t + 511, y[63 - k] is the sum over j of
         // x[newest - k - 64 j] window[k + 64 j]
         let (blocks, _) = x[32 * t..32 * t + 512].as_chunks::<64>();
-        let mut y = [0.0; 64];
+        let mut y = [T::zero(); 64];
         for (taps, x) in self.window.iter().zip(blocks.iter().rev()) {
           for ((y, x), tap) in y.iter_mut().zip(x).zip(taps) {
-            *y += x * tap;
+            *y = *y + *x * *tap;
           }
         }
-        let mut subbands = [0.0; SUBBANDS];
+        let mut subbands = [T::zero(); SUBBANDS];
         for (row, y) in self.matrix.iter().zip(y.iter().rev()) {
           for (subband, m) in subbands.iter_mut().zip(row) {
-            *subband += m * y;
+            *subband = *subband + *m * *y;
           }
         }
         subbands
@@ -126,10 +135,10 @@ impl Mp3 {
   }
 
   /// the 576 values of the granule whose 36 subband samples are `samples`, subband by subband
-  fn hybrid(&self, samples: &[[f64; SUBBANDS]], out: &mut [f64; MP3_HOP]) {
+  fn hybrid(&self, samples: &[[T; SUBBANDS]], out: &mut [T; MP3_HOP]) {
     // each subband sample with its window, multiplied as the two are folded
     let windowed: [_; SUBBAND_SAMPLES] = std::array::from_fn(|n| (&samples[n], &self.windows[n]));
-    let mut folded = [[0.0; SUBBANDS]; LINES];
+    let mut folded = [[T::zero(); SUBBANDS]; LINES];
     fold_with(
       &windowed,
       &mut folded,
@@ -138,10 +147,10 @@ impl Mp3 {
     );
     for (k, dct) in self.dct.iter().enumerate() {
       for from in (0..SUBBANDS).step_by(SIDE_BY_SIDE) {
-        let mut line = [0.0; SIDE_BY_SIDE];
+        let mut line = [T::zero(); SIDE_BY_SIDE];
         for (d, folded) in dct.iter().zip(&folded) {
           for (l, f) in line.iter_mut().zip(&folded[from..from + SIDE_BY_SIDE]) {
-            *l += d * f;
+            *l = *l + *d * *f;
           }
         }
         for (i, l) in line.iter().enumerate() {
@@ -153,36 +162,41 @@ impl Mp3 {
       for (i, (cs, ca)) in self.butterflies.iter().enumerate() {
         let lo = out[sb * LINES + LINES - 1 - i];
         let hi = out[(sb + 1) * LINES + i];
-        out[sb * LINES + LINES - 1 - i] = lo * cs + hi * ca;
-        out[(sb + 1) * LINES + i] = hi * cs - lo * ca;
+        out[sb * LINES + LINES - 1 - i] = lo * *cs + hi * *ca;
+        out[(sb + 1) * LINES + i] = hi * *cs - lo * *ca;
       }
     }
   }
+}
 
+impl Mp3<f32> {
   /// the active count summed over the granules of `segment`, for each offset of the granule
   /// grid from its first sample. every offset counts the same number of granules. the 32
   /// phases of the polyphase filterbank are tasks on rayon's thread pool.
   pub(super) fn curve(&self, segment: &Segment) -> Vec<f64> {
+    let left: Vec<f32> = segment.left.iter().map(|s| *s as f32).collect();
+    let right: Vec<f32> = segment.right.iter().map(|s| *s as f32).collect();
+    // the granules every offset holds
+    let granules = (left.len() - MP3_HOP - 512 - SUBBAND_SAMPLES * 32) / MP3_HOP;
     let phases: Vec<[f64; LINES]> = (0..32)
       .into_par_iter()
-      .map(|phase| self.phase(segment, phase))
+      .map(|phase| self.phase(&left[phase..], &right[phase..], granules))
       .collect();
     (0..MP3_HOP)
       .map(|offset| phases[offset % 32][offset / 32])
       .collect()
   }
 
-  /// the counts of the offsets `phase` + 32 g, for g in 0..18: the granules that start at
-  /// subband sample g of the filterbank run from input sample `phase`
-  fn phase(&self, segment: &Segment, phase: usize) -> [f64; LINES] {
-    let granules = (segment.left.len() - MP3_HOP - 512 - SUBBAND_SAMPLES * 32) / MP3_HOP;
+  /// the counts over `granules` granules of the offsets 32 g from the first sample of `left`
+  /// and `right`, for g in 0..18: the granules that start at subband sample g of the
+  /// filterbank run from there. the two are a segment's channels from one of the 32 phases on
+  fn phase(&self, left: &[f32], right: &[f32], granules: usize) -> [f64; LINES] {
     let t2 = (NOISE16 * MP3_NOISE_GAIN).powi(2) as f32;
-    let half = std::f64::consts::FRAC_1_SQRT_2;
+    let half = std::f32::consts::FRAC_1_SQRT_2;
     let (mut l, mut r) = ([0.0; MP3_HOP], [0.0; MP3_HOP]);
-    // left, right, mid and side in single precision, for the counts
-    let mut narrow = [[0.0f32; MP3_HOP]; 4];
-    let left = self.polyphase(&segment.left[phase..]);
-    let right = self.polyphase(&segment.right[phase..]);
+    let (mut m, mut s) = ([0.0; MP3_HOP], [0.0; MP3_HOP]);
+    let left = self.polyphase(left);
+    let right = self.polyphase(right);
     let mut counts = [0.0; LINES];
     for (g, count) in counts.iter_mut().enumerate() {
       *count = (0..granules)
@@ -190,14 +204,13 @@ impl Mp3 {
           let at = g + LINES * granule;
           self.hybrid(&left[at..at + SUBBAND_SAMPLES], &mut l);
           self.hybrid(&right[at..at + SUBBAND_SAMPLES], &mut r);
-          for k in 0..MP3_HOP {
-            narrow[0][k] = l[k] as f32;
-            narrow[1][k] = r[k] as f32;
-            narrow[2][k] = ((l[k] + r[k]) * half) as f32;
-            narrow[3][k] = ((l[k] - r[k]) * half) as f32;
+          for ((m, s), (l, r)) in m.iter_mut().zip(&mut s).zip(l.iter().zip(&r)) {
+            *m = (l + r) * half;
+            *s = (l - r) * half;
           }
-          let count = narrow.each_ref().map(|values| active(values, t2));
-          (count[0] + count[1]).min(count[2] + count[3])
+          let apart = active(&l, t2) + active(&r, t2);
+          let joint = active(&m, t2) + active(&s, t2);
+          apart.min(joint)
         })
         .sum();
     }
@@ -236,7 +249,7 @@ pub(super) struct GranuleSteps {
   pub(super) neighbours: Mp3Neighbours,
 }
 
-impl Mp3 {
+impl Mp3<f64> {
   /// the bands of each of `segment`'s granules on the grid at `offset` from its first sample,
   /// each granule as left and right or as mid and side, whichever has more bands on whole
   /// steps
