@@ -4,7 +4,7 @@
 use std::path::Path;
 
 use super::{flac, read, settings};
-use crate::engine::measure;
+use crate::engine::{measure, measure_bytes};
 use crate::fixtures::{self, Audio, Bitrate, LongWindow, music, pink};
 use crate::grid::{self, Codec, Evidence};
 use crate::limitation::Limitation;
@@ -478,4 +478,29 @@ fn audio_that_was_never_opus_carries_no_opus_frames() {
   let high = flac(dir.path(), "at-96000.flac", &music(1, 96_000, pink), 24);
   let measured = measure(high, &settings()).unwrap();
   assert_eq!(measured.grid.expect("scanned for MP3 and AAC").opus, None);
+}
+
+#[test]
+fn a_file_stuck_at_negative_full_scale_carries_no_grid() {
+  for rate in [44_100u32, 48_000] {
+    // 16-bit stereo PCM in a WAV, every sample the lowest value there is
+    let frames = 2_700_001u32;
+    let data = frames * 4;
+    let mut bytes = b"RIFF".to_vec();
+    bytes.extend((36 + data).to_le_bytes());
+    bytes.extend(b"WAVEfmt \x10\0\0\0\x01\0\x02\0");
+    bytes.extend(rate.to_le_bytes());
+    bytes.extend((4 * rate).to_le_bytes());
+    bytes.extend(b"\x04\0\x10\0data");
+    bytes.extend(data.to_le_bytes());
+    bytes.extend(i16::MIN.to_le_bytes().repeat(2 * frames as usize));
+    let measured = measure_bytes(bytes, &settings()).unwrap();
+    let scan = measured.grid.as_ref().expect("a lossless file is scanned");
+    let other = scan.other_rate.as_ref().expect("scanned at the other rate");
+    // every offset counts the same in a stretch of one value
+    assert_eq!((other.aac.z, other.mp3.z), (0.0, 0.0), "{rate}: {other:?}");
+    let reading = read(&measured);
+    assert_eq!(reading.grid, None, "{rate}: {other:?}");
+    assert_ne!(reading.verdict, Verdict::LikelyTranscode, "{reading:#?}");
+  }
 }

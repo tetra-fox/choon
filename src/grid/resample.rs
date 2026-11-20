@@ -45,15 +45,20 @@ impl Resampler {
     let lower = up.max(down);
     let reach = HALF * lower;
     let taps = kaiser::lowpass(2 * reach + 1, 0.5 / lower as f64, KAISER_BETA);
-    // unity gain for the `up` phases together
-    let gain = up as f64 / taps.iter().sum::<f64>();
     // y_j is the sum over i of x_i h[j down + reach - i up]: tap `phase + k up` meets the
     // sample k before the newest
     let phases = (0..up)
       .map(|phase| {
         let mut taps: Vec<f64> = (0..=2 * reach / up)
-          .map(|k| taps.get(phase + k * up).map_or(0.0, |tap| tap * gain))
+          .map(|k| taps.get(phase + k * up).copied().unwrap_or(0.0))
           .collect();
+        // unity gain for each phase on its own: with one gain for all of them a constant
+        // comes out with a ripple that repeats every `up` samples, which a count of a grid's
+        // offsets reads as a dip
+        let gain = 1.0 / taps.iter().sum::<f64>();
+        for tap in &mut taps {
+          *tap *= gain;
+        }
         taps.reverse();
         taps
       })
@@ -153,6 +158,17 @@ mod tests {
       for (j, sample) in output.iter().enumerate().take(to / 10 - edge).skip(edge) {
         assert!((sample - tone(j, to as f64)).abs() < 1e-5, "{j}: {sample}");
       }
+    }
+  }
+
+  #[test]
+  fn a_constant_stays_that_constant() {
+    for resampler in [Resampler::to_48000(), Resampler::to_44100()] {
+      let output = resampler.run(&[-1.0; 4096]);
+      let edge = resampler.edge();
+      // the scan counts in single precision, where the least ripple is another value
+      let inside = &output[edge..output.len() - edge];
+      assert!(inside.iter().all(|sample| *sample as f32 == -1.0));
     }
   }
 
