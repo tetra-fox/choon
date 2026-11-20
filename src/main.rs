@@ -286,11 +286,19 @@ fn run(check: &Check) -> Result<u8, Failed> {
   let profiles = if check.profile.is_empty() {
     vec![("default".to_string(), Thresholds::default())]
   } else {
-    check
+    let profiles: Vec<(String, Thresholds)> = check
       .profile
       .iter()
       .map(|path| profile(path))
-      .collect::<Result<_, _>>()?
+      .collect::<Result<_, _>>()?;
+    // a reading is told from another's by its profile's name, on a line and in the JSON
+    for (at, (name, _)) in profiles.iter().enumerate() {
+      if profiles[..at].iter().any(|(earlier, _)| earlier == name) {
+        let why = format!("another profile is named {name} too");
+        return Err(Failed::Profile(check.profile[at].clone(), why));
+      }
+    }
+    profiles
   };
   let coverage = match (check.max_full_minutes, check.sampled_windows) {
     (Some(minutes), Some(windows)) => Coverage::Sampled {

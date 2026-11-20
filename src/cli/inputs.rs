@@ -1,5 +1,6 @@
 //! the files a check reads: those named, those a named directory holds, and those listed on stdin
 
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -48,6 +49,10 @@ impl Inputs {
         inputs.add(path, follow);
       }
     }
+    // a file named twice, or named and inside a directory named, is read once, where it first
+    // comes. two different paths to one file are two files here
+    let mut seen = HashSet::new();
+    inputs.files.retain(|file| seen.insert(file.clone()));
     Ok(inputs)
   }
 

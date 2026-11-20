@@ -186,6 +186,12 @@ fn a_wrong_argument_is_refused_before_any_file_is_read() {
   std::fs::write(&unknown, r#"{"reading": {"sharpShelf": 40.0}}"#).unwrap();
   let audio = path(&dir.path().join("tone.m4a"));
   std::fs::write(&audio, fixtures::TONE).unwrap();
+  // two profiles whose files share a name would share one in the output
+  let same = path(&dir.path().join("same.json"));
+  std::fs::write(&same, "{}").unwrap();
+  std::fs::create_dir(dir.path().join("elsewhere")).unwrap();
+  let same_elsewhere = path(&dir.path().join("elsewhere").join("same.json"));
+  std::fs::write(&same_elsewhere, "{}").unwrap();
 
   for args in [
     vec!["--profile", &unknown, &audio],
@@ -209,6 +215,7 @@ fn a_wrong_argument_is_refused_before_any_file_is_read() {
     vec!["--max-full-minutes", "15", "--sampled-windows", "0", &audio],
     vec!["--jobs", "0", &audio],
     vec!["--jobs", "1025", &audio],
+    vec!["--profile", &same, "--profile", &same_elsewhere, &audio],
     vec![],
   ] {
     let output = choon(&args);
@@ -259,6 +266,16 @@ fn json_holds_the_bytes_of_a_path_that_is_not_unicode() {
   );
   let plain = of(serde_json::Value::Null).expect("a Unicode path has no bytes beside it");
   assert_eq!(plain["file"], path(&dir.path().join("plain.m4a")));
+}
+
+#[test]
+fn a_file_named_twice_or_inside_a_directory_named_is_read_once() {
+  let dir = tempfile::tempdir().unwrap();
+  let tone = path(&dir.path().join("tone.m4a"));
+  std::fs::write(&tone, fixtures::TONE).unwrap();
+  let output = choon(&[&tone, &path(dir.path()), &tone]);
+  assert_eq!(status(&output), 0, "{output:?}");
+  assert_eq!(sorted_lines(&output).len(), 1, "{output:?}");
 }
 
 #[test]
