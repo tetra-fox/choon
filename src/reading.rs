@@ -3,7 +3,7 @@
 
 use crate::aggregate::{Measures, measures, middle, percentile, upsample_ratio};
 use crate::decode::opus::OpusUse;
-use crate::engine::Measured;
+use crate::engine::{Measured, grid_looked_for};
 use crate::flags::{Flag, findings};
 use crate::grid::{self, Codec, Evidence, Family, Found};
 use crate::limitation::{Limitation, khz};
@@ -42,18 +42,19 @@ pub enum Verdict {
   Consistent,
   /// Samples that show a codec's frame grid.
   ///
-  /// Where no grid scan ran, as in a file that claims a lossy codec, nearly every window stops
-  /// at the same known encoder cutoff with a sharp shelf.
+  /// In a file no grid is looked for in, one that claims a lossy codec or is DSD, nearly every
+  /// window stops at the same known encoder cutoff with a sharp shelf.
   LikelyTranscode,
   /// Audio band-limited for part of the time or of the band, and full band for the rest.
   ///
-  /// It is what one low-bitrate stem mixed into a lossless track looks like. A file whose grid
-  /// was scanned reads as possibly lossy instead.
+  /// It is what one low-bitrate stem mixed into a lossless track looks like. A file a grid is
+  /// looked for in reads as possibly lossy instead.
   MixedSources,
   /// Cutoff that reads as lossy where no codec's frame grid shows.
   ///
   /// The cutoff alone reads as a transcode or as mixed sources. A recording filtered where an
-  /// encoder cuts and a decode resampled afterwards both look like this.
+  /// encoder cuts and a decode resampled afterwards both look like this, and so does a file
+  /// whose grid scan did not run.
   PossiblyLossy,
   /// Too little audio, or measures that fit no pattern.
   Inconclusive,
@@ -224,7 +225,8 @@ impl Measured {
   ///
   /// In a file that claims a lossless format, the cutoff is weighed with the scan for a
   /// codec's frame grid ([`grid`]). Only a grid calls the file a likely transcode; a cutoff
-  /// that reads as lossy without one makes the file possibly lossy.
+  /// that reads as lossy without one makes the file possibly lossy, whether the scan found no
+  /// grid or did not run. A DSD file is read by its cutoff alone, as a lossy file is.
   ///
   /// # Examples
   ///
@@ -335,8 +337,8 @@ impl Measured {
       .grid
       .as_ref()
       .and_then(|scan| grid::found(scan, thresholds));
-    if self.grid.is_some() {
-      found = weighed(found, grid.as_ref(), thresholds);
+    if grid_looked_for(claimed, self.dsd_rate) {
+      found = weighed(found, grid.as_ref(), self.grid.is_some(), thresholds);
     }
     limitations.extend(found.limitations);
     if let Some(he_aac) = &self.he_aac {
@@ -382,11 +384,13 @@ impl Measured {
   }
 }
 
-/// the cutoff reading `found` weighed with the grid scan, which found `grid`: a grid makes a
-/// likely transcode, and a cutoff that reads as lossy without one makes a doubt
+/// the cutoff reading `found` of a file a grid is looked for in, weighed with the `grid` its
+/// scan found: a grid makes a likely transcode, and a cutoff that reads as lossy without one
+/// makes a doubt, whether the scan found none or, not `scanned`, did not run
 fn weighed(
   found: CutoffReading,
   grid: Option<&Found>,
+  scanned: bool,
   thresholds: &ReadingThresholds,
 ) -> CutoffReading {
   if let Some(grid) = grid {
@@ -486,12 +490,16 @@ fn weighed(
     Verdict::LikelyTranscode | Verdict::MixedSources => {
       let mut limitations = found.limitations;
       limitations.push(Limitation::CutoffWithoutGrid);
+      let unconfirmed = if scanned {
+        "No MP3, AAC or Opus frame grid shows in the samples"
+      } else {
+        "The samples were not scanned for a codec's frame grid"
+      };
       CutoffReading {
         verdict: Verdict::PossiblyLossy,
         confidence: 0.4,
         summary: format!(
-          "{} No MP3, AAC or Opus frame grid shows in the samples, so the cutoff alone cannot \
-           confirm a lossy source.",
+          "{} {unconfirmed}, so the cutoff alone cannot confirm a lossy source.",
           found.summary
         ),
         limitations,

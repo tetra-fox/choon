@@ -704,7 +704,7 @@ fn listed(path: &Path, checked: &Checked, colour: bool) -> String {
     return format!("{}  {path}", said(checked, colour));
   };
   let reading = &read.reading;
-  let mut found = found(reading);
+  let mut found = found(reading, checked.grid.is_some());
   found.extend(kind(checked));
   status_line(
     &terminal::painted(Some(reading.verdict), label(reading.verdict), colour),
@@ -742,7 +742,7 @@ fn status_line(status: &str, width: usize, found: &str, path: &str) -> String {
 fn said(checked: &Checked, colour: bool) -> String {
   let kind = kind(checked);
   let words = |reading: &Reading, kind: Option<String>| {
-    let mut found = found(reading);
+    let mut found = found(reading, checked.grid.is_some());
     found.extend(kind);
     let verdict = terminal::painted(Some(reading.verdict), label(reading.verdict), colour);
     if found.is_empty() {
@@ -783,8 +783,8 @@ fn khz(hz: f64) -> String {
 }
 
 /// what a reading found, a few words each: the grid, the cutoff, the encoder, the flags, the
-/// confidence
-fn found(reading: &Reading) -> Vec<String> {
+/// confidence. `scanned` is whether the file's grid scan ran
+fn found(reading: &Reading, scanned: bool) -> Vec<String> {
   let mut found = Vec::new();
   let cutoff = reading.cutoff_hz.map_or_else(
     || "no cutoff".to_string(),
@@ -815,7 +815,14 @@ fn found(reading: &Reading) -> Vec<String> {
     }
     found.push(cutoff);
     found.extend(guess);
-    found.push("no grid".to_string());
+    found.push(
+      if scanned {
+        "no grid"
+      } else {
+        "grid not scanned"
+      }
+      .to_string(),
+    );
     return found;
   }
   if reading.cutoff_hz.is_some() {

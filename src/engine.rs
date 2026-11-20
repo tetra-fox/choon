@@ -235,6 +235,13 @@ impl Measured {
   }
 }
 
+/// whether a codec's frame grid is looked for in a file: a lossy file carries its own codec's
+/// grid, which says nothing, and a codec's decode made into one-bit samples was resampled on
+/// the way, which leaves no grid
+pub(crate) fn grid_looked_for(claimed: &Claimed, dsd_rate: Option<u32>) -> bool {
+  claimed.lossless && dsd_rate.is_none()
+}
+
 /// Error of an analysis that measured nothing.
 #[derive(Debug)]
 pub enum Error {
@@ -423,9 +430,7 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
   let stated = claimed.frames.map(|frames| frames as f64 / rate as f64);
   // samples without a stated depth are floats, which round no coarser than 24 bits
   let bits = claimed.bit_depth.unwrap_or(24);
-  // a lossy file carries its own codec's grid, which says nothing, and a codec's decode made
-  // into one-bit samples was resampled on the way, which leaves no grid
-  let scanned = claimed.lossless && decoder.dsd_rate.is_none();
+  let scanned = grid_looked_for(&claimed, decoder.dsd_rate);
   let opus_rate = lattice::Rate::of(claimed.sample_rate).filter(|_| scanned);
   let mut measuring = Measuring {
     analyzer: Analyzer::new(claimed.sample_rate, claimed.bit_depth, &settings.thresholds),

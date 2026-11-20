@@ -97,3 +97,12 @@ fn a_17_khz_cut(dir: &Path) -> PathBuf {
     16,
   )
 }
+
+/// makes the FLAC at `path` state that it holds `frames` sample frames
+fn state(path: &Path, frames: u64) {
+  // the stream information's total sample count is the low 36 bits of bytes 21 to 25
+  let mut bytes = std::fs::read(path).unwrap();
+  bytes[21] = (bytes[21] & 0xf0) | ((frames >> 32) as u8 & 0x0f);
+  bytes[22..26].copy_from_slice(&(frames as u32).to_be_bytes());
+  std::fs::write(path, &bytes).unwrap();
+}

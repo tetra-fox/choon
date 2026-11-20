@@ -166,9 +166,10 @@ for its long blocks, so a grid's offset and window fit an encoder family:
 | inconclusive     | too little audio, no pattern, or a cut indistinguishable from an honest one |
 
 - A lossy file is also consistent when it stops where its own bitrate cuts
-- Without a grid scan, as in a lossy file, a likely transcode is nearly every window stopping at
-  one known encoder cutoff with a sharp shelf
-- Mixed sources is read only without a grid scan
+- In a lossy file and a DSD file, where no grid is looked for, a likely transcode is nearly every
+  window stopping at one known encoder cutoff with a sharp shelf
+- Mixed sources is read only in such a file
+- A file whose grid scan did not run, as one that states no length, is possibly lossy at most
 
 A reading also holds:
 
@@ -382,6 +383,8 @@ Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
 ## Limitations
 
 - A lossless master filtered sharply where an encoder cuts (16 or 19 kHz) reads as possibly lossy
+- The grid is scanned only in a file that states its length. A FLAC or WAV written to a pipe and
+  FLAC in Matroska state none, and a decode in one reads as possibly lossy at most
 - An MP3 or AAC decode converted to another rate is found between 44.1 and 48 kHz only; after
   any other conversion it reads as possibly lossy at most
 - A Vorbis decode's grid mostly reads as AAC's, without AAC's quantizer steps

@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
-use super::{a_17_khz_cut, flac, read, sampled, settings};
+use super::{a_17_khz_cut, flac, read, sampled, settings, state};
 use crate::engine::{Error, Measured, Settings, measure, measure_bytes};
 use crate::fixtures::{self, Audio, Bitrate, music, music_for, pink};
 use crate::grid;
@@ -245,15 +245,6 @@ fn a_step_search_from_far_below_the_spectrum_ends() {
 fn stating(path: &Path, seconds: usize, frames: u64) {
   fixtures::write_flac(&music_for(seconds, 1, 44_100, pink), 16, false, path);
   state(path, frames);
-}
-
-/// makes the FLAC at `path` state that it holds `frames` sample frames
-fn state(path: &Path, frames: u64) {
-  // the stream information's total sample count is the low 36 bits of bytes 21 to 25
-  let mut bytes = std::fs::read(path).unwrap();
-  bytes[21] = (bytes[21] & 0xf0) | ((frames >> 32) as u8 & 0x0f);
-  bytes[22..26].copy_from_slice(&(frames as u32).to_be_bytes());
-  std::fs::write(path, &bytes).unwrap();
 }
 
 #[test]
