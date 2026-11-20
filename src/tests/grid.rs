@@ -595,3 +595,21 @@ fn loud_audio_that_was_never_coded_stays_consistent() {
     "{reading:?}"
   );
 }
+
+#[test]
+fn a_clipped_decode_is_scanned_where_it_does_not_clip() {
+  let dir = tempfile::tempdir().unwrap();
+  let through = fixtures::through_mp3(&music(1, 44_100, pink), Bitrate::Kbps192, dir.path());
+  let mut loud = clipped(&through, 16.0);
+  // five seconds the gain left alone, between the places of two segments
+  let spared = 15 * 44_100..20 * 44_100 + 11_025;
+  for (channel, source) in loud.channels.iter_mut().zip(&through.channels) {
+    channel[spared.clone()].copy_from_slice(&source[spared.clone()]);
+  }
+  let measured = measure(flac(dir.path(), "loud.flac", &loud, 16), &settings()).unwrap();
+  let scan = measured.grid.as_ref().expect("scanned");
+  let found = grid::found(scan, &ReadingThresholds::default());
+  assert_eq!(found.map(|f| f.codec), Some(Codec::Mp3), "{scan:?}");
+  assert_eq!(scan.mp3.segments_agreeing, 4, "{scan:?}");
+  assert_eq!(read(&measured).verdict, Verdict::LikelyTranscode);
+}

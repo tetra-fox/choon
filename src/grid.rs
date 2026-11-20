@@ -6,7 +6,9 @@
 //! With frames at any other offset they are mixed with the neighbouring frames'. Lossless audio
 //! has no such offset.
 //!
-//! The scan reads four stretches of 40960 samples, at 20, 40, 60 and 80% of the file.
+//! The scan reads four stretches of 40960 samples, at 20, 40, 60 and 80% of the file. Where over
+//! a twentieth of a stretch's sample frames are at full scale, the loudest stretch of the file that is not
+//! clipped is read in its place: clipping after a decode fills the bands the encoder emptied.
 //!
 //! A file at 44.1 or 48 kHz is scanned for MP3 and AAC a second time with its stretches brought
 //! to the other of the two rates, by a long filter that keeps the sample times the rates share.

@@ -428,8 +428,9 @@ Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
   after any other conversion it can read as possibly lossy
 - A Vorbis decode's grid mostly reads as AAC's, without AAC's quantizer steps, and a WMA
   decode's can too
-- A decode made louder until it clips loses most of its frame grid. It reads as inconclusive
-  where a count still comes most of the way to one, and as consistent where none does
+- A decode made louder until it clips loses most of its frame grid. The scan reads stretches that
+  are not clipped where the file has them. A file clipped throughout reads as inconclusive where
+  a count still comes most of the way to a grid, and as consistent where none does
 - Opus is found in frames with the pitch post-filter off; a decode made mostly of filtered
   frames and one in SILK voice mode read as possibly lossy at most
 - An Opus decode of frames under 20 ms whose level was changed afterwards is not found

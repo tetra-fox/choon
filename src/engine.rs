@@ -662,7 +662,7 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
   if unscanned && segments.is_none() {
     measured.problems.push(Limitation::GridNotScanned);
   }
-  if let Some(segments) = &segments {
+  if let Some(segments) = &mut segments {
     let opus = opus_rate
       .zip(measuring.uncut.as_ref())
       .map(|(rate, uncut)| grid::Opus {
@@ -753,7 +753,7 @@ fn read_segments(
 /// scans full `segments` for a codec's frame grid; `None`, noted in `measured`, when they are
 /// not full or the analysis runs out of time first
 fn scan_grid(
-  segments: &Segments,
+  segments: &mut Segments,
   opus: Option<grid::Opus>,
   run: &Run<'_>,
   measured: &mut Measured,
@@ -763,6 +763,13 @@ fn scan_grid(
     debug!("the grid segments were not all read");
     measured.problems.push(Limitation::GridScanIncomplete);
     return Ok(None);
+  }
+  let replaced = segments.settle();
+  if replaced > 0 {
+    debug!(
+      replaced,
+      "clipped grid segments gave way to stretches that are not"
+    );
   }
   let ended = AtomicUsize::new(0);
   let other_rate = settings.thresholds.scan_other_rate;

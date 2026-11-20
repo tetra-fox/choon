@@ -5,6 +5,8 @@
 const LEVEL_BLOCK: usize = 1024;
 /// the quietest block level the histogram counts, in dBFS; one bucket per whole dB up to 0
 const LEVELS_FROM_DB: f64 = -160.0;
+/// a sample this far from zero or further counts as at full scale
+pub(crate) const CLIPPED: f64 = 0.9999;
 
 /// the running figures over every analyzed sample
 #[derive(Clone, Debug, Default)]
@@ -100,7 +102,7 @@ impl Totals {
         self.samples += 1;
         self.sum += value;
         self.peak = self.peak.max(value.abs());
-        if value.abs() >= 0.9999 {
+        if value.abs() >= CLIPPED {
           self.clipped += 1;
         }
       }
