@@ -428,20 +428,20 @@ choon at commit `83a89f1` read 15,801 FLAC files made from 847 lossless masters.
 of [MUSDB18-HQ](https://zenodo.org/records/3338373). 609 are from the author's library, whose
 audio cannot be shared. Each lossy file was encoded from a master, decoded, and written as FLAC.
 
-| Audio                                                       | Public         | Library        |
-| ----------------------------------------------------------- | -------------- | -------------- |
-| MP3 (LAME), CBR 96 to 320 kbps and V0 to V9                 | 1,916 of 1,916 | 2,139 of 2,148 |
-| AAC (ffmpeg), 96 to 256 kbps                                | 574 of 574     | 822 of 826     |
-| Opus (libopus), 128 kbps                                    | 238 of 238     | 30 of 31       |
-| Vorbis (libvorbis), q5 and q8                               | 282 of 282     | 55 of 55       |
-| Vorbis (libvorbis), q10                                     | 43 of 44       | 21 of 24       |
-| MP2 (ffmpeg), 128 to 384 kbps                               | 176 of 176     | 95 of 96       |
-| WMA (ffmpeg), 64 to 320 kbps                                | 176 of 176     | 96 of 96       |
-| MP3, AAC, Opus or Vorbis encoded again as MP3               | 288 of 288     | 185 of 186     |
-| MP3 and AAC with gain, dither or peak normalization applied | 1,200 of 1,200 | 757 of 775     |
-| MP3 and AAC resampled between 44.1 and 48 kHz               | 240 of 240     | 150 of 155     |
-| MP3 and AAC decoded by LAME, mpg123 and FAAD2               | 528 of 528     | 337 of 341     |
-| Lossless masters and their copies                           | 0 of 1,428     | 0 of 3,978     |
+| Audio                                                         | Public         | Library        |
+| ------------------------------------------------------------- | -------------- | -------------- |
+| MP3 (LAME), CBR 96 to 320 kbps and V0 to V9                   | 1,916 of 1,916 | 2,139 of 2,148 |
+| AAC (ffmpeg), 96 to 256 kbps                                  | 574 of 574     | 822 of 826     |
+| Opus (libopus), 128 kbps                                      | 238 of 238     | 30 of 31       |
+| Vorbis (libvorbis), q5 and q8                                 | 282 of 282     | 55 of 55       |
+| Vorbis (libvorbis), q10                                       | 43 of 44       | 21 of 24       |
+| MP2 (ffmpeg), 128 to 384 kbps                                 | 176 of 176     | 95 of 96       |
+| WMA (ffmpeg), 64 to 320 kbps                                  | 176 of 176     | 96 of 96       |
+| MP3, AAC, Opus or Vorbis encoded again as MP3                 | 288 of 288     | 185 of 186     |
+| MP3 and AAC with gain, dither or peak normalization applied   | 960 of 960     | 604 of 620     |
+| MP3 and AAC resampled between 44.1 and 48 kHz                 | 240 of 240     | 150 of 155     |
+| MP3 and AAC decoded by ffmpeg to 16 bits, LAME, mpg123, FAAD2 | 768 of 768     | 490 of 496     |
+| Lossless masters and their copies                             | 0 of 1,428     | 0 of 3,978     |
 
 - Each cell is the files read as a likely transcode
 - A master's copies are the master resampled to another rate and back, upsampled to 96 kHz,
