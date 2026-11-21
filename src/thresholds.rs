@@ -254,8 +254,7 @@ pub struct ReadingThresholds {
   ///
   /// It is compared with each of [`CodecScan::segment_z`](crate::grid::CodecScan::segment_z)
   /// whose segment puts its lowest count at the file's offset, where no grid shows in the
-  /// file as a whole. It stands far over the grid thresholds, as two segments share an offset
-  /// by chance far more often than three.
+  /// file as a whole.
   pub part_grid_z: f64,
   /// Fewest segments that pass `part_grid_z`, for a grid in part of the file, one at least.
   pub part_grid_segments: usize,
@@ -528,7 +527,7 @@ impl Default for ReadingThresholds {
       mp2_all_agreeing_grid_z: 4.0,
       mp2_grid_segments_agreeing: 3,
       // a lossless file's segment reaches 20 alone, and 7.1 beside another at its offset
-      part_grid_z: 30.0,
+      part_grid_z: 7.0,
       part_grid_segments: 2,
       // the tuning's files with no AAC behind a conversion reach 9.63 there, and its converted
       // AAC decodes that show a grid start at 16.7
