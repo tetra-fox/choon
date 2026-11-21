@@ -21,20 +21,30 @@ pub(crate) enum Window {
   Sine,
   /// the window of a Vorbis long block, whose transform has the same length and hop
   Vorbis,
+  /// the sine window of a WMA long block, which is twice as long at twice the hop
+  Wma,
 }
 
 impl Window {
-  /// the window over the 2048 samples of a long block
+  /// the samples a long block advances by
+  pub(crate) fn hop(self) -> usize {
+    match self {
+      Self::Kbd | Self::Sine | Self::Vorbis => AAC_HOP,
+      Self::Wma => 2 * AAC_HOP,
+    }
+  }
+
+  /// the window over the samples of a long block, two hops of them
   pub(crate) fn samples(self) -> Vec<f32> {
     self.exact().into_iter().map(|w| w as f32).collect()
   }
 
   /// the same in double precision
   fn exact(self) -> Vec<f64> {
-    let length = 2 * AAC_HOP;
+    let length = 2 * self.hop();
     match self {
       Self::Kbd => kbd_window(length, 4.0),
-      Self::Sine => (0..length)
+      Self::Sine | Self::Wma => (0..length)
         .map(|n| (std::f64::consts::PI * (n as f64 + 0.5) / length as f64).sin())
         .collect(),
       // sin(pi/2 sin^2(pi (n + 1/2) / N))
@@ -48,9 +58,11 @@ impl Window {
   }
 }
 
-/// the AAC analysis: a long block's window and an orthonormal MDCT, transformed in single
-/// precision
+/// the analysis of a long block, AAC's, Vorbis's or WMA's: its window and an orthonormal MDCT,
+/// transformed in single precision
 pub(super) struct Aac {
+  /// the samples a block advances by, and the lines its transform gives
+  hop: usize,
   window: Vec<f32>,
   dct: DctIv,
   folded: Vec<f32>,
@@ -62,12 +74,14 @@ pub(super) struct Aac {
 
 impl Aac {
   fn new(window: Window) -> Self {
+    let hop = window.hop();
     Self {
+      hop,
       window: window.samples(),
-      dct: DctIv::new(AAC_HOP),
-      folded: vec![0.0; AAC_HOP],
-      values: std::array::from_fn(|_| vec![0.0; AAC_HOP]),
-      mid_side: std::array::from_fn(|_| vec![0.0; AAC_HOP]),
+      dct: DctIv::new(hop),
+      folded: vec![0.0; hop],
+      values: std::array::from_fn(|_| vec![0.0; hop]),
+      mid_side: std::array::from_fn(|_| vec![0.0; hop]),
     }
   }
 
@@ -77,9 +91,10 @@ impl Aac {
   pub(super) fn curve(segment: &Segment, window: Window) -> Vec<f64> {
     let left: Vec<f32> = segment.left.iter().map(|s| *s as f32).collect();
     let right: Vec<f32> = segment.right.iter().map(|s| *s as f32).collect();
-    (0..AAC_HOP)
+    let hop = window.hop();
+    (0..hop)
       .into_par_iter()
-      .with_min_len(AAC_HOP / TASKS)
+      .with_min_len(hop / TASKS)
       .map_init(
         || Self::new(window),
         |aac, offset| aac.count(&left, &right, offset),
@@ -90,14 +105,15 @@ impl Aac {
   /// the active count summed over the long frames of `left` and `right` on the grid at `offset`
   fn count(&mut self, left: &[f32], right: &[f32], offset: usize) -> f64 {
     // the frames every offset holds
-    let frames = (left.len() + 1 - 2 * AAC_HOP) / AAC_HOP;
+    let hop = self.hop;
+    let frames = (left.len() + 1 - 2 * hop) / hop;
     let t2 = (NOISE16 as f32).powi(2);
     let half = std::f32::consts::FRAC_1_SQRT_2;
     (0..frames)
       .map(|j| {
-        let start = offset + j * AAC_HOP;
-        self.mdct(&left[start..start + 2 * AAC_HOP], 0);
-        self.mdct(&right[start..start + 2 * AAC_HOP], 1);
+        let start = offset + j * hop;
+        self.mdct(&left[start..start + 2 * hop], 0);
+        self.mdct(&right[start..start + 2 * hop], 1);
         let [m, s] = &mut self.mid_side;
         let [left, right] = &self.values;
         for ((m, s), (l, r)) in m.iter_mut().zip(s.iter_mut()).zip(left.iter().zip(right)) {
@@ -111,7 +127,7 @@ impl Aac {
       .sum()
   }
 
-  /// the orthonormal MDCT of `input`, 2048 samples, windowed, into `values[into]`
+  /// the orthonormal MDCT of `input`, two hops of samples, windowed, into `values[into]`
   fn mdct(&mut self, input: &[f32], into: usize) {
     fold_windowed(input, &self.window, &mut self.folded);
     self.dct.process(&self.folded, &mut self.values[into]);

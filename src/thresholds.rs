@@ -228,6 +228,17 @@ pub struct ReadingThresholds {
   /// [`Scan::vorbis`](crate::grid::Scan::vorbis), with no agreement asked: a Vorbis stream's
   /// short blocks move its long ones, so its segments rarely share an offset.
   pub vorbis_grid_z: f64,
+  /// Robust z over which the WMA scan finds a frame grid.
+  ///
+  /// It is compared with [`CodecScan::z`](crate::grid::CodecScan::z) of
+  /// [`Scan::wma`](crate::grid::Scan::wma).
+  pub wma_grid_z: f64,
+  /// Fewest segments that put their lowest count at the file's offset, for a WMA grid.
+  ///
+  /// It is compared with [`CodecScan::segments_agreeing`], as `mp3_grid_segments_agreeing` is.
+  ///
+  /// [`CodecScan::segments_agreeing`]: crate::grid::CodecScan::segments_agreeing
+  pub wma_grid_segments_agreeing: usize,
   /// Robust z over which the AAC scan at the other rate finds a frame grid.
   ///
   /// It is compared with the z of [`OtherRate::aac`](crate::grid::OtherRate::aac) and of
@@ -499,6 +510,8 @@ impl Default for ReadingThresholds {
       // with every segment agreeing and no lossless file does
       mp3_near_grid_z: 8.0,
       vorbis_grid_z: 12.0,
+      wma_grid_z: 12.0,
+      wma_grid_segments_agreeing: 3,
       mp2_grid_z: 8.0,
       mp2_grid_segments_agreeing: 3,
       // the tuning's files with no AAC behind a conversion reach 9.63 there, and its converted

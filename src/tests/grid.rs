@@ -132,6 +132,7 @@ fn a_transform_decode_carries_the_aac_grid_under_the_window_it_was_coded_with() 
     ("kaiser-bessel", LongWindow::KaiserBessel, Codec::Aac),
     ("sine", LongWindow::Sine, Codec::Aac),
     ("vorbis", LongWindow::Vorbis, Codec::Vorbis),
+    ("wma", LongWindow::Wma, Codec::Wma),
   ] {
     let through = fixtures::through_transform(&source, window, 64);
     // the coder kept the audio where it should be: it differs by its rounding and its cut
@@ -142,12 +143,14 @@ fn a_transform_decode_carries_the_aac_grid_under_the_window_it_was_coded_with() 
     let scan = measured.grid.as_ref().expect("a lossless file is scanned");
     let sine = scan.aac_sine.as_ref().expect("the sine window is scanned");
     let vorbis = scan.vorbis.as_ref().expect("Vorbis's window is scanned");
-    let (own, others) = match window {
-      LongWindow::KaiserBessel => (&scan.aac, [sine, vorbis]),
-      LongWindow::Sine => (sine, [&scan.aac, vorbis]),
-      LongWindow::Vorbis => (vorbis, [&scan.aac, sine]),
+    let wma = scan.wma.as_ref().expect("WMA's window is scanned");
+    let (own, others, hop) = match window {
+      LongWindow::KaiserBessel => (&scan.aac, [sine, vorbis, wma], 1024),
+      LongWindow::Sine => (sine, [&scan.aac, vorbis, wma], 1024),
+      LongWindow::Vorbis => (vorbis, [&scan.aac, sine, wma], 1024),
+      LongWindow::Wma => (wma, [&scan.aac, sine, vorbis], 2048),
     };
-    assert_eq!(own.offset, 1024 - 64, "{name}: {scan:?}");
+    assert_eq!(own.offset, hop - 64, "{name}: {scan:?}");
     assert_eq!(own.segments_agreeing, 4, "{name}: {scan:?}");
     for other in others {
       assert!(own.z > 1.5 * other.z, "{name}: {scan:?}");
@@ -194,7 +197,9 @@ fn a_decode_of_aacs_quantizer_shows_its_steps_under_the_window_it_was_coded_with
     let (own, other) = match window {
       LongWindow::KaiserBessel => (kbd, sine),
       LongWindow::Sine => (sine, kbd),
-      LongWindow::Vorbis => unreachable!("the steps are AAC's, coded under its windows"),
+      LongWindow::Vorbis | LongWindow::Wma => {
+        unreachable!("the steps are AAC's, coded under its windows")
+      }
     };
     assert_eq!(showing(own), grid::SEGMENTS, "{name}: {scan:?}");
     assert_eq!(showing(other), 0, "{name}: {scan:?}");

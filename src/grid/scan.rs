@@ -28,12 +28,12 @@ pub(crate) struct Opus {
   pub(crate) uncut_short: [[[usize; 2]; 2]; 3],
 }
 
-/// the number of jobs in one scan: four in each segment, for MP3, for AAC under each of its
-/// windows and for Vorbis. with `opus`, set at a rate Opus is looked for at, one more per segment
+/// the number of jobs in one scan: five in each segment, for MP3, for AAC under each of its
+/// windows, for Vorbis and for WMA. with `opus`, set at a rate Opus is looked for at, one more per segment
 /// and one per length of short frame, and with `other_rate` too MP3's and AAC's three again in
 /// each segment at the other rate
 pub(crate) fn jobs(opus: bool, other_rate: bool) -> usize {
-  (4 + usize::from(opus) + 3 * usize::from(opus && other_rate)) * SEGMENTS
+  (5 + usize::from(opus) + 3 * usize::from(opus && other_rate)) * SEGMENTS
     + lattice::SHORT.len() * usize::from(opus)
 }
 
@@ -86,12 +86,9 @@ pub(crate) fn scan(
     .0
     .iter()
     .flat_map(|segment| counts(segment, Rate::Own))
-    .chain(
-      segments
-        .0
-        .iter()
-        .map(|segment| Job::Aac(Window::Vorbis, segment, Rate::Own)),
-    )
+    .chain(segments.0.iter().flat_map(|segment| {
+      [Window::Vorbis, Window::Wma].map(|window| Job::Aac(window, segment, Rate::Own))
+    }))
     .chain(
       other
         .iter()
@@ -138,8 +135,8 @@ pub(crate) fn scan(
     .collect::<Option<_>>()?;
   // each codec's curves at the file's rate and at the other
   let (mut aac, mut sine, mut mp3) = <[[Vec<Vec<f64>>; 2]; 3]>::default().into();
-  // Vorbis's and layer II's, which are scanned at the file's rate alone
-  let (mut vorbis, mut mp2) = (Vec::new(), Vec::new());
+  // Vorbis's, WMA's and layer II's, which are scanned at the file's rate alone
+  let (mut vorbis, mut wma, mut mp2) = (Vec::new(), Vec::new(), Vec::new());
   let mut frames = Vec::new();
   let mut short = Vec::new();
   for curve in curves {
@@ -147,6 +144,7 @@ pub(crate) fn scan(
       Curve::Aac(Window::Kbd, rate, curve) => aac[rate as usize].push(curve),
       Curve::Aac(Window::Sine, rate, curve) => sine[rate as usize].push(curve),
       Curve::Aac(Window::Vorbis, _, curve) => vorbis.push(curve),
+      Curve::Aac(Window::Wma, _, curve) => wma.push(curve),
       Curve::Mp3(rate, curve, subbands) => {
         mp3[rate as usize].push(curve);
         if matches!(rate, Rate::Own) {
@@ -253,6 +251,7 @@ pub(crate) fn scan(
     aac,
     aac_sine: Some(sine),
     vorbis: Some(codec_scan(&vorbis)),
+    wma: Some(codec_scan(&wma)),
     mp2: Some(codec_scan(&mp2)),
     mp3,
     mp3_steps,

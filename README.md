@@ -48,7 +48,7 @@ spread across all windows.
 ### Frame grid
 
 In a file that claims a lossless format, four stretches of the samples are also scanned for the
-frame grid of an MP3, AAC or Vorbis encoder. The encoder transforms its input in frames on a fixed
+frame grid of an MP3, AAC, Vorbis or WMA encoder. The encoder transforms its input in frames on a fixed
 grid and zeroes many transform values. Running its transform again on the decoded samples, with
 frames where the encoder put them, finds those values back at the level of the samples' rounding
 noise.
@@ -56,7 +56,9 @@ noise.
 AAC gives a long block one of two windows, and the zeroed values come back only under the one
 the encoder used. The scan runs under both: the Kaiser-Bessel-derived window of ffmpeg, fdk-aac
 and Nero, and the sine window of Apple and FAAC. A Vorbis long block has the same length and hop
-under a window of its own, and the scan runs under that one too. MP2 quantizes the output of
+under a window of its own, and the scan runs under that one too. A WMA long block is twice as
+long, a 4096-point transform at a hop of 2048 under a sine window, and the scan runs at that
+length as well. MP2 quantizes the output of
 the filterbank MP3 starts with, and the scan counts that output at each of its 32 phases.
 
 The scan counts the values above that noise at every offset of each codec's grid. A grid is one
@@ -163,7 +165,7 @@ for its long blocks, so a grid's offset and window fit an encoder family:
 | Verdict          | Description                                                                 |
 | ---------------- | --------------------------------------------------------------------------- |
 | consistent       | nearly every window reaches the top of the claimed band                     |
-| likely transcode | the samples carry an MP3, MP2, AAC, Vorbis or Opus frame grid               |
+| likely transcode | the samples carry an MP3, MP2, AAC, Vorbis, WMA or Opus frame grid          |
 | mixed sources    | part of the time or of the band is band-limited, the rest full band         |
 | possibly lossy   | the cutoff reads as a transcode or mixed sources, and no frame grid shows   |
 | inconclusive     | too little audio, no pattern, or a cut indistinguishable from an honest one |
@@ -446,8 +448,8 @@ Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
   where none does
 - The grid thresholds were tuned on LAME's MP3 and ffmpeg's AAC; [Encoders](#encoders) lists
   what the scan finds of others
-- A grid shows that the samples were decoded from MP3, MP2, AAC, Vorbis or Opus at some point, as
-  in a master built from such material
+- A grid shows that the samples were decoded from MP3, MP2, AAC, Vorbis, WMA or Opus at some
+  point, as in a master built from such material
 - A cutoff near 20 kHz, where MP3 320 and AAC cut and many recordings are filtered anyway, reads
   as inconclusive; only a grid calls such a file a transcode
 - Naturally band-limited audio (old, lo-fi, dark) can stop near an encoder cutoff by chance

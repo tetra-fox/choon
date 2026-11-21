@@ -24,7 +24,6 @@ use realfft::RealFftPlanner;
 use realfft::num_complex::Complex;
 
 use crate::decode::{Decoder, Filled, hint_of};
-use crate::grid::AAC_HOP;
 use crate::grid::aac::{Window, aac_bands};
 use crate::grid::mdct::{DctIv, fold};
 
@@ -794,15 +793,17 @@ pub enum LongWindow {
   Sine,
   /// Window of a Vorbis long block.
   Vorbis,
+  /// Sine window of a WMA long block, 4096 points at a hop of 2048.
+  Wma,
 }
 
 /// Returns `audio` through a transform coder with AAC's long blocks and decoded again.
 ///
-/// The coder is a 2048-point MDCT at a hop of 1024 under `window`. It drops every line above
-/// 16 kHz and rounds the others to a step of 0.7 times the level of their band of 16 lines,
-/// which zeroes most of them, as an encoder at a low bitrate does. The first block starts
-/// `delay` samples before the audio, so the decode's frame grid is at an offset of
-/// 1024 less `delay`.
+/// The coder is a 2048-point MDCT at a hop of 1024 under `window`, or a 4096-point one at a hop
+/// of 2048 under [`LongWindow::Wma`]. It drops every line above 16 kHz and rounds the others to
+/// a step of 0.7 times the level of their band of 16 lines, which zeroes most of them, as an
+/// encoder at a low bitrate does. The first block starts `delay` samples before the audio, so
+/// the decode's frame grid is at an offset of the hop less `delay`.
 pub fn through_transform(audio: &Audio, window: LongWindow, delay: usize) -> Audio {
   transform_coded(audio, window, delay, |lines| {
     for band in lines.chunks_mut(16) {
@@ -844,7 +845,7 @@ fn level(lines: &[f32]) -> f32 {
   (lines.iter().map(|l| l * l).sum::<f32>() / lines.len() as f32).sqrt()
 }
 
-/// `audio` through a 2048-point MDCT at a hop of 1024 under `window` and back, the first block
+/// `audio` through the MDCT of `window`'s long block at its hop and back, the first block
 /// `delay` samples before the audio: `quantize` rounds each block's lines under 16 kHz, and
 /// the lines above are dropped
 fn transform_coded(
@@ -853,41 +854,43 @@ fn transform_coded(
   delay: usize,
   quantize: impl Fn(&mut [f32]),
 ) -> Audio {
-  assert!(delay <= AAC_HOP, "the delay is at most a hop");
   let window = match window {
     LongWindow::KaiserBessel => Window::Kbd,
     LongWindow::Sine => Window::Sine,
     LongWindow::Vorbis => Window::Vorbis,
-  }
-  .samples();
-  let kept = (16_000.0 * 2.0 * AAC_HOP as f64 / f64::from(audio.rate)) as usize;
-  let mut dct = DctIv::new(AAC_HOP);
-  let (mut frame, mut folded) = (vec![0.0f32; 2 * AAC_HOP], vec![0.0f32; AAC_HOP]);
-  let mut lines = vec![0.0f32; AAC_HOP];
-  let quarter = AAC_HOP / 2;
+    LongWindow::Wma => Window::Wma,
+  };
+  let hop = window.hop();
+  assert!(delay <= hop, "the delay is at most a hop");
+  let window = window.samples();
+  let kept = (16_000.0 * 2.0 * hop as f64 / f64::from(audio.rate)) as usize;
+  let mut dct = DctIv::new(hop);
+  let (mut frame, mut folded) = (vec![0.0f32; 2 * hop], vec![0.0f32; hop]);
+  let mut lines = vec![0.0f32; hop];
+  let quarter = hop / 2;
   let channels = audio
     .channels
     .iter()
     .map(|channel| {
       // a hop of silence on each side, so every sample is under two blocks
-      let mut padded = vec![0.0f32; delay + AAC_HOP];
+      let mut padded = vec![0.0f32; delay + hop];
       padded.extend_from_slice(channel);
-      padded.resize(padded.len().next_multiple_of(AAC_HOP) + AAC_HOP, 0.0);
+      padded.resize(padded.len().next_multiple_of(hop) + hop, 0.0);
       let mut out = vec![0.0f32; padded.len()];
-      for start in (0..padded.len() - AAC_HOP).step_by(AAC_HOP) {
-        let block = &padded[start..start + 2 * AAC_HOP];
+      for start in (0..padded.len() - hop).step_by(hop) {
+        let block = &padded[start..start + 2 * hop];
         for ((f, x), w) in frame.iter_mut().zip(block).zip(&window) {
           *f = x * w;
         }
         fold(&frame, &mut folded);
         dct.process(&folded, &mut lines);
-        lines[kept.min(AAC_HOP)..].fill(0.0);
-        quantize(&mut lines[..kept.min(AAC_HOP)]);
+        lines[kept.min(hop)..].fill(0.0);
+        quantize(&mut lines[..kept.min(hop)]);
         // the orthonormal DCT-IV is its own inverse, and the transpose of the fold puts its
         // output back over the block's four quarters
         dct.process(&lines, &mut folded);
         let (low, high) = folded.split_at(quarter);
-        let unfolded = (0..2 * AAC_HOP).map(|n| match (n / quarter, n % quarter) {
+        let unfolded = (0..2 * hop).map(|n| match (n / quarter, n % quarter) {
           (0, i) => high[i],
           (1, i) => -high[quarter - 1 - i],
           (2, i) => -low[quarter - 1 - i],
@@ -897,7 +900,7 @@ fn transform_coded(
           *o += y * w;
         }
       }
-      out[delay + AAC_HOP..delay + AAC_HOP + channel.len()].to_vec()
+      out[delay + hop..delay + hop + channel.len()].to_vec()
     })
     .collect();
   Audio {
