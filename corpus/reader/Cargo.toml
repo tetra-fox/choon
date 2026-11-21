@@ -1,0 +1,21 @@
+[package]
+name = "choon-corpus-reader"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "reader"
+path = "src/main.rs"
+
+[dependencies]
+choon = { path = "../..", default-features = false, features = ["serde"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+
+# its own workspace: a release build beside the main crate's, with nothing of the program
+[workspace]
+members = ["."]
+
+[profile.release]
+lto = "fat"
+codegen-units = 1

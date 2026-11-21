@@ -11,6 +11,7 @@ test:
 lint:
     cargo fmt --all --check
     cargo fmt --manifest-path fuzz/Cargo.toml --all --check
+    cargo fmt --manifest-path corpus/reader/Cargo.toml --all --check
     cargo clippy --all-targets -- -D warnings
     cargo clippy --no-default-features -- -D warnings
     cargo clippy --no-default-features --features serde -- -D warnings
@@ -30,6 +31,10 @@ torture *ARGS:
 torture-run RESULTS="target/torture.tsv":
     cargo build --release
     nix develop .#torture -c torture/run.py {{ RESULTS }} target/release/choon
+
+# a corpus of files with a known history, made from lossless masters and read: corpus/README.md
+corpus *ARGS:
+    nix develop .#corpus -c corpus/corpus {{ ARGS }}
 
 # the fuzz recipes need nightly cargo and cargo-fuzz: run them inside `nix develop .#fuzz`
 

@@ -86,6 +86,21 @@
               ]);
           };
 
+          # what corpus/corpus runs: the encoders and decoders its files are made with, and
+          # cargo for the reader it builds
+          corpus = pkgs.mkShell {
+            packages = with pkgs; [
+              (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
+              ffmpeg-full
+              lame
+              sox
+              mpg123
+              faad2
+              python3
+              git
+            ];
+          };
+
           fuzz = pkgs.mkShell {
             packages = [
               nightly

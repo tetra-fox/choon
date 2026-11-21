@@ -1,0 +1,573 @@
+#!/usr/bin/env python3
+"""Checks choon against files whose history is known, made from lossless masters.
+
+    corpus prepare [MASTERS ...] [--work DIR] [--count N] [--jobs N]
+    corpus run                   [--work DIR] [--count N] [--jobs N] [--reread]
+    corpus table                 [--work DIR] [--count N] [--labels FILE] [--misses]
+
+prepare lists the lossless files under each MASTERS folder in DIR/masters.json and writes each
+master's lossy encodes under DIR/lossy, leaving one already there alone. run makes every
+variant of every master in memory, reads it and deletes it: the master and its lossless copies,
+each encode decoded to FLAC, and decodes altered afterwards. A file the same build already read
+is skipped, so a stopped run picks up where it was; a twentieth of the files are then read
+again and compared. table counts the verdicts, one column for each MASTERS folder.
+
+The measures of each file are kept beside its reading. run --reread reads those measures again
+under the rules of the commit the checkout is at, without the audio, and then measures a few
+hundred files anew: if a measure differs the commit changed more than rules, and the run fails.
+
+--count N takes N masters, the same ones each time, and a larger N holds a smaller one's.
+
+The masters are only ever read. Stop a run by the process ids in DIR/run/pids.
+"""
+
+import argparse
+import gzip
+import hashlib
+import json
+import os
+import random
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+from collections import Counter, defaultdict
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from datetime import datetime
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+REPO = HERE.parent
+# where the files are made: memory where the system has a place for it
+SCRATCH = Path("/dev/shm" if Path("/dev/shm").is_dir() else tempfile.gettempdir()) / "choon-corpus"
+# minutes a file is read in full up to, and the windows a longer one is sampled at
+REACH = ["15", "240"]
+# the share of a run's files read again at its end
+RECHECK = 0.05
+# files measured anew after a reread, to show the measures are the stored ones
+REREAD_CHECK = 300
+PROGRAMS = ["ffmpeg", "ffprobe", "lame", "sox", "mpg123", "faad", "cargo", "git"]
+LOSSLESS = {".flac", ".wav", ".aiff", ".aif", ".wv", ".ape", ".m4a"}
+
+MP3 = [f"mp3-cbr{k}" for k in (96, 128, 160, 192, 256, 320)] + [f"mp3-v{v}" for v in range(10)]
+AAC = [f"aac-{k}" for k in (96, 128, 192, 256)]
+OPUS = [f"opus-{k}" for k in (64, 96, 128, 192, 256)]
+VORBIS = [f"vorbis-q{q}" for q in (2, 3, 4, 5, 6, 7, 8)]
+# a first encode, and the MP3 bitrate its decode is encoded at again
+CHAINS = {
+    "chain-mp3-cbr128-to-mp3-cbr320": ("mp3-cbr128", 320),
+    "chain-mp3-cbr192-to-mp3-cbr320": ("mp3-cbr192", 320),
+    "chain-mp3-cbr320-to-mp3-cbr192": ("mp3-cbr320", 192),
+    "chain-aac-128-to-mp3-cbr320": ("aac-128", 320),
+    "chain-opus-96-to-mp3-cbr320": ("opus-96", 320),
+    "chain-vorbis-q2-to-mp3-cbr320": ("vorbis-q2", 320),
+}
+# encodes run makes in memory and keeps nowhere, to hold the kept ones' size down: ffmpeg's
+# arguments, the format it writes and the one it reads that as (MPEG audio of every layer is
+# read as mp3)
+UNKEPT = {
+    **{f"mp2-{k}": (["-c:a", "mp2", "-b:a", f"{k}k"], "mp2", "mp3") for k in (128, 192, 256, 384)},
+    **{f"wma-{k}": (["-c:a", "wmav2", "-b:a", f"{k}k"], "asf", "asf") for k in (64, 128, 192, 320)},
+    "vorbis-q10": (["-c:a", "libvorbis", "-q:a", "10"], "ogg", "ogg"),
+}
+# the settings whose decodes are also altered
+ALTERED = ["mp3-cbr128", "mp3-cbr320", "mp3-v0", "aac-128", "aac-256"]
+FLAC = {
+    16: ["-c:a", "flac", "-sample_fmt", "s16"],
+    24: ["-c:a", "flac", "-sample_fmt", "s32", "-bits_per_raw_sample", "24"],
+}
+EXT = {"mp3": "mp3", "chain": "mp3", "aac": "m4a", "opus": "opus", "vorbis": "ogg"}
+
+
+def ff(*args: str) -> list[str]:
+    return ["ffmpeg", "-nostdin", "-v", "error", "-threads", "1", "-y", *args]
+
+
+def probed(path: Path, source: str) -> dict | str:
+    """a master's entry for the file at `path`, or why it is none"""
+    p = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries",
+                        "stream=codec_name,sample_rate,channels,bits_per_raw_sample,sample_fmt", "-of", "json", str(path)],
+                       capture_output=True, text=True)
+    streams = json.loads(p.stdout or "{}").get("streams") if p.returncode == 0 else None
+    if not streams:
+        return "no audio ffprobe can read"
+    stream = streams[0]
+    codec, rate = stream["codec_name"], int(stream["sample_rate"])
+    if not (codec.startswith("pcm_") or codec in ("flac", "alac", "wavpack", "ape")):
+        return f"{codec} is no lossless codec"
+    if stream["channels"] > 2:
+        return "more than two channels"
+    if rate < 44100:
+        return f"{rate} Hz is under 44.1 kHz"
+    if codec.startswith("pcm_f"):
+        bits = 32
+    else:
+        stated = int(stream.get("bits_per_raw_sample") or 0) or (16 if stream["sample_fmt"].startswith("s16") else 24)
+        bits = 16 if stated <= 16 else 24
+    resolved = str(path.resolve())
+    return {"id": hashlib.sha1(resolved.encode()).hexdigest()[:10], "path": resolved, "source": source,
+            "sampleRate": rate, "bits": bits}
+
+
+def listed(work: Path) -> list[dict]:
+    file = work / "masters.json"
+    return json.loads(file.read_text())["masters"] if file.exists() else []
+
+
+def add_masters(work: Path, folders: list[str], jobs: int) -> None:
+    """lists the lossless files under `folders` that are not masters yet"""
+    rows = listed(work)
+    known = {m["path"] for m in rows}
+    found = [(p, Path(folder).resolve().name) for folder in folders for p in sorted(Path(folder).rglob("*"))
+             if p.is_file() and p.suffix.lower() in LOSSLESS and str(p.resolve()) not in known]
+    with ThreadPoolExecutor(jobs) as pool:
+        entries = list(pool.map(lambda found: probed(*found), found))
+    for (path, _), entry in zip(found, entries):
+        if isinstance(entry, str):
+            print(f"left out: {path}: {entry}", file=sys.stderr)
+        else:
+            rows.append(entry)
+    work.mkdir(parents=True, exist_ok=True)
+    (work / "masters.json").write_text(json.dumps({"masters": rows}, indent=1, ensure_ascii=False) + "\n")
+    print(f"{len(rows)} masters, {len(rows) - len(known)} of them new", file=sys.stderr, flush=True)
+
+
+def masters(work: Path, count: int | None) -> list[dict]:
+    rows = sorted(listed(work), key=lambda m: m["id"])
+    if not rows:
+        sys.exit(f"no masters in {work / 'masters.json'}: corpus prepare MASTERS lists them")
+    random.Random(0).shuffle(rows)
+    return rows[:count]
+
+
+def kept(work: Path, master: dict) -> dict[str, Path]:
+    """the path of each encode prepare keeps for a master"""
+    names = MP3 + AAC + OPUS + VORBIS + list(CHAINS)
+    return {n: work / "lossy" / master["id"] / f"{n}.{EXT[n.split('-')[0]]}" for n in names}
+
+
+def encode(name: str, source: str, rate: int, out: str) -> list[str]:
+    """the command that encodes the WAV file `source` as `name` at `rate`"""
+    codec, setting = name.split("-", 1)
+    if name in CHAINS:
+        return ["lame", "--quiet", "-b", str(CHAINS[name][1]), "--cbr", source, out]
+    if codec == "mp3":
+        quality = ["-b", setting[3:], "--cbr"] if setting.startswith("cbr") else [f"-V{setting[1:]}"]
+        return ["lame", "--quiet", *quality, source, out]
+    if codec == "aac":
+        return ff("-i", source, "-ar", str(rate), "-c:a", "aac", "-b:a", f"{setting}k", out)
+    if codec == "opus":
+        # the Ogg muxer picks a random stream serial unless asked to be bit exact
+        return ff("-i", source, "-c:a", "libopus", "-b:a", f"{setting}k", "-fflags", "+bitexact", out)
+    return ff("-i", source, "-ar", str(rate), "-c:a", "libvorbis", "-q:a", setting[1:], "-fflags", "+bitexact", out)
+
+
+def prepare_one(work: Path, master: dict) -> int:
+    """makes the encodes of a master that are not there yet, and returns how many"""
+    paths = kept(work, master)
+    missing = [n for n, p in paths.items() if not p.exists()]
+    if not missing:
+        return 0
+    scratch = SCRATCH / "prepare" / master["id"]
+    shutil.rmtree(scratch, ignore_errors=True)
+    scratch.mkdir(parents=True)
+    bits = 16 if master["bits"] == 16 else 24
+    pcm = {16: "pcm_s16le", 24: "pcm_s24le", 32: "pcm_f32le"}[master["bits"]]
+    rate = min(master["sampleRate"], 48000)
+
+    def made(name: str, source: str) -> None:
+        out = paths[name]
+        out.parent.mkdir(parents=True, exist_ok=True)
+        # written under another name, so a stopped run leaves no partial file as made
+        tmp = out.with_name(f"{out.stem}.partial{out.suffix}")
+        subprocess.run(encode(name, source, rate, str(tmp)), check=True, capture_output=True)
+        tmp.replace(out)
+
+    try:
+        wav = str(scratch / "master.wav")
+        subprocess.run(ff("-i", master["path"], "-c:a", pcm, wav), check=True, capture_output=True)
+        # a chain's first encode is made before the chain
+        for name in sorted(missing, key=lambda n: n in CHAINS):
+            if name not in CHAINS:
+                made(name, wav)
+                continue
+            first = str(scratch / "first.wav")
+            decoded = ff("-i", str(paths[CHAINS[name][0]]), "-c:a", f"pcm_s{bits}le", first)
+            subprocess.run(decoded, check=True, capture_output=True)
+            made(name, first)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+    return len(missing)
+
+
+def prepare(args) -> None:
+    if args.masters:
+        add_masters(args.work, args.masters, args.jobs)
+    rows = masters(args.work, args.count)
+    made = 0
+    with ThreadPoolExecutor(args.jobs) as pool:
+        futures = {pool.submit(prepare_one, args.work, m): m for m in rows}
+        for done, future in enumerate(as_completed(futures), 1):
+            master = futures[future]
+            try:
+                made += future.result()
+            except subprocess.CalledProcessError as e:
+                print(f"{master['id']} {master['path']}: {e.cmd[0]} exited {e.returncode}: {e.stderr[-300:]!r}", file=sys.stderr)
+            if done % 50 == 0 or done == len(rows):
+                print(f"{done} of {len(rows)} masters, {made} encodes made", file=sys.stderr, flush=True)
+
+
+def variants(work: Path, master: dict) -> list[dict]:
+    """every file run reads for a master: an id, the row of the table it counts in, whether it
+    is lossy, and the commands that make it, with {out}, {tmp} and {prev} filled in when run"""
+    path, rate = master["path"], master["sampleRate"]
+    bits = 16 if master["bits"] == 16 else 24
+    paths = kept(work, master)
+    out: list[dict] = []
+
+    def add(id: str, group: str, lossy: bool, steps: list[list[str]]) -> None:
+        out.append({"id": id, "group": group, "lossy": lossy, "steps": steps})
+
+    def decoded(name: str, depth: int, *extra: str) -> list[str]:
+        # at the encode's own rate: 48 kHz from Opus, and LAME's low settings halve the master's
+        return ff("-i", str(paths[name]), *extra, *FLAC[depth], "{out}")
+
+    add("master", "master", False, [])
+    if master["bits"] > 16:
+        add("dither16", "dither16", False, [["sox", "-R", path, "-b", "16", "{out}", "dither"]])
+    if rate <= 48000:
+        there = 48000 if rate == 44100 else 44100
+        add("rs-roundtrip", "rs-roundtrip", False,
+            [ff("-i", path, "-af", f"aresample={there},aresample={rate}", *FLAC[bits], "{out}")])
+        add("up-96", "up-96", False, [ff("-i", path, "-af", "aresample=96000", *FLAC[24], "{out}")])
+    for khz in (16, 19, 20):
+        add(f"lp-{khz}", f"lp-{khz}", False, [["sox", "-R", path, "-b", str(bits), "{out}", "sinc", f"-{khz}k"]])
+
+    for name in paths:
+        add(f"{name}.{bits}", "chain" if name in CHAINS else name, True, [decoded(name, bits)])
+    for name, (codec, written, read) in UNKEPT.items():
+        to = [] if rate in (44100, 48000) else ["-ar", "48000"]
+        add(f"{name}.{bits}", name, True,
+            [ff("-i", path, "-ac", "2", *to, *codec, "-f", written, "{tmp}"),
+             ff("-f", read, "-i", "{tmp}", *FLAC[bits], "{out}")])
+
+    for name in ALTERED:
+        src = str(paths[name])
+        base = decoded(name, 16)
+        wav = ff("-i", "{tmp}.wav", *FLAC[16], "{out}")
+
+        def altered(what: str, group: str, steps: list[list[str]]) -> None:
+            add(f"{name}.{what}", f"altered: {group}", True, steps)
+
+        altered("ffmpeg16", "decoded to 16 bits", [base])
+        if name.startswith("mp3"):
+            altered("mpg123", "decoder mpg123", [["mpg123", "-q", "-w", "{tmp}.wav", src], wav])
+            altered("mpg123-raw", "decoder mpg123, no gapless trim",
+                    [["mpg123", "-q", "--no-gapless", "-w", "{tmp}.wav", src], wav])
+            altered("lame", "decoder lame", [["lame", "--quiet", "--decode", src, "{tmp}.wav"], wav])
+        else:
+            altered("faad", "decoder faad2", [["faad", "-q", "-o", "{tmp}.wav", src], wav])
+        altered("dither", "dither on decode", [decoded(name, 16, "-af", "aresample=osf=s16:dither_method=triangular")])
+        for db in ("-3", "+3"):
+            altered(f"gain{db}", f"gain {db} dB after decode",
+                    [base, ff("-i", "{prev}", "-af", f"volume={db}dB", *FLAC[16], "{out}")])
+        altered("norm", "peak normalized after decode", [base, ["normalize", "{prev}", "{out}"]])
+        to = 48000 if min(rate, 48000) == 44100 else 44100
+        altered(f"rs{to}", f"resampled to {to} after decode",
+                [base, ff("-i", "{prev}", "-af", f"aresample={to}", *FLAC[16], "{out}")])
+    return out
+
+
+def peak_normalize(src: str, out: str) -> None:
+    """scales a decoded file so its peak sits at -0.1 dBFS, as a normalizing editor does"""
+    # volumedetect reports at info level
+    found = subprocess.run(["ffmpeg", "-nostdin", "-hide_banner", "-threads", "1", "-i", src, "-af", "volumedetect", "-f", "null", "-"],
+                           capture_output=True, text=True, check=True).stderr
+    peak = float(found.split("max_volume:")[1].split("dB")[0])
+    subprocess.run(ff("-i", src, "-af", f"volume={-0.1 - peak:.4f}dB", *FLAC[16], out), check=True, capture_output=True)
+
+
+def make(master: dict, variant: dict, scratch: Path) -> str:
+    made = master["path"]
+    for i, step in enumerate(variant["steps"]):
+        out = str(scratch / f"step{i}.flac")
+        args = [a.replace("{out}", out).replace("{tmp}", str(scratch / "tmp")).replace("{prev}", made) for a in step]
+        if args[0] == "normalize":
+            peak_normalize(args[1], args[2])
+        else:
+            subprocess.run(args, check=True, capture_output=True)
+        made = out
+    return made
+
+
+def build(work: Path) -> dict:
+    """builds the reader on the checkout, unless the one there is of its commit, and returns
+    the commit and the reader's hash"""
+    git = lambda *args: subprocess.run(["git", "-C", str(REPO), *args], capture_output=True, text=True, check=True).stdout.strip()
+    commit = git("rev-parse", "HEAD")
+    if git("status", "--porcelain", "--untracked-files=no"):
+        commit += "-dirty"
+    reader, built = work / "target" / "release" / "reader", work / "target" / "commit"
+    # a changed checkout is built every time: its commit does not say what is in it
+    if commit.endswith("-dirty") or not (reader.exists() and built.exists() and built.read_text() == commit):
+        print(f"building choon at {commit[:7]}", file=sys.stderr, flush=True)
+        # the main crate's lock file, so the reader builds the dependency versions choon ships with
+        shutil.copy(REPO / "Cargo.lock", HERE / "reader" / "Cargo.lock")
+        env = os.environ | {"CARGO_TARGET_DIR": str((work / "target").resolve())}
+        subprocess.run(["cargo", "build", "--release"], cwd=HERE / "reader", env=env, check=True, capture_output=True)
+        built.write_text(commit)
+    return {"commit": commit, "sha256": hashlib.sha256(reader.read_bytes()).hexdigest()}
+
+
+def read(reader: str, path: str) -> dict:
+    """the measures and the reading of the file at `path`"""
+    # one thread a file: the workers are the parallelism
+    p = subprocess.run([reader, "measure", *REACH, path], capture_output=True, text=True,
+                       env=os.environ | {"RAYON_NUM_THREADS": "1"})
+    if p.returncode != 0 or not p.stdout.strip():
+        raise RuntimeError(f"reader exited {p.returncode}: {p.stderr.strip()[-500:]}")
+    return json.loads(p.stdout)
+
+
+def measures(out: Path) -> Path:
+    """where the measures of the file read into `out` are kept"""
+    return out.with_suffix(".measured.json.gz")
+
+
+def store(out: Path, record: dict) -> None:
+    tmp = out.with_suffix(".partial")
+    tmp.write_text(json.dumps(record))
+    tmp.replace(out)
+
+
+def one(reader: str, about: dict, master: dict, variant: dict, out: Path | None) -> dict:
+    """makes one variant, reads it and deletes it. the record is written to `out` when given,
+    the measures beside it, and comes back holding the measures when not"""
+    scratch = SCRATCH / ("recheck" if out is None else "run") / master["id"] / variant["id"]
+    shutil.rmtree(scratch, ignore_errors=True)
+    scratch.mkdir(parents=True)
+    try:
+        t0 = time.perf_counter()
+        try:
+            path = make(master, variant, scratch)
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"making the file: {e.cmd[0]} exited {e.returncode}: {(e.stderr or b'')[-500:]!r}") from None
+        t1 = time.perf_counter()
+        result = read(reader, path)
+        t2 = time.perf_counter()
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+    measured = result.pop("measured")
+    record = {"choon": about, "master": master["id"], "source": master["source"],
+              "variant": {k: variant[k] for k in ("id", "group", "lossy")},
+              "seconds": {"make": t1 - t0, "read": t2 - t1}, "result": result}
+    if out is None:
+        return record | {"measured": measured}
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with gzip.open(measures(out), "wt", compresslevel=3) as f:
+        json.dump(measured, f)
+    store(out, record)
+    return record
+
+
+def run_all(jobs: list, n_jobs: int, reader: str, about: dict, run_dir: Path, name: str, write: bool) -> list[dict]:
+    """reads every (master, variant, out) of `jobs`, logging a summary every 30 s"""
+    log = open(run_dir / "progress.log", "a")
+
+    def line(text: str) -> None:
+        log.write(f"{datetime.now().isoformat(timespec='seconds')} {text}\n")
+        log.flush()
+
+    line(f"start {name}: {len(jobs)} files, {n_jobs} workers, choon {about}")
+    started = time.time()
+    records, errors, last = [], 0, time.time()
+    with ProcessPoolExecutor(n_jobs) as pool:
+        futures = {pool.submit(one, reader, about, m, v, out if write else None): (m, v) for m, v, out in jobs}
+        workers = " ".join(str(pid) for pid in pool._processes)
+        with open(run_dir / "pids", "a") as pids:
+            pids.write(f"{name} workers: {workers}\n")
+        for done, future in enumerate(as_completed(futures), 1):
+            master, variant = futures[future]
+            try:
+                records.append(future.result())
+            except Exception as e:
+                # a file that cannot be made or read is reported and the rest go on
+                errors += 1
+                with open(run_dir / "errors.log", "a") as f:
+                    f.write(f"{datetime.now().isoformat(timespec='seconds')} {master['id']} {variant['id']}: {e}\n")
+            if time.time() - last >= 30 or done == len(jobs):
+                last = time.time()
+                rate = done / (last - started) * 60
+                status = {"time": datetime.now().isoformat(timespec="seconds"), "part": name, "done": done,
+                          "total": len(jobs), "errors": errors, "filesPerMinute": round(rate, 1),
+                          "etaSeconds": round((len(jobs) - done) / rate * 60) if rate else None}
+                (run_dir / "status.json").write_text(json.dumps(status) + "\n")
+                line(f"{name} {done}/{len(jobs)} errors {errors} | {rate:.0f}/min")
+    line(f"end {name}: {len(records)} read, {errors} errors, {time.time() - started:.0f} s")
+    return records
+
+
+def reread_some(reader: str, about: dict, jobs: list) -> int:
+    """reads the stored measures of each (master, variant, out) of `jobs` with one reader"""
+    lines = []
+    for _, _, out in jobs:
+        with gzip.open(measures(out), "rt") as f:
+            lines.append(f.read())
+    p = subprocess.run([reader, "read"], input="\n".join(lines) + "\n", capture_output=True, text=True)
+    readings = p.stdout.splitlines()
+    if p.returncode != 0 or len(readings) != len(jobs):
+        raise RuntimeError(f"reader exited {p.returncode}: {p.stderr.strip()[-500:]}")
+    for (_, _, out), reading in zip(jobs, readings):
+        old = json.loads(out.read_text())
+        store(out, old | {"choon": about, "measuredBy": old.get("measuredBy", old["choon"]), "result": {"reading": json.loads(reading)}})
+    return len(jobs)
+
+
+def reread(every: list, n_jobs: int, reader: str, about: dict, run_dir: Path) -> None:
+    todo = [job for job in every if job[2].exists() and measures(job[2]).exists()
+            and json.loads(job[2].read_text())["choon"]["sha256"] != about["sha256"]]
+    print(f"{len(todo)} of {len(every)} files to read again from their measures", file=sys.stderr, flush=True)
+    chunks = [todo[i:i + 100] for i in range(0, len(todo), 100)]
+    with ProcessPoolExecutor(n_jobs) as pool:
+        done = sum(pool.map(reread_some, [reader] * len(chunks), [about] * len(chunks), chunks))
+    with open(run_dir / "progress.log", "a") as log:
+        log.write(f"{datetime.now().isoformat(timespec='seconds')} reread: {done} files, choon {about}\n")
+
+
+def run(args) -> None:
+    about = build(args.work)
+    reader = str(args.work / "target" / "release" / "reader")
+    run_dir = args.work / "run"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "pids").write_text(f"runner {os.getpid()}\n")
+    shutil.rmtree(SCRATCH, ignore_errors=True)
+
+    def current(out: Path) -> bool:
+        return out.exists() and measures(out).exists() and json.loads(out.read_text())["choon"]["sha256"] == about["sha256"]
+
+    rows = masters(args.work, args.count)
+    every = [(m, v, run_dir / "out" / m["id"] / f"{v['id']}.json") for m in rows for v in variants(args.work, m)]
+    if args.reread:
+        reread(every, args.jobs, reader, about, run_dir)
+    else:
+        todo = [job for job in every if not current(job[2])]
+        # the costliest files are not all left to the end
+        random.Random(1).shuffle(todo)
+        print(f"choon {about['commit'][:7]}: {len(every)} files of {len(rows)} masters, {len(todo)} to read", file=sys.stderr, flush=True)
+        run_all(todo, args.jobs, reader, about, run_dir, "run", True)
+
+    done = [job for job in every if current(job[2])]
+    size = min(REREAD_CHECK, len(done)) if args.reread else max(1, round(len(done) * RECHECK))
+    again = random.Random(2).sample(done, size) if done else []
+    rechecked = run_all(again, args.jobs, reader, about, run_dir, "recheck", False)
+
+    def stored(out: Path) -> tuple:
+        with gzip.open(measures(out), "rt") as f:
+            return json.loads(out.read_text())["result"], json.load(f)
+
+    outs = {(m["id"], v["id"]): out for m, v, out in again}
+    differed = [(r["master"], r["variant"]["id"]) for r in rechecked
+                if (r["result"], r["measured"]) != stored(outs[(r["master"], r["variant"]["id"])])]
+    (run_dir / "recheck.json").write_text(json.dumps({"reread": len(rechecked), "differed": differed}) + "\n")
+    print(f"{len(done)} of {len(every)} files read, {len(every) - len(done)} not (errors.log); "
+          f"recheck: {len(rechecked)} read again, {len(differed)} differed", file=sys.stderr, flush=True)
+    if differed:
+        # a run that does not repeat is not to be scored: the machine is at fault, or after
+        # --reread the commit changed a measure, which needs a run in full
+        sys.exit(1)
+
+
+def verdict(record: dict) -> str:
+    """transcode, mixed, doubt or clean"""
+    return {"likely_transcode": "transcode", "mixed_sources": "mixed", "possibly_lossy": "doubt"}.get(
+        record["result"]["reading"]["verdict"], "clean")
+
+
+def table(args) -> None:
+    labels = json.loads(args.labels.read_text()) if args.labels else {}
+    label = {mid: group for group in ("lossy", "mixed", "doubt") for mid in labels.get(group, {})}
+    rows = {m["id"]: m for m in masters(args.work, args.count)}
+    records = [json.loads(p.read_text()) for mid in rows for p in sorted((args.work / "run" / "out" / mid).glob("*.json"))]
+    if not records:
+        sys.exit(f"no results under {args.work / 'run'}")
+    for mid, master in rows.items():
+        if mid not in label and any(part in master["path"] for part in labels.get("flagged", [])):
+            label[mid] = "flagged"
+    # a master with no label whose own file reads as lossy is set apart too: its copies are
+    # no clean files
+    for r in records:
+        if r["variant"]["id"] == "master" and r["master"] not in label and verdict(r) in ("transcode", "mixed"):
+            label[r["master"]] = "unlabelled, read as lossy"
+    # in the order prepare was given the folders
+    sides = list(dict.fromkeys(m["source"] for m in listed(args.work) if m["id"] in rows))
+    cells: dict[str, dict[str, Counter]] = defaultdict(lambda: {s: Counter() for s in sides})
+    flagged, missed = [], Counter()
+    for r in records:
+        v, where = verdict(r), r["source"]
+        if r["master"] in label:
+            if not r["variant"]["lossy"] and r["variant"]["id"] != "up-96":
+                cells[f"set apart: {label[r['master']]}"][where][v] += 1
+            continue
+        cells[r["variant"]["group"]][where][v] += 1
+        if r["variant"]["lossy"] and v not in ("transcode", "mixed"):
+            missed[r["master"]] += 1
+            if args.misses:
+                flagged.append(f"missed  {r['master']} {r['variant']['id']} ({v}) {rows[r['master']]['path']}")
+        if not r["variant"]["lossy"] and v in ("transcode", "mixed"):
+            flagged.append(f"flagged {r['master']} {r['variant']['id']} ({v}) {rows[r['master']]['path']}")
+    apart = Counter(label[m] for m in {r["master"] for r in records} if m in label)
+    print(f"choon {records[0]['choon']['commit'][:12]}: {len(records)} files of {len({r['master'] for r in records})} masters; "
+          f"set apart: {', '.join(f'{n} {name}' for name, n in apart.most_common()) or 'none'}")
+    print(f"{'':44}" + "".join(f"{s[:19]:>20}" for s in sides))
+
+    def row(name: str, cell) -> None:
+        print(f"{name:44}" + "".join(f"{cell(s):>20}" for s in sides))
+
+    def found(cells: dict[str, Counter]):
+        # a grid in part of a file is a finding too, and counted with the transcodes
+        return lambda s: f"{cells[s]['transcode'] + cells[s]['mixed']} of {sum(cells[s].values())}" if cells[s] else "-"
+
+    lossy = sorted({r["variant"]["group"] for r in records if r["variant"]["lossy"]})
+    for name in lossy:
+        row(name, found(cells[name]))
+    every = {s: sum((cells[name][s] for name in lossy), Counter()) for s in sides}
+    row("every lossy file", found(every))
+    row("  of those, read as mixed sources", lambda s: every[s]["mixed"])
+    clean = {s: sum((cells[name][s] for name in list(cells) if name not in lossy and not name.startswith("set apart")), Counter()) for s in sides}
+    row("masters and their lossless copies", found(clean))
+    row("  of those, read as possibly lossy", lambda s: clean[s]["doubt"])
+    for name in sorted(n for n in cells if n.startswith("set apart")):
+        row(name, found(cells[name]))
+    if missed:
+        print("lossy files missed, by master:", ", ".join(f"{m} {n}" for m, n in missed.most_common(10)))
+    for text in flagged:
+        print(text)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(prog="corpus", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    commands = parser.add_subparsers(dest="command", required=True)
+    for name, function in (("prepare", prepare), ("run", run), ("table", table)):
+        command = commands.add_parser(name)
+        command.set_defaults(function=function)
+        command.add_argument("--work", type=Path, default=HERE / "work", metavar="DIR",
+                             help="where the masters' list, the encodes and the results are kept")
+        command.add_argument("--count", type=int, metavar="N", help="take this many masters, the same ones each time")
+        if name != "table":
+            command.add_argument("--jobs", type=int, default=os.cpu_count(), metavar="N")
+    commands.choices["prepare"].add_argument("masters", nargs="*", metavar="MASTERS", help="a folder of lossless files to add as masters")
+    commands.choices["run"].add_argument("--reread", action="store_true",
+                                         help="read the stored measures again under the checkout's rules, without the audio")
+    commands.choices["table"].add_argument("--labels", type=Path, metavar="FILE", help="masters to count apart, as JSON")
+    commands.choices["table"].add_argument("--misses", action="store_true", help="list each lossy file missed")
+    args = parser.parse_args()
+    if args.command != "table":
+        absent = [p for p in PROGRAMS if not shutil.which(p)]
+        if absent:
+            sys.exit(f"corpus: not on the path: {', '.join(absent)}")
+    args.function(args)
+
+
+if __name__ == "__main__":
+    main()
