@@ -421,6 +421,34 @@ Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
   96 to 320 kbps: every decode is found, at offset 1
 - Other versions of Fraunhofer's encoder were not tested
 
+## Results
+
+choon at commit `83a89f1` read 7,090 FLAC files made from 238 lossless masters anyone can
+download: 94 recordings from the [Live Music Archive](https://archive.org/details/etree) and 144
+mixtures of [MUSDB18-HQ](https://zenodo.org/records/3338373). Each lossy file was encoded from
+a master, decoded, and written as FLAC.
+
+| Audio                                                       | Likely transcode |
+| ----------------------------------------------------------- | ---------------- |
+| MP3 (LAME), CBR 96 to 320 kbps and V0 to V9                 | 1,916 of 1,916   |
+| AAC (ffmpeg), 96 to 256 kbps                                | 574 of 574       |
+| Opus (libopus), 128 kbps                                    | 238 of 238       |
+| Vorbis (libvorbis), q5 and q8                               | 282 of 282       |
+| Vorbis (libvorbis), q10                                     | 43 of 44         |
+| MP2 (ffmpeg), 128 to 384 kbps                               | 176 of 176       |
+| WMA (ffmpeg), 64 to 320 kbps                                | 176 of 176       |
+| MP3, AAC, Opus or Vorbis encoded again as MP3               | 288 of 288       |
+| MP3 and AAC with gain, dither or peak normalization applied | 1,200 of 1,200   |
+| MP3 and AAC resampled between 44.1 and 48 kHz               | 240 of 240       |
+| MP3 and AAC decoded by LAME, mpg123 and FAAD2               | 528 of 528       |
+| Lossless masters and their copies                           | 0 of 1,428       |
+
+- A master's copies are the master resampled to another rate and back, upsampled to 96 kHz,
+  dithered to 16 bits, and lowpassed at 16, 19 and 20 kHz. 80 of the copies lowpassed at 19 kHz
+  read as possibly lossy
+- 11 more masters of the two sets are left out: their own files carry a codec's frame grid
+- The thresholds were tuned on these files, so the last row is no false-positive rate
+
 ## Limitations
 
 - A lossless master filtered sharply where an encoder cuts (16 or 19 kHz) reads as possibly lossy
