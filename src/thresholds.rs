@@ -272,10 +272,11 @@ pub struct ReadingThresholds {
   ///
   /// It is compared with each of
   /// [`AacSteps::segment_whole`](crate::grid::AacSteps::segment_whole), the bands on whole
-  /// steps of AAC's quantizer, under each window: as many segments as
-  /// `aac_grid_segments_agreeing` must reach it, one at least. The steps show a grid no count
-  /// stands out enough for, and name the window of one a count found.
+  /// steps of AAC's quantizer, under each window. The steps show a grid no count stands out
+  /// enough for, and name the window of one a count found.
   pub aac_whole_steps: usize,
+  /// Fewest segments that reach `aac_whole_steps`, for an AAC grid, one at least.
+  pub aac_whole_steps_segments: usize,
   /// Fewest frames on Opus's lattice at one offset, for an Opus grid.
   ///
   /// It is compared with [`OpusScan::frames`](crate::grid::OpusScan::frames), the count over
@@ -502,21 +503,23 @@ impl Default for ReadingThresholds {
         },
         EncoderProfile::mp3(20_500.0, "~320 kbps", 320),
       ],
-      // the tuning's lossless files reach z 8.24 for AAC, and 11.57 for MP3 apart from one with
-      // an MP3 section in one segment, which the agreement keeps out
-      aac_grid_z: 9.0,
-      aac_grid_segments_agreeing: 0,
-      mp3_grid_z: 12.0,
+      // of 409 lossless files of the tuning, AAC reaches z 5.2 and its decodes start at 14.9
+      // with three segments agreeing. an MP3 decode's AAC count passes that in one segment, and
+      // a lossless file's MP3 count with an MP3 section in two
+      aac_grid_z: 6.0,
+      aac_grid_segments_agreeing: 3,
+      mp3_grid_z: 7.0,
       mp3_grid_segments_agreeing: 3,
-      // of the tuning's files that show no grid, five decodes from four masters reach this
-      // with every segment agreeing and no lossless file does
-      mp3_near_grid_z: 8.0,
-      vorbis_grid_z: 8.0,
+      mp3_near_grid_z: 5.0,
+      // the lossless files reach 5.0 with two segments on the step at most
+      vorbis_grid_z: 6.0,
       vorbis_grid_segments_agreeing: 3,
-      vorbis_lone_grid_z: 20.0,
+      vorbis_lone_grid_z: 12.0,
+      // the lossless files reach 8.8 in one segment, and WMA decodes start at 208
       wma_grid_z: 12.0,
       wma_grid_segments_agreeing: 3,
-      mp2_grid_z: 8.0,
+      // the lossless files reach 8.3 with two segments agreeing, and 3.9 with three
+      mp2_grid_z: 7.0,
       mp2_grid_segments_agreeing: 3,
       // the tuning's files with no AAC behind a conversion reach 9.63 there, and its converted
       // AAC decodes that show a grid start at 16.7
@@ -526,6 +529,7 @@ impl Default for ReadingThresholds {
       // a stretch of the tuning's Vorbis decodes reaches 138 whole steps under one window, and of
       // its files that were never AAC 11
       aac_whole_steps: 200,
+      aac_whole_steps_segments: 1,
       // the tuning's files that were never Opus reach one frame in the stretches and one in
       // the windows
       opus_grid_frames: 3,

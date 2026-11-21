@@ -16,6 +16,9 @@ use super::{
 /// MAD times this estimates the standard deviation of normally distributed values
 const MAD_TO_SD: f64 = 1.4826;
 
+/// the offsets either side of one whose counts its own is measured against
+const NEAR: usize = 16;
+
 /// what the scan for Opus's frames needs beside the segments
 pub(crate) struct Opus {
   /// the file's sample rate
@@ -118,14 +121,14 @@ pub(crate) fn scan(
           Job::Aac(window, segment, rate) => Curve::Aac(
             window,
             rate,
-            in_file(&Aac::curve(segment, window), segment.start),
+            in_file(&levelled(&Aac::curve(segment, window)), segment.start),
           ),
           Job::Mp3(segment, rate) => {
             let (hybrid, subbands) = Mp3::new().curves(segment);
             Curve::Mp3(
               rate,
-              in_file(&hybrid, segment.start),
-              in_file(&subbands, segment.start),
+              in_file(&levelled(&hybrid), segment.start),
+              in_file(&levelled(&subbands), segment.start),
             )
           }
           // the counts come in the file's offsets
@@ -378,6 +381,18 @@ fn opus_scan(
   }
 }
 
+/// `curve` with each entry less the median of the entries within `NEAR` of it. a segment's
+/// count drifts from offset to offset with the audio that enters and leaves its frames, and
+/// the drifts of four segments can sum to a low stretch of offsets. a grid lowers one offset
+fn levelled(curve: &[f64]) -> Vec<f64> {
+  (0..curve.len())
+    .map(|o| {
+      let near = &curve[o.saturating_sub(NEAR)..(o + NEAR + 1).min(curve.len())];
+      curve[o] - median(near.to_vec())
+    })
+    .collect()
+}
+
 /// a segment's curve, whose entry `o` is for frames starting `o` samples into the segment
 /// modulo the hop, turned into the file's offsets for a segment starting at frame `start`
 fn in_file(curve: &[f64], start: u64) -> Vec<f64> {
@@ -490,6 +505,28 @@ mod tests {
     assert_eq!(at, 6);
     assert!((z - 8.0 / MAD_TO_SD).abs() < 1e-12, "{z}");
     assert_eq!(robust_z(&[3.0; 8]), (0.0, 0), "a flat curve has no z");
+  }
+
+  #[test]
+  fn a_low_stretch_of_offsets_is_no_dip_and_one_low_offset_on_a_slope_is() {
+    let noise = |o: usize| ((o * 37) % 11) as f64;
+    // counts 60 lower over the first 128 offsets, as the drifts of four segments can sum to
+    let shelf: Vec<f64> = (0..1024)
+      .map(|o| noise(o) - if o < 128 { 60.0 } else { 0.0 })
+      .collect();
+    assert!(
+      robust_z(&shelf).0 > 10.0,
+      "the counts as they are read as a dip"
+    );
+    assert!(robust_z(&levelled(&shelf)).0 < 4.0);
+    // a slope far steeper than the noise, with offset 700 alone 80 lower
+    let slope: Vec<f64> = (0..1024)
+      .map(|o| o as f64 * 3.0 + noise(o) - if o == 700 { 80.0 } else { 0.0 })
+      .collect();
+    assert!(robust_z(&slope).0 < 2.0, "the slope hides the dip");
+    let (z, at) = robust_z(&levelled(&slope));
+    assert_eq!(at, 700);
+    assert!(z > 8.0, "{z}");
   }
 
   #[test]

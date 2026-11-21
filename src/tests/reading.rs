@@ -321,8 +321,8 @@ fn a_320_kbps_stem_under_a_bed_23_db_down_reads_as_that_cut() {
 }
 
 #[test]
-fn a_320_kbps_stem_under_a_bed_15_db_down_reads_as_that_cut() {
-  a_320_kbps_stem_under_a_bed_reads_as_that_cut(0.18, None);
+fn a_320_kbps_stem_under_a_bed_12_db_down_reads_as_that_cut() {
+  a_320_kbps_stem_under_a_bed_reads_as_that_cut(0.25, None);
 }
 
 #[test]

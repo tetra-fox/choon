@@ -164,7 +164,8 @@ pub struct CodecScan {
   pub offset: usize,
   /// How far the count at `offset` sits below the others, in robust standard deviations.
   ///
-  /// The counts of the four segments are summed per offset; the standard deviation is
+  /// Each segment's count at an offset is taken against the median of the counts within 16
+  /// offsets of it, and the four segments are summed per offset; the standard deviation is
   /// estimated from the median absolute deviation.
   pub z: f64,
   /// Number of segments whose own lowest count is at `offset`.

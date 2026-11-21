@@ -305,7 +305,7 @@ fn aac_stepped<'a>(
     let showing = segments
       .filter(|whole| **whole >= thresholds.aac_whole_steps)
       .count();
-    showing >= thresholds.aac_grid_segments_agreeing.max(1)
+    showing >= thresholds.aac_whole_steps_segments.max(1)
   })
   .max_by_key(|(_, steps)| steps.whole)
 }

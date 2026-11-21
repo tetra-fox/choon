@@ -62,9 +62,9 @@ length as well. MP2 quantizes the output of
 the filterbank MP3 starts with, and the scan counts that output at each of its 32 phases.
 
 The scan counts the values above that noise at every offset of each codec's grid. A grid is one
-offset that counts far fewer than the rest; an MP3 grid also needs at least three stretches
-agreeing on it. It does not depend on where the encoder cut, so MP3 at 320 kbps or V0 and AAC at
-256 kbps show one too.
+offset that counts far fewer than the offsets near it, in at least three of the four stretches.
+It does not depend on where the encoder cut, so MP3 at 320 kbps or V0 and AAC at 256 kbps show
+one too.
 
 ### Quantizer steps
 

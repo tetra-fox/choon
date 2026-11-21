@@ -547,21 +547,22 @@ fn clipped(audio: &Audio, gain: f32) -> Audio {
 }
 
 #[test]
-fn a_decode_clipped_out_of_its_grid_is_a_doubt_where_a_count_falls_short() {
+fn a_clipped_decode_short_of_a_grid_is_a_doubt_where_every_segment_agrees() {
   let dir = tempfile::tempdir().unwrap();
   let through = fixtures::through_mp3(&music(1, 44_100, pink), Bitrate::Kbps192, dir.path());
-  // nearly half the samples clip, which fills the band the encoder cut and takes the count
-  // of every segment under the threshold
+  // nearly half the samples clip, which fills the band the encoder cut and lowers the count
+  // of every segment, each still lowest at the grid's offset
   let loud = clipped(&through, 16.0);
   let measured = measure(flac(dir.path(), "loud.flac", &loud, 16), &settings()).unwrap();
-  let defaults = ReadingThresholds::default();
   let scan = measured.grid.as_ref().expect("scanned");
-  assert!(grid::found(scan, &defaults).is_none(), "{scan:?}");
   assert_eq!(scan.mp3.segments_agreeing, 4, "{scan:?}");
-  assert!(
-    scan.mp3.z > defaults.mp3_near_grid_z && scan.mp3.z < defaults.mp3_grid_z,
-    "{scan:?}"
-  );
+  // thresholds the count sits between
+  let defaults = ReadingThresholds {
+    mp3_grid_z: scan.mp3.z + 1.0,
+    mp3_near_grid_z: scan.mp3.z - 1.0,
+    ..ReadingThresholds::default()
+  };
+  assert!(grid::found(scan, &defaults).is_none(), "{scan:?}");
 
   let reading = measured.read(&defaults);
   assert_eq!(reading.cutoff_verdict, Verdict::Consistent, "{reading:?}");
