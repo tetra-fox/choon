@@ -20,6 +20,3 @@ result-*
 
 # written by `just corpus`
 /corpus/work/
-
-# the tuning workspace: corpus, scripts and results, a repository of its own
-/tuning/
