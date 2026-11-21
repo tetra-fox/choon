@@ -423,30 +423,33 @@ Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
 
 ## Results
 
-choon at commit `83a89f1` read 7,090 FLAC files made from 238 lossless masters anyone can
-download: 94 recordings from the [Live Music Archive](https://archive.org/details/etree) and 144
-mixtures of [MUSDB18-HQ](https://zenodo.org/records/3338373). Each lossy file was encoded from
-a master, decoded, and written as FLAC.
+choon at commit `83a89f1` read 15,801 FLAC files made from 847 lossless masters. 238 are public:
+94 recordings from the [Live Music Archive](https://archive.org/details/etree) and 144 mixtures
+of [MUSDB18-HQ](https://zenodo.org/records/3338373). 609 are from the author's library, whose
+audio cannot be shared. Each lossy file was encoded from a master, decoded, and written as FLAC.
 
-| Audio                                                       | Likely transcode |
-| ----------------------------------------------------------- | ---------------- |
-| MP3 (LAME), CBR 96 to 320 kbps and V0 to V9                 | 1,916 of 1,916   |
-| AAC (ffmpeg), 96 to 256 kbps                                | 574 of 574       |
-| Opus (libopus), 128 kbps                                    | 238 of 238       |
-| Vorbis (libvorbis), q5 and q8                               | 282 of 282       |
-| Vorbis (libvorbis), q10                                     | 43 of 44         |
-| MP2 (ffmpeg), 128 to 384 kbps                               | 176 of 176       |
-| WMA (ffmpeg), 64 to 320 kbps                                | 176 of 176       |
-| MP3, AAC, Opus or Vorbis encoded again as MP3               | 288 of 288       |
-| MP3 and AAC with gain, dither or peak normalization applied | 1,200 of 1,200   |
-| MP3 and AAC resampled between 44.1 and 48 kHz               | 240 of 240       |
-| MP3 and AAC decoded by LAME, mpg123 and FAAD2               | 528 of 528       |
-| Lossless masters and their copies                           | 0 of 1,428       |
+| Audio                                                       | Public         | Library        |
+| ----------------------------------------------------------- | -------------- | -------------- |
+| MP3 (LAME), CBR 96 to 320 kbps and V0 to V9                 | 1,916 of 1,916 | 2,139 of 2,148 |
+| AAC (ffmpeg), 96 to 256 kbps                                | 574 of 574     | 822 of 826     |
+| Opus (libopus), 128 kbps                                    | 238 of 238     | 30 of 31       |
+| Vorbis (libvorbis), q5 and q8                               | 282 of 282     | 55 of 55       |
+| Vorbis (libvorbis), q10                                     | 43 of 44       | 21 of 24       |
+| MP2 (ffmpeg), 128 to 384 kbps                               | 176 of 176     | 95 of 96       |
+| WMA (ffmpeg), 64 to 320 kbps                                | 176 of 176     | 96 of 96       |
+| MP3, AAC, Opus or Vorbis encoded again as MP3               | 288 of 288     | 185 of 186     |
+| MP3 and AAC with gain, dither or peak normalization applied | 1,200 of 1,200 | 757 of 775     |
+| MP3 and AAC resampled between 44.1 and 48 kHz               | 240 of 240     | 150 of 155     |
+| MP3 and AAC decoded by LAME, mpg123 and FAAD2               | 528 of 528     | 337 of 341     |
+| Lossless masters and their copies                           | 0 of 1,428     | 0 of 3,978     |
 
+- Each cell is the files read as a likely transcode
 - A master's copies are the master resampled to another rate and back, upsampled to 96 kHz,
-  dithered to 16 bits, and lowpassed at 16, 19 and 20 kHz. 80 of the copies lowpassed at 19 kHz
-  read as possibly lossy
-- 11 more masters of the two sets are left out: their own files carry a codec's frame grid
+  dithered to 16 bits, and lowpassed at 16, 19 and 20 kHz. 277 of them read as possibly lossy
+  by their cutoff, all but 3 lowpassed at 16 or 19 kHz
+- 43 of the library's 46 misses are the decodes of one master
+- 294 more masters are left out, 11 of them public: the author knows them as made from lossy
+  sources, or their own files carry a codec's frame grid
 - The thresholds were tuned on these files, so the last row is no false-positive rate
 
 ## Limitations
