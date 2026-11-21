@@ -172,8 +172,6 @@ for its long blocks, so a grid's offset and window fit an encoder family:
 
 - A file is possibly lossy too when every stretch scanned puts an MP3 grid at one offset and the
   grid falls just short of a likely transcode
-- A file that would read consistent is inconclusive when over a tenth of its samples are clipped
-  and a codec's count comes most of the way to a grid
 - A lossy file is also consistent when it stops where its own bitrate cuts
 - In a lossy file and a DSD file, where no grid is looked for, a likely transcode is nearly every
   window stopping at one known encoder cutoff with a sharp shelf
@@ -444,8 +442,7 @@ Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
   truncated to 8 bits is not found
 - Clipping hides the grid frame by frame, so a decode made louder until it clips can lose it. The
   scan reads stretches that are not clipped where the file has them. A file clipped throughout
-  reads as inconclusive where a count still comes most of the way to a grid, and as consistent
-  where none does
+  can read as consistent, with a limitation that says the stretches scanned were clipped
 - The grid thresholds were tuned on LAME's MP3 and ffmpeg's AAC; [Encoders](#encoders) lists
   what the scan finds of others
 - A grid shows that the samples were decoded from MP3, MP2, AAC, Vorbis, WMA or Opus at some

@@ -544,7 +544,11 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
     settings,
     // a file with segments states its length, so its count of windows is finite
     windows_share: if segments.is_some() {
-      let jobs = grid::jobs(opus_rate.is_some(), settings.thresholds.scan_other_rate);
+      let jobs = grid::jobs(
+        opus_rate.is_some(),
+        settings.thresholds.scan_other_rate,
+        settings.thresholds.scan_wma,
+      );
       windows / (windows + jobs as f64 * SCAN_JOB_WINDOWS)
     } else {
       1.0
@@ -771,14 +775,22 @@ fn scan_grid(
       "clipped grid segments gave way to stretches that are not"
     );
   }
+  let clipped = segments.clipped();
+  if clipped > 0 {
+    measured
+      .problems
+      .push(Limitation::ClippedStretches { stretches: clipped });
+  }
   let ended = AtomicUsize::new(0);
   let other_rate = settings.thresholds.scan_other_rate;
-  let jobs = grid::jobs(opus.is_some(), other_rate);
+  let wma = settings.thresholds.scan_wma;
+  let jobs = grid::jobs(opus.is_some(), other_rate, wma);
   let scan = grid::scan(
     segments,
     measured.claimed.sample_rate,
     opus,
     other_rate,
+    wma,
     || !is_canceled(settings.canceled.as_ref()) && !is_past(settings.deadline),
     || {
       let ended = ended.fetch_add(1, Ordering::Relaxed) + 1;

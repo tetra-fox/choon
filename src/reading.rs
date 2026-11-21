@@ -229,10 +229,7 @@ impl Measured {
   /// grid or did not run. A DSD file is read by its cutoff alone, as a lossy file is.
   ///
   /// A scan that shows no grid can still raise a doubt. An MP3 count every stretch agrees on
-  /// past [`ReadingThresholds::mp3_near_grid_z`] makes the file possibly lossy. A file read as
-  /// consistent with more of its samples clipped than [`ReadingThresholds::clipped_pct`] is
-  /// inconclusive where a count reaches [`ReadingThresholds::clipped_grid_share`] of its
-  /// threshold: a decode made louder until it clips loses most of its grid.
+  /// past [`ReadingThresholds::mp3_near_grid_z`] makes the file possibly lossy.
   ///
   /// # Examples
   ///
@@ -344,14 +341,7 @@ impl Measured {
       .as_ref()
       .and_then(|scan| grid::found(scan, thresholds));
     if grid_looked_for(claimed, self.dsd_rate) {
-      let clipped = measures.clipped_samples_pct.unwrap_or(0.0);
-      found = weighed(
-        found,
-        grid.as_ref(),
-        self.grid.as_ref(),
-        clipped,
-        thresholds,
-      );
+      found = weighed(found, grid.as_ref(), self.grid.as_ref(), thresholds);
     }
     limitations.extend(found.limitations);
     if let Some(he_aac) = &self.he_aac {
@@ -399,13 +389,11 @@ impl Measured {
 
 /// the cutoff reading `found` of a file a grid is looked for in, weighed with its `scan`, `None`
 /// when none ran, and the `grid` the scan found: a grid makes a likely transcode, and a cutoff
-/// that reads as lossy without one makes a doubt. so does an MP3 count just short of a grid,
-/// and a count some way to one in a file with `clipped` percent of its samples clipped
+/// that reads as lossy without one makes a doubt. so does an MP3 count just short of a grid
 fn weighed(
   found: CutoffReading,
   grid: Option<&Found>,
   scan: Option<&Scan>,
-  clipped: f64,
   thresholds: &ReadingThresholds,
 ) -> CutoffReading {
   if let Some(grid) = grid {
@@ -522,7 +510,7 @@ fn weighed(
       }
     }
     Verdict::Consistent | Verdict::Inconclusive => match scan {
-      Some(scan) => doubted(found, scan, clipped, thresholds),
+      Some(scan) => doubted(found, scan, thresholds),
       None => found,
     },
     Verdict::PossiblyLossy => found,
@@ -530,14 +518,8 @@ fn weighed(
 }
 
 /// the cutoff reading `found`, consistent or inconclusive, of a file whose `scan` shows no
-/// grid: possibly lossy where an MP3 count comes just short of one, and inconclusive in place
-/// of consistent where a count comes some way to one under `clipped` percent of clipped samples
-fn doubted(
-  found: CutoffReading,
-  scan: &Scan,
-  clipped: f64,
-  thresholds: &ReadingThresholds,
-) -> CutoffReading {
+/// grid: possibly lossy where an MP3 count comes just short of one
+fn doubted(found: CutoffReading, scan: &Scan, thresholds: &ReadingThresholds) -> CutoffReading {
   if let Some(count) = grid::mp3_near(scan, thresholds) {
     let mut limitations = found.limitations;
     limitations.push(Limitation::GridShort);
@@ -552,27 +534,6 @@ fn doubted(
         grid::SEGMENTS,
         count.z,
         thresholds.mp3_grid_z,
-      ),
-      limitations,
-      ..found
-    };
-  }
-  let share = grid::nearest_share(scan, thresholds);
-  if found.verdict == Verdict::Consistent
-    && clipped > thresholds.clipped_pct
-    && share >= thresholds.clipped_grid_share
-  {
-    let mut limitations = found.limitations;
-    limitations.push(Limitation::Clipped { percent: clipped });
-    return CutoffReading {
-      verdict: Verdict::Inconclusive,
-      confidence: 0.4,
-      summary: format!(
-        "{} {clipped:.0}% of the samples are clipped and a codec's count comes {} of the way \
-         to a frame grid, as in a decode made louder until it clips; loud lossless audio can \
-         look the same.",
-        found.summary,
-        percent(share),
       ),
       limitations,
       ..found

@@ -92,13 +92,12 @@ pub enum Limitation {
   EarlyRollOff,
   /// MP3 count that every segment agrees on and that falls short of a frame grid.
   GridShort,
-  /// Clipped samples beside a count short of a frame grid.
+  /// Stretches scanned for a frame grid that are clipped, with none unclipped to scan instead.
   ///
-  /// A decode made louder until it clips loses most of its grid, and loud lossless audio
-  /// clips too.
-  Clipped {
-    /// Share of the samples that are clipped, in percent.
-    percent: f64,
+  /// Clipping after a decode fills the bands an encoder emptied, which hides its grid.
+  ClippedStretches {
+    /// Number of the stretches scanned that are clipped.
+    stretches: usize,
   },
   /// DSD file, measured as PCM filtered from its one-bit samples.
   ///
@@ -221,10 +220,10 @@ impl fmt::Display for Limitation {
         "Every stretch scanned puts an MP3 frame grid at the same offset, without the grid \
          standing out enough to call a transcode",
       ),
-      Self::Clipped { percent } => write!(
+      Self::ClippedStretches { stretches } => write!(
         f,
-        "{percent:.0}% of the samples are clipped: a decode made louder until it clips loses \
-         most of its frame grid, and loud lossless audio clips too"
+        "{stretches} of the 4 stretches scanned for a frame grid are clipped and the file has \
+         none that is not to scan in their place: clipping after a decode hides its grid"
       ),
       Self::EarlyRollOff => f.write_str(
         "Old masters, speech, lo-fi material and vinyl or cassette transfers roll off early, and \

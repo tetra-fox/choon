@@ -104,7 +104,7 @@ pub(crate) mod segments;
 mod steps;
 
 pub use found::{Evidence, Family, Found};
-pub(crate) use found::{found, mp3_near, nearest_share};
+pub(crate) use found::{found, mp3_near};
 pub(crate) use scan::{Opus, jobs, scan};
 
 /// AAC's hop, the length of its long frames' new samples
@@ -171,6 +171,11 @@ pub struct CodecScan {
   pub segments_agreeing: usize,
   /// Each segment's own z, in file order.
   pub segment_z: [f64; SEGMENTS],
+  /// Offset of each segment's own lowest count, in file order.
+  ///
+  /// All zero in measures kept by a version of the analyzer that did not keep them.
+  #[cfg_attr(feature = "serde", serde(default))]
+  pub segment_offset: [usize; SEGMENTS],
 }
 
 /// Offset of an Opus decode's frames when nothing was cut from its start, in samples.
@@ -388,7 +393,8 @@ pub struct Scan {
   pub vorbis: Option<CodecScan>,
   /// WMA's grid, with the 4096-sample sine window of its long blocks at a hop of 2048.
   ///
-  /// `None` in measures kept by a version of the analyzer that did not scan with it.
+  /// `None` where [`MeasureThresholds::scan_wma`](crate::MeasureThresholds::scan_wma) is off,
+  /// and in measures kept by a version of the analyzer that did not scan with it.
   #[cfg_attr(feature = "serde", serde(default))]
   pub wma: Option<CodecScan>,
   /// MP3's grid.

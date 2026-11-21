@@ -57,6 +57,11 @@ pub struct MeasureThresholds {
   /// decode that was converted between them ([`OtherRate`](crate::grid::OtherRate)). It takes
   /// about as long as the scan for MP3 and AAC at the file's own rate.
   pub scan_other_rate: bool,
+  /// Whether WMA is scanned for.
+  ///
+  /// The WMA scan takes about a quarter as long as all the others together. With it off, a
+  /// WMA decode can still read as possibly lossy by its cutoff.
+  pub scan_wma: bool,
 }
 
 impl Default for MeasureThresholds {
@@ -73,6 +78,7 @@ impl Default for MeasureThresholds {
       holes_to_hz: 20_000.0,
       hole_depth_db: 20.0,
       scan_other_rate: true,
+      scan_wma: true,
     }
   }
 }
@@ -225,9 +231,17 @@ pub struct ReadingThresholds {
   /// Robust z over which the Vorbis scan finds a frame grid.
   ///
   /// It is compared with [`CodecScan::z`](crate::grid::CodecScan::z) of
-  /// [`Scan::vorbis`](crate::grid::Scan::vorbis), with no agreement asked: a Vorbis stream's
-  /// short blocks move its long ones, so its segments rarely share an offset.
+  /// [`Scan::vorbis`](crate::grid::Scan::vorbis).
   pub vorbis_grid_z: f64,
+  /// Fewest segments whose lowest count sits a whole number of steps from the file's offset.
+  ///
+  /// A Vorbis stream's short blocks move its long ones by 128 samples each, so its segments
+  /// rarely share an offset and always share one modulo 128. It is compared with the
+  /// segments of [`CodecScan::segment_offset`](crate::grid::CodecScan::segment_offset) that
+  /// do, for a Vorbis grid under `vorbis_lone_grid_z`.
+  pub vorbis_grid_segments_agreeing: usize,
+  /// Robust z over which the Vorbis scan finds a frame grid whatever its segments agree on.
+  pub vorbis_lone_grid_z: f64,
   /// Robust z over which the WMA scan finds a frame grid.
   ///
   /// It is compared with [`CodecScan::z`](crate::grid::CodecScan::z) of
@@ -309,18 +323,6 @@ pub struct ReadingThresholds {
   /// The two bands a hybrid frame is tested on land on the lattice by chance in a few frames
   /// of a hundred, which in a long file is more pairs of steps than `opus_hybrid_steps`.
   pub opus_hybrid_share: f64,
-  /// Share of clipped samples, in percent, over which a count short of a grid is a doubt.
-  ///
-  /// It is compared with
-  /// [`Measures::clipped_samples_pct`](crate::Measures::clipped_samples_pct). A decode made
-  /// louder until it clips loses most of its frame grid, and a file clipped this much whose
-  /// count reaches `clipped_grid_share` reads as inconclusive in place of consistent.
-  pub clipped_pct: f64,
-  /// Share of its z threshold, from 0 to 1, a count reaches in a clipped file that is a doubt.
-  ///
-  /// It is compared with the z of the MP3 count and of each AAC count over `mp3_grid_z` and
-  /// `aac_grid_z`, whichever comes nearest its threshold, in a file over `clipped_pct`.
-  pub clipped_grid_share: f64,
 }
 
 /// Weights that read the steps of an MP3 decode as Fraunhofer's encoder.
@@ -509,7 +511,9 @@ impl Default for ReadingThresholds {
       // of the tuning's files that show no grid, five decodes from four masters reach this
       // with every segment agreeing and no lossless file does
       mp3_near_grid_z: 8.0,
-      vorbis_grid_z: 12.0,
+      vorbis_grid_z: 8.0,
+      vorbis_grid_segments_agreeing: 3,
+      vorbis_lone_grid_z: 20.0,
       wma_grid_z: 12.0,
       wma_grid_segments_agreeing: 3,
       mp2_grid_z: 8.0,
@@ -538,10 +542,6 @@ impl Default for ReadingThresholds {
       // share of 0.04 with this many pairs
       opus_hybrid_steps: 30,
       opus_hybrid_share: 0.1,
-      // the tuning's lossless files over a tenth clipped reach 0.57 of a threshold, and six of
-      // its sixteen decodes that 3 dB of gain clipped out of a grid reach this
-      clipped_pct: 10.0,
-      clipped_grid_share: 0.6,
     }
   }
 }

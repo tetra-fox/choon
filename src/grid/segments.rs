@@ -178,6 +178,12 @@ impl Segments {
     replaced
   }
 
+  /// how many segments are clipped: after [`Segments::settle`], the ones no stretch of the
+  /// stream could stand in for
+  pub(crate) fn clipped(&self) -> usize {
+    self.0.iter().filter(|s| s.full() && s.is_clipped()).count()
+  }
+
   /// takes what the segments need of `window`, one vector per analyzed channel, whose first
   /// sample is frame `first`. a mono window counts as both channels.
   pub(crate) fn take(&mut self, first: u64, window: &[Vec<f32>]) {

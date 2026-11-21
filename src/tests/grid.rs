@@ -568,26 +568,17 @@ fn a_decode_clipped_out_of_its_grid_is_a_doubt_where_a_count_falls_short() {
   assert_eq!(reading.verdict, Verdict::PossiblyLossy, "{reading:?}");
   assert!(reading.limitations.contains(&Limitation::GridShort));
 
-  // without the rule for a count every segment agrees on, the clipping is what is left to say
+  // every stretch scanned is clipped and the file has none that is not, which the reading says
+  let clipped = Limitation::ClippedStretches { stretches: 4 };
+  assert!(reading.limitations.contains(&clipped), "{reading:?}");
+  // without the rule for a count every segment agrees on, the file reads as its cutoff does
   let no_near = ReadingThresholds {
     mp3_near_grid_z: defaults.mp3_grid_z,
     ..defaults.clone()
   };
   let reading = measured.read(&no_near);
-  assert_eq!(reading.verdict, Verdict::Inconclusive, "{reading:?}");
-  assert!(
-    reading
-      .limitations
-      .iter()
-      .any(|l| matches!(l, Limitation::Clipped { percent } if *percent > 40.0)),
-    "{reading:?}"
-  );
-  // and a file is consistent where neither rule looks
-  let neither = ReadingThresholds {
-    clipped_pct: 100.0,
-    ..no_near
-  };
-  assert_eq!(measured.read(&neither).verdict, Verdict::Consistent);
+  assert_eq!(reading.verdict, Verdict::Consistent, "{reading:?}");
+  assert!(reading.limitations.contains(&clipped), "{reading:?}");
 }
 
 #[test]
@@ -599,13 +590,9 @@ fn loud_audio_that_was_never_coded_stays_consistent() {
   let clipped = reading.measures.clipped_samples_pct.expect("counted");
   assert!(clipped > 40.0, "{clipped}");
   assert_eq!(reading.verdict, Verdict::Consistent, "{reading:?}");
-  assert!(
-    !reading
-      .limitations
-      .iter()
-      .any(|l| matches!(l, Limitation::Clipped { .. } | Limitation::GridShort)),
-    "{reading:?}"
-  );
+  assert!(!reading.limitations.contains(&Limitation::GridShort));
+  let clipped = Limitation::ClippedStretches { stretches: 4 };
+  assert!(reading.limitations.contains(&clipped), "{reading:?}");
 }
 
 #[test]
