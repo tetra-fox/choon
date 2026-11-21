@@ -103,8 +103,8 @@ mod scan;
 pub(crate) mod segments;
 mod steps;
 
+pub(crate) use found::found;
 pub use found::{Evidence, Family, Found};
-pub(crate) use found::{found, mp3_near};
 pub(crate) use scan::{Opus, jobs, scan};
 
 /// AAC's hop, the length of its long frames' new samples

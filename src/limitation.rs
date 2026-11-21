@@ -90,8 +90,6 @@ pub enum Limitation {
   CutoffWithoutGrid,
   /// Early roll-off, as old masters, speech and transfers have by nature.
   EarlyRollOff,
-  /// MP3 count that every segment agrees on and that falls short of a frame grid.
-  GridShort,
   /// Stretches scanned for a frame grid that are clipped, with none unclipped to scan instead.
   ///
   /// Clipping after a decode fills the bands an encoder emptied, which hides its grid.
@@ -215,10 +213,6 @@ impl fmt::Display for Limitation {
         "The decoder rebuilt the band above the HE-AAC core, which ends at or under {}, from \
          the band below, so the cutoff is not where an encoder's lowpass sits",
         khz(*hz)
-      ),
-      Self::GridShort => f.write_str(
-        "Every stretch scanned puts an MP3 frame grid at the same offset, without the grid \
-         standing out enough to call a transcode",
       ),
       Self::ClippedStretches { stretches } => write!(
         f,

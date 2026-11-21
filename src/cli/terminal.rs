@@ -400,6 +400,13 @@ fn grid(checked: &Checked, reading: &Reading) -> String {
           scan.segment_z.len()
         )
       }
+      Evidence::Part { segments, scan } => format!(
+        "{} at offset {}, z {:.0}, in {segments} of {} stretches",
+        found.codec,
+        scan.offset,
+        scan.z,
+        scan.segment_z.len()
+      ),
       Evidence::CountAt { rate, scan } => format!(
         "{} at offset {} once at {} kHz, z {:.0}, {} of {} stretches agree",
         found.codec,

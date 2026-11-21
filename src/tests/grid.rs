@@ -547,7 +547,7 @@ fn clipped(audio: &Audio, gain: f32) -> Audio {
 }
 
 #[test]
-fn a_clipped_decode_short_of_a_grid_is_a_doubt_where_every_segment_agrees() {
+fn a_decode_clipped_throughout_shows_its_grid_and_says_its_stretches_clip() {
   let dir = tempfile::tempdir().unwrap();
   let through = fixtures::through_mp3(&music(1, 44_100, pink), Bitrate::Kbps192, dir.path());
   // nearly half the samples clip, which fills the band the encoder cut and lowers the count
@@ -556,29 +556,11 @@ fn a_clipped_decode_short_of_a_grid_is_a_doubt_where_every_segment_agrees() {
   let measured = measure(flac(dir.path(), "loud.flac", &loud, 16), &settings()).unwrap();
   let scan = measured.grid.as_ref().expect("scanned");
   assert_eq!(scan.mp3.segments_agreeing, 4, "{scan:?}");
-  // thresholds the count sits between
-  let defaults = ReadingThresholds {
-    mp3_grid_z: scan.mp3.z + 1.0,
-    mp3_near_grid_z: scan.mp3.z - 1.0,
-    ..ReadingThresholds::default()
-  };
-  assert!(grid::found(scan, &defaults).is_none(), "{scan:?}");
-
-  let reading = measured.read(&defaults);
+  let reading = read(&measured);
   assert_eq!(reading.cutoff_verdict, Verdict::Consistent, "{reading:?}");
-  assert_eq!(reading.verdict, Verdict::PossiblyLossy, "{reading:?}");
-  assert!(reading.limitations.contains(&Limitation::GridShort));
-
+  assert_eq!(reading.verdict, Verdict::LikelyTranscode, "{reading:?}");
   // every stretch scanned is clipped and the file has none that is not, which the reading says
   let clipped = Limitation::ClippedStretches { stretches: 4 };
-  assert!(reading.limitations.contains(&clipped), "{reading:?}");
-  // without the rule for a count every segment agrees on, the file reads as its cutoff does
-  let no_near = ReadingThresholds {
-    mp3_near_grid_z: defaults.mp3_grid_z,
-    ..defaults.clone()
-  };
-  let reading = measured.read(&no_near);
-  assert_eq!(reading.verdict, Verdict::Consistent, "{reading:?}");
   assert!(reading.limitations.contains(&clipped), "{reading:?}");
 }
 
@@ -591,7 +573,6 @@ fn loud_audio_that_was_never_coded_stays_consistent() {
   let clipped = reading.measures.clipped_samples_pct.expect("counted");
   assert!(clipped > 40.0, "{clipped}");
   assert_eq!(reading.verdict, Verdict::Consistent, "{reading:?}");
-  assert!(!reading.limitations.contains(&Limitation::GridShort));
   let clipped = Limitation::ClippedStretches { stretches: 4 };
   assert!(reading.limitations.contains(&clipped), "{reading:?}");
 }

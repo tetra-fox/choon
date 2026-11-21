@@ -21,8 +21,8 @@ use std::time::{Duration, Instant};
 
 use choon::grid::{Evidence, Family, Scan};
 use choon::{
-  CancelCheck, Claimed, Coverage, Error, Flag, HeAac, Limitation, MeasureThresholds, Measured,
-  OpusUse, Reading, ReadingThresholds, Settings, Verdict,
+  CancelCheck, Claimed, Coverage, Error, Flag, HeAac, MeasureThresholds, Measured, OpusUse,
+  Reading, ReadingThresholds, Settings, Verdict,
 };
 use clap::{Args, ColorChoice, Parser, Subcommand};
 use rayon::iter::{ParallelBridge, ParallelIterator};
@@ -863,6 +863,10 @@ fn found(reading: &Reading, scanned: bool) -> Vec<String> {
       Evidence::CountAt { rate, .. } => {
         format!("{codec} grid at {} kHz", f64::from(*rate) / 1000.0)
       }
+      Evidence::Part { segments, scan } => format!(
+        "{codec} grid in {segments} of {} stretches",
+        scan.segment_z.len()
+      ),
       Evidence::Shifted { .. } => format!("{codec} grid at another level"),
       Evidence::Hybrid { .. } => format!("{codec} hybrid grid"),
       Evidence::Short { short } => format!("{codec} grid, {} ms frames", short.milliseconds()),
@@ -878,9 +882,7 @@ fn found(reading: &Reading, scanned: bool) -> Vec<String> {
     found.push(cutoff);
     found.extend(guess);
     found.push(
-      if reading.limitations.contains(&Limitation::GridShort) {
-        "MP3 grid short of a transcode"
-      } else if scanned {
+      if scanned {
         "no grid"
       } else {
         "grid not scanned"

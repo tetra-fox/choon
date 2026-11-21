@@ -9,7 +9,7 @@ use crate::decode::HeAac;
 use crate::engine::{measure, measure_bytes};
 use crate::fixtures::{self, Audio, Bitrate, lo_fi, music, music_for, pink, tone};
 use crate::flags::Flag;
-use crate::grid::Codec;
+use crate::grid::{Codec, Evidence};
 use crate::limitation::Limitation;
 use crate::reading::{Reading, Verdict};
 use crate::thresholds::ReadingThresholds;
@@ -261,6 +261,28 @@ fn a_lossy_layer_under_a_full_band_bed_reads_as_mixed_sources_and_shows_its_grid
   assert!(reading.summary.contains("step"), "{}", reading.summary);
   assert_eq!(reading.verdict, Verdict::LikelyTranscode, "{reading:#?}");
   assert_eq!(reading.grid.as_ref().map(|g| g.codec), Some(Codec::Mp3));
+}
+
+#[test]
+fn a_file_decoded_from_mp3_in_half_reads_as_mixed_sources_by_its_grid() {
+  let dir = tempfile::tempdir().unwrap();
+  let stem = fixtures::through_mp3(&music(3, 44_100, pink), Bitrate::Kbps320, dir.path());
+  // the first seventeen seconds from the MP3: two of the four stretches the grid scan reads
+  // are in the MP3 part, too few to agree on a grid and each far over the grid's threshold
+  let half = stem.spliced(&music(1, 44_100, pink), 17);
+  let reading = analyzed(&flac(dir.path(), "half.flac", &half, 16));
+  assert_eq!(reading.verdict, Verdict::MixedSources, "{reading:#?}");
+  let grid = reading.grid.as_ref().expect("a grid in part");
+  assert_eq!(grid.codec, Codec::Mp3);
+  assert!(
+    matches!(grid.evidence, Evidence::Part { segments: 2, .. }),
+    "{grid:?}"
+  );
+  assert!(
+    reading.summary.contains("in 2 of the 4 stretches"),
+    "{}",
+    reading.summary
+  );
 }
 
 #[test]

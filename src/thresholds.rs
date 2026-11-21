@@ -211,17 +211,16 @@ pub struct ReadingThresholds {
   ///
   /// [`CodecScan::segments_agreeing`]: crate::grid::CodecScan::segments_agreeing
   pub mp3_grid_segments_agreeing: usize,
-  /// Robust z over which an MP3 count every segment agrees on makes a file possibly lossy.
-  ///
-  /// It is compared with [`CodecScan::z`](crate::grid::CodecScan::z) of an MP3 count under
-  /// `mp3_grid_z` whose segments all put their lowest count at the file's offset. Lossless
-  /// audio rarely agrees in every segment this far out.
-  pub mp3_near_grid_z: f64,
   /// Robust z over which the MP2 scan finds a frame grid.
   ///
   /// It is compared with [`CodecScan::z`](crate::grid::CodecScan::z) of
-  /// [`Scan::mp2`](crate::grid::Scan::mp2), where no MP3, AAC or Vorbis grid shows.
+  /// [`Scan::mp2`](crate::grid::Scan::mp2).
   pub mp2_grid_z: f64,
+  /// Robust z over which an MP2 count every segment agrees on finds a frame grid.
+  ///
+  /// The MP2 scan counts at 32 phases, so three segments share one by chance far more often
+  /// than three share an offset of another codec's grid, and four far less often than three.
+  pub mp2_all_agreeing_grid_z: f64,
   /// Fewest segments that put their lowest count at the file's phase, for an MP2 grid.
   ///
   /// It is compared with [`CodecScan::segments_agreeing`], as `mp3_grid_segments_agreeing` is.
@@ -238,10 +237,8 @@ pub struct ReadingThresholds {
   /// A Vorbis stream's short blocks move its long ones by 128 samples each, so its segments
   /// rarely share an offset and always share one modulo 128. It is compared with the
   /// segments of [`CodecScan::segment_offset`](crate::grid::CodecScan::segment_offset) that
-  /// do, for a Vorbis grid under `vorbis_lone_grid_z`.
+  /// do.
   pub vorbis_grid_segments_agreeing: usize,
-  /// Robust z over which the Vorbis scan finds a frame grid whatever its segments agree on.
-  pub vorbis_lone_grid_z: f64,
   /// Robust z over which the WMA scan finds a frame grid.
   ///
   /// It is compared with [`CodecScan::z`](crate::grid::CodecScan::z) of
@@ -253,6 +250,15 @@ pub struct ReadingThresholds {
   ///
   /// [`CodecScan::segments_agreeing`]: crate::grid::CodecScan::segments_agreeing
   pub wma_grid_segments_agreeing: usize,
+  /// Robust z a segment's own count passes to show a grid in part of the file.
+  ///
+  /// It is compared with each of [`CodecScan::segment_z`](crate::grid::CodecScan::segment_z)
+  /// whose segment puts its lowest count at the file's offset, where no grid shows in the
+  /// file as a whole. It stands far over the grid thresholds, as two segments share an offset
+  /// by chance far more often than three.
+  pub part_grid_z: f64,
+  /// Fewest segments that pass `part_grid_z`, for a grid in part of the file, one at least.
+  pub part_grid_segments: usize,
   /// Robust z over which the AAC scan at the other rate finds a frame grid.
   ///
   /// It is compared with the z of [`OtherRate::aac`](crate::grid::OtherRate::aac) and of
@@ -510,17 +516,20 @@ impl Default for ReadingThresholds {
       aac_grid_segments_agreeing: 3,
       mp3_grid_z: 7.0,
       mp3_grid_segments_agreeing: 3,
-      mp3_near_grid_z: 5.0,
       // the lossless files reach 5.0 with two segments on the step at most
       vorbis_grid_z: 6.0,
       vorbis_grid_segments_agreeing: 3,
-      vorbis_lone_grid_z: 12.0,
       // the lossless files reach 8.8 in one segment, and WMA decodes start at 208
       wma_grid_z: 12.0,
       wma_grid_segments_agreeing: 3,
-      // the lossless files reach 8.3 with two segments agreeing, and 3.9 with three
-      mp2_grid_z: 7.0,
+      // of 1,026 lossless files none has three segments agreeing, and of 332 MP2 decodes
+      // 327 have four, from z 4.1
+      mp2_grid_z: 12.0,
+      mp2_all_agreeing_grid_z: 4.0,
       mp2_grid_segments_agreeing: 3,
+      // a lossless file's segment reaches 20 alone, and 7.1 beside another at its offset
+      part_grid_z: 30.0,
+      part_grid_segments: 2,
       // the tuning's files with no AAC behind a conversion reach 9.63 there, and its converted
       // AAC decodes that show a grid start at 16.7
       other_rate_aac_z: 13.0,

@@ -170,7 +170,7 @@ fn json_is_a_line_per_file_with_a_reading_per_profile() {
 
   // grid thresholds no scan reaches leave the cutoff, which alone only doubts
   let blind = path(&dir.path().join("blind.json"));
-  let unreachable = r#"{"reading": {"mp3GridZ": 1e9, "mp3WholeSteps": 1000000}}"#;
+  let unreachable = r#"{"reading": {"mp3GridZ": 1e9, "partGridZ": 1e9, "mp3WholeSteps": 1000000}}"#;
   std::fs::write(&blind, unreachable).unwrap();
   let output = choon(&["--json", "--profile", &blind, &fake]);
   assert_eq!(status(&output), 0, "{output:?}");

@@ -166,16 +166,16 @@ for its long blocks, so a grid's offset and window fit an encoder family:
 | ---------------- | --------------------------------------------------------------------------- |
 | consistent       | nearly every window reaches the top of the claimed band                     |
 | likely transcode | the samples carry an MP3, MP2, AAC, Vorbis, WMA or Opus frame grid          |
-| mixed sources    | part of the time or of the band is band-limited, the rest full band         |
+| mixed sources    | a frame grid in part of the file, or part of the time or band band-limited  |
 | possibly lossy   | the cutoff reads as a transcode or mixed sources, and no frame grid shows   |
 | inconclusive     | too little audio, no pattern, or a cut indistinguishable from an honest one |
 
-- A file is possibly lossy too when every stretch scanned puts an MP3 grid at one offset and the
-  grid falls just short of a likely transcode
+- A grid in two of the four stretches scanned, each far over the grid's threshold, reads as mixed
+  sources. The scan cannot tell how much of the file the section covers
 - A lossy file is also consistent when it stops where its own bitrate cuts
 - In a lossy file and a DSD file, where no grid is looked for, a likely transcode is nearly every
   window stopping at one known encoder cutoff with a sharp shelf
-- Mixed sources is read only in such a file
+- Mixed sources by the cutoff is read only in such a file
 - A file whose grid scan did not run, as FLAC in Matroska, is possibly lossy at most
 
 A reading also holds:
@@ -440,6 +440,8 @@ Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
 - Opus is looked for at 44.1 and 48 kHz only
 - An Opus decode folded to mono, with one channel copied to both, turned to mid and side, or
   truncated to 8 bits is not found
+- A lossy section shows a grid only in the stretches that fall in it: one in a single stretch,
+  or between the four, is found by its cutoff alone, as possibly lossy at most
 - Clipping hides the grid frame by frame, so a decode made louder until it clips can lose it. The
   scan reads stretches that are not clipped where the file has them. A file clipped throughout
   can read as consistent, with a limitation that says the stretches scanned were clipped
