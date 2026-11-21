@@ -413,7 +413,7 @@ fn weighed(
         confidence: thresholds.confidence_cap,
         summary: format!(
           "The samples carry an {name} frame grid at offset {} in {segments} of the {} stretches \
-           scanned (z {:.0}), as a file with a section decoded from {name} does. {}",
+           scanned (z {:.0}): part of the audio passed through an {name} encoder. {}",
           scan.offset,
           grid::SEGMENTS,
           scan.z,
