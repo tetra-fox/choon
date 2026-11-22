@@ -493,6 +493,71 @@ pub(super) fn active(values: &[f32], t2: f32) -> f64 {
     * std::f64::consts::LOG10_2
 }
 
+/// [`active`] of four sets of lines at once, each to the last bit: left, right, mid and side
+/// of the lines whose halves are `left` and `right`, each an `even` and an `odd` as
+/// [`SplitMdct`](super::mdct::SplitMdct) writes them. line 2k is `even[k]` and line N-1-2k
+/// is `odd[k]` with its sign turned, so a group of [`LANES`] lines in order is eight from the
+/// front of `even` between eight from the back of `odd`.
+pub(super) fn active_stereo(left: [&[f32]; 2], right: [&[f32]; 2], t2: f32) -> [f64; 4] {
+  const HALF: usize = LANES / 2;
+  let frac = std::f32::consts::FRAC_1_SQRT_2;
+  let half = left[0].len();
+  debug_assert!(half.is_multiple_of(HALF));
+  // for each of the four, the lanes of the first half and of the second
+  let mut exponents = [[[0i32; HALF]; 2]; 4];
+  let mut products = [[[1.0f32; HALF]; 2]; 4];
+  // lane 2j is the first half's j, and lane 2j + 1 the second half's HALF - 1 - j
+  let log = |products: &[[f32; HALF]; 2]| {
+    (0..HALF)
+      .flat_map(|j| [products[0][j], products[1][HALF - 1 - j]])
+      .map(f64::from)
+      .product::<f64>()
+      .log2()
+  };
+  let mut logs = [0.0; 4];
+  #[inline(always)]
+  fn count(values: &[f32; HALF], product: &mut [f32; HALF], exponent: &mut [i32; HALF], t2: f32) {
+    for j in 0..HALF {
+      // t2 is a normal number, so every square at or above it is one too
+      let bits = (values[j] * values[j]).max(t2).to_bits();
+      exponent[j] += ((bits & EXPONENT_BITS) >> 23) as i32 - 127;
+      product[j] *= f32::from_bits((bits & !EXPONENT_BITS) | ONE);
+    }
+  }
+  // a group's lines of the first half, and of the second from its back
+  fn sides(lines: [&[f32]; 2], half: usize) -> impl Iterator<Item = [&[f32; HALF]; 2]> {
+    let (front, back) = (
+      lines[0][..half].as_chunks().0,
+      lines[1][..half].as_rchunks().1,
+    );
+    front.iter().zip(back.iter().rev()).map(<[_; 2]>::from)
+  }
+  for (i, (l, r)) in sides(left, half).zip(sides(right, half)).enumerate() {
+    for (side, (l, r)) in l.into_iter().zip(r).enumerate() {
+      let mid: [f32; HALF] = std::array::from_fn(|j| (l[j] + r[j]) * frac);
+      let diff: [f32; HALF] = std::array::from_fn(|j| (l[j] - r[j]) * frac);
+      let [pl, pr, pm, ps] = &mut products;
+      let [el, er, em, es] = &mut exponents;
+      count(l, &mut pl[side], &mut el[side], t2);
+      count(r, &mut pr[side], &mut er[side], t2);
+      count(&mid, &mut pm[side], &mut em[side], t2);
+      count(&diff, &mut ps[side], &mut es[side], t2);
+    }
+    if i % 32 == 31 {
+      for (logs, products) in logs.iter_mut().zip(&mut products) {
+        *logs += log(products);
+        *products = [[1.0; HALF]; 2];
+      }
+    }
+  }
+  std::array::from_fn(|which| {
+    let exponents: i32 = exponents[which].iter().flatten().sum();
+    (f64::from(exponents) + logs[which] + log(&products[which])
+      - (2 * half) as f64 * f64::from(t2).log2())
+      * std::f64::consts::LOG10_2
+  })
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -548,5 +613,39 @@ mod tests {
     let scan = codec_scan(&curves);
     assert_eq!(scan.offset, 6);
     assert_eq!(scan.segments_agreeing, 3);
+  }
+
+  #[test]
+  fn the_stereo_count_is_the_count_of_the_lines_in_order_to_the_last_bit() {
+    for n in [16usize, 1024, 2048] {
+      let lines = |seed: f32| -> Vec<f32> {
+        (0..n)
+          .map(|i| ((i * i) as f32 * seed).sin() * 10f32.powi((i % 9) as i32 - 6))
+          .collect()
+      };
+      let (left, right) = (lines(0.37), lines(0.53));
+      let half = std::f32::consts::FRAC_1_SQRT_2;
+      let mid: Vec<f32> = left
+        .iter()
+        .zip(&right)
+        .map(|(l, r)| (l + r) * half)
+        .collect();
+      let side: Vec<f32> = left
+        .iter()
+        .zip(&right)
+        .map(|(l, r)| (l - r) * half)
+        .collect();
+      let even = |lines: &[f32]| -> Vec<f32> { (0..n / 2).map(|k| lines[2 * k]).collect() };
+      let odd = |lines: &[f32]| -> Vec<f32> { (0..n / 2).map(|k| -lines[n - 1 - 2 * k]).collect() };
+      let t2 = 1e-9;
+      let counted = active_stereo(
+        [&even(&left), &odd(&left)],
+        [&even(&right), &odd(&right)],
+        t2,
+      );
+      for (counted, lines) in counted.iter().zip([&left, &right, &mid, &side]) {
+        assert_eq!(counted.to_bits(), active(lines, t2).to_bits(), "{n}");
+      }
+    }
   }
 }

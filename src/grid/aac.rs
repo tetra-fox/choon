@@ -3,8 +3,8 @@
 
 use rayon::prelude::*;
 
-use super::mdct::{DctIv, fold_windowed};
-use super::scan::active;
+use super::mdct::{DctIv, SplitMdct, Strided, fold_windowed};
+use super::scan::active_stereo;
 use super::segments::Segment;
 use super::steps::{BandScratch, WHOLE_STEP, band_step};
 use super::{AAC_HOP, NOISE16};
@@ -63,25 +63,19 @@ impl Window {
 pub(super) struct Aac {
   /// the samples a block advances by, and the lines its transform gives
   hop: usize,
-  window: Vec<f32>,
-  dct: DctIv,
-  folded: Vec<f32>,
-  /// the transform of left and right
-  values: [Vec<f32>; 2],
-  /// mid and side of the transform
-  mid_side: [Vec<f32>; 2],
+  mdct: SplitMdct,
+  /// the transform of left and right, each as the halves [`SplitMdct`] gives
+  values: [[Vec<f32>; 2]; 2],
 }
 
 impl Aac {
   fn new(window: Window) -> Self {
     let hop = window.hop();
+    let lines = || std::array::from_fn(|_| std::array::from_fn(|_| vec![0.0; hop / 2]));
     Self {
       hop,
-      window: window.samples(),
-      dct: DctIv::new(hop),
-      folded: vec![0.0; hop],
-      values: std::array::from_fn(|_| vec![0.0; hop]),
-      mid_side: std::array::from_fn(|_| vec![0.0; hop]),
+      mdct: SplitMdct::new(&window.samples()),
+      values: lines(),
     }
   }
 
@@ -89,48 +83,38 @@ impl Aac {
   /// from its first sample. every offset counts the same frames. runs of offsets are tasks on
   /// rayon's thread pool, each with an analysis of its own.
   pub(super) fn curve(segment: &Segment, window: Window) -> Vec<f64> {
-    let left: Vec<f32> = segment.left.iter().map(|s| *s as f32).collect();
-    let right: Vec<f32> = segment.right.iter().map(|s| *s as f32).collect();
+    let channel =
+      |samples: &[f64]| Strided::new(&samples.iter().map(|s| *s as f32).collect::<Vec<_>>());
+    let (left, right) = (channel(&segment.left), channel(&segment.right));
     let hop = window.hop();
+    let frames = (segment.left.len() + 1 - 2 * hop) / hop;
     (0..hop)
       .into_par_iter()
       .with_min_len(hop / TASKS)
       .map_init(
         || Self::new(window),
-        |aac, offset| aac.count(&left, &right, offset),
+        |aac, offset| aac.count(&left, &right, frames, offset),
       )
       .collect()
   }
 
-  /// the active count summed over the long frames of `left` and `right` on the grid at `offset`
-  fn count(&mut self, left: &[f32], right: &[f32], offset: usize) -> f64 {
-    // the frames every offset holds
+  /// the active count summed over the `frames` long frames of `left` and `right` on the grid
+  /// at `offset`, the frames every offset holds
+  fn count(&mut self, left: &Strided, right: &Strided, frames: usize, offset: usize) -> f64 {
     let hop = self.hop;
-    let frames = (left.len() + 1 - 2 * hop) / hop;
     let t2 = (NOISE16 as f32).powi(2);
-    let half = std::f32::consts::FRAC_1_SQRT_2;
     (0..frames)
       .map(|j| {
         let start = offset + j * hop;
-        self.mdct(&left[start..start + 2 * hop], 0);
-        self.mdct(&right[start..start + 2 * hop], 1);
-        let [m, s] = &mut self.mid_side;
-        let [left, right] = &self.values;
-        for ((m, s), (l, r)) in m.iter_mut().zip(s.iter_mut()).zip(left.iter().zip(right)) {
-          *m = (l + r) * half;
-          *s = (l - r) * half;
-        }
-        let lr = active(left, t2) + active(right, t2);
-        let ms = active(m, t2) + active(s, t2);
-        lr.min(ms)
+        let [l, r] = &mut self.values;
+        let [l_even, l_odd] = l;
+        self.mdct.process(left, start, l_even, l_odd);
+        let [r_even, r_odd] = r;
+        self.mdct.process(right, start, r_even, r_odd);
+        let [l, r, m, s] = active_stereo([&l[0], &l[1]], [&r[0], &r[1]], t2);
+        (l + r).min(m + s)
       })
       .sum()
-  }
-
-  /// the orthonormal MDCT of `input`, two hops of samples, windowed, into `values[into]`
-  fn mdct(&mut self, input: &[f32], into: usize) {
-    fold_windowed(input, &self.window, &mut self.folded);
-    self.dct.process(&self.folded, &mut self.values[into]);
   }
 }
 
