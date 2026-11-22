@@ -118,6 +118,11 @@ or without it.
 libopus delays its input by 312 samples, or by 120 in its low-delay mode, which ffmpeg sets for
 frames under 10 ms. The windows are counted on the grid each delay leaves.
 
+The decoder runs a comb filter at the pitch of the audio over the frames the encoder marks,
+which moves their energies off the lattice. On the grid of a decode with nothing cut from its
+start, the scan takes up to 40 pairs of strongly pitched frames that do not sit on the lattice,
+tries each setting the filter has, takes the filter off, and counts the frames that then do.
+
 A gain after the decode moves every step by the same amount, half the gain, so the lattice is
 still there, moved. The scan takes the move that the most frames of a channel name and counts
 the frames on the lattice once it is taken off. Moves 9.6 dB of gain apart fit most frames
@@ -424,32 +429,33 @@ Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
 
 ## Results
 
-choon at commit `83a89f1` read 15,801 FLAC files made from 847 lossless masters. 238 are public:
+choon at commit `f2303b8` read 79,660 FLAC files made from 844 lossless masters. 238 are public:
 94 recordings from the [Live Music Archive](https://archive.org/details/etree) and 144 mixtures
-of [MUSDB18-HQ](https://zenodo.org/records/3338373). 609 are from the author's library, whose
+of [MUSDB18-HQ](https://zenodo.org/records/3338373). 606 are from the author's library, whose
 audio cannot be shared. Each lossy file was encoded from a master, decoded, and written as FLAC.
 
-| Audio                                                         | Public         | Library        |
-| ------------------------------------------------------------- | -------------- | -------------- |
-| MP3 (LAME), CBR 96 to 320 kbps and V0 to V9                   | 1,916 of 1,916 | 2,139 of 2,148 |
-| AAC (ffmpeg), 96 to 256 kbps                                  | 574 of 574     | 822 of 826     |
-| Opus (libopus), 128 kbps                                      | 238 of 238     | 30 of 31       |
-| Vorbis (libvorbis), q5 and q8                                 | 282 of 282     | 55 of 55       |
-| Vorbis (libvorbis), q10                                       | 43 of 44       | 21 of 24       |
-| MP2 (ffmpeg), 128 to 384 kbps                                 | 176 of 176     | 95 of 96       |
-| WMA (ffmpeg), 64 to 320 kbps                                  | 176 of 176     | 96 of 96       |
-| MP3, AAC, Opus or Vorbis encoded again as MP3                 | 288 of 288     | 185 of 186     |
-| MP3 and AAC with gain, dither or peak normalization applied   | 960 of 960     | 604 of 620     |
-| MP3 and AAC resampled between 44.1 and 48 kHz                 | 240 of 240     | 150 of 155     |
-| MP3 and AAC decoded by ffmpeg to 16 bits, LAME, mpg123, FAAD2 | 768 of 768     | 490 of 496     |
-| Lossless masters and their copies                             | 0 of 1,428     | 0 of 3,978     |
+| Audio                                                         | Public         | Library          |
+| ------------------------------------------------------------- | -------------- | ---------------- |
+| MP3 (LAME), CBR 96 to 320 kbps and V0 to V9                   | 3,808 of 3,808 | 9,696 of 9,696   |
+| AAC (ffmpeg), 96 to 256 kbps                                  | 952 of 952     | 2,424 of 2,424   |
+| Opus (libopus), 64 to 256 kbps                                | 1,190 of 1,190 | 3,028 of 3,030   |
+| Vorbis (libvorbis), q2 to q8                                  | 1,666 of 1,666 | 4,242 of 4,242   |
+| Vorbis (libvorbis), q10                                       | 238 of 238     | 602 of 606       |
+| MP2 (ffmpeg), 128 to 384 kbps                                 | 952 of 952     | 2,424 of 2,424   |
+| WMA (ffmpeg), 64 to 320 kbps                                  | 952 of 952     | 2,424 of 2,424   |
+| MP3, AAC, Opus or Vorbis encoded again as MP3                 | 1,428 of 1,428 | 3,636 of 3,636   |
+| MP3 and AAC with gain, dither or peak normalization applied   | 4,760 of 4,760 | 12,119 of 12,120 |
+| MP3 and AAC resampled between 44.1 and 48 kHz                 | 1,190 of 1,190 | 3,029 of 3,030   |
+| MP3 and AAC decoded by ffmpeg to 16 bits, LAME, mpg123, FAAD2 | 3,808 of 3,808 | 9,696 of 9,696   |
+| Lossless masters and their copies                             | 0 of 1,428     | 0 of 3,960       |
 
-- Each cell is the files read as a likely transcode
+- Each cell is the files read as a likely transcode or as mixed sources. 26 of the lossy files
+  read as mixed sources
 - A master's copies are the master resampled to another rate and back, upsampled to 96 kHz,
-  dithered to 16 bits, and lowpassed at 16, 19 and 20 kHz. 277 of them read as possibly lossy
+  dithered to 16 bits, and lowpassed at 16, 19 and 20 kHz. 275 of them read as possibly lossy
   by their cutoff, all but 3 lowpassed at 16 or 19 kHz
-- 43 of the library's 46 misses are the decodes of one master
-- 294 more masters are left out, 11 of them public: the author knows them as made from lossy
+- The library's 8 misses are decodes of 6 masters
+- 297 more masters are left out, 11 of them public: the author knows them as made from lossy
   sources, or their own files carry a codec's frame grid
 - The thresholds were tuned on these files, so the last row is no false-positive rate
 
@@ -463,8 +469,9 @@ audio cannot be shared. Each lossy file was encoded from a master, decoded, and 
   after any other conversion it can read as possibly lossy
 - A Vorbis decode whose grid does not stand out under Vorbis's own window can read as AAC,
   without AAC's quantizer steps, and a WMA decode's can too
-- Opus is found in frames with the pitch post-filter off; a decode made mostly of filtered
-  frames and one in SILK voice mode read as possibly lossy at most
+- Opus frames the pitch post-filter ran over are found only where nothing was cut from the
+  decode's start; elsewhere a decode made mostly of such frames reads as possibly lossy at
+  most, as does one in SILK voice mode
 - An Opus decode of frames under 20 ms whose level was changed afterwards is not found
 - A hybrid-mode Opus decode whose level was changed afterwards is not found
 - A level that changes over time after an Opus decode, as under a fade or a limiter, hides the
@@ -481,6 +488,8 @@ audio cannot be shared. Each lossy file was encoded from a master, decoded, and 
   what the scan finds of others
 - A grid shows that the samples were decoded from MP3, MP2, AAC, Vorbis, WMA or Opus at some
   point, as in a master built from such material
+- A lossy sample that was processed and mixed into a master, as a pitched or filtered clip
+  under other sounds, leaves no grid and is not found
 - A cutoff near 20 kHz, where MP3 320 and AAC cut and many recordings are filtered anyway, reads
   as inconclusive; only a grid calls such a file a transcode
 - Naturally band-limited audio (old, lo-fi, dark) can stop near an encoder cutoff by chance
