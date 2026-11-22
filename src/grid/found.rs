@@ -456,13 +456,20 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
       .flatten()
       .map(|count| {
         // at an offset an uncut decode has, fewer segments are enough where the file's count
-        // stands out, and one where its own stands far out
+        // stands out, and one where its own stands far out or MP3's steps show in it
         let at_uncut = uncut(count.codec, count.sine, count.scan.offset);
         let agreeing = count.agreed(f64::NEG_INFINITY);
         let agreed = at_uncut
           && count.scan.z > count.z
           && agreeing >= thresholds.uncut_grid_segments_agreeing.max(1);
-        let alone = at_uncut && count.agreed(thresholds.lone_grid_z) > 0;
+        let stepped = count.codec == Codec::Mp3
+          && mp3_steps.is_some_and(|(steps, _)| {
+            let segments = count.scan.segment_offset.iter().zip(&steps.segment_whole);
+            segments
+              .filter(|(at, _)| **at == count.scan.offset)
+              .any(|(_, whole)| *whole >= thresholds.mp3_whole_steps)
+          });
+        let alone = at_uncut && (stepped || count.agreed(thresholds.lone_grid_z) > 0);
         let segments = count.agreed(thresholds.part_grid_z).max(if agreed {
           agreeing
         } else {
@@ -522,7 +529,15 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
       Some(aac(&other.aac_sine, true)),
       Some(mp3(&other.mp3)),
     ];
-    let count = clearest(counts)?;
+    // one segment far out is enough at an offset an uncut decode has
+    let alone = || {
+      let counts = counts.into_iter().flatten();
+      counts
+        .filter(|count| uncut(count.codec, count.sine, count.scan.offset))
+        .filter(|count| count.agreed(thresholds.lone_grid_z) > 0)
+        .max_by(|a, b| a.scan.z.total_cmp(&b.scan.z))
+    };
+    let count = clearest(counts).or_else(alone)?;
     let evidence = Evidence::CountAt {
       rate: other.rate,
       scan: count.scan.clone(),
@@ -533,13 +548,24 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
   // whole number of the filterbank's samples apart, however little it stands out
   let phased = || {
     let subbands = scan.mp2.as_ref()?;
-    let phases = subbands.segment_offset.iter();
-    let at = phases.filter(|phase| BLOCK_PHASES.contains(phase)).count();
-    (at >= thresholds.block_phase_segments.max(1)).then(|| {
-      let vorbis = subbands.segment_offset.contains(&BLOCK_PHASES[1]);
-      let codec = if vorbis { Codec::Vorbis } else { Codec::Mp3 };
-      (codec, Evidence::Count(subbands.clone()), false)
-    })
+    let enough = |phases: &[usize]| {
+      let segments = subbands.segment_offset.iter();
+      segments.filter(|phase| phases.contains(phase)).count()
+        >= thresholds.block_phase_segments.max(1)
+    };
+    let codec = if enough(&BLOCK_PHASES) {
+      if subbands.segment_offset.contains(&BLOCK_PHASES[1]) {
+        Codec::Vorbis
+      } else {
+        Codec::Mp3
+      }
+    // an MP3 decode's count can sit at layer II's phase, and its steps tell it
+    } else if enough(&[MP2_UNCUT]) && mp3_steps.is_none_or(|(_, showing)| showing == 0) {
+      Codec::Mp2
+    } else {
+      return None;
+    };
+    Some((codec, Evidence::Count(subbands.clone()), false))
   };
   let opus = || {
     let opus = scan.opus.as_ref()?;
@@ -1007,5 +1033,40 @@ mod tests {
     assert_eq!(codec(&subbands(3.0, [16, 17, 16, 16])), Some(Codec::Vorbis));
     assert_eq!(codec(&subbands(3.0, [16, 16, 16, 16])), Some(Codec::Mp3));
     assert_eq!(codec(&subbands(3.0, [16, 17, 16, 9])), None);
+    // every segment at layer II's phase is MP2 however little the count stands out, unless
+    // MP3's steps show
+    assert_eq!(codec(&subbands(3.0, [1, 1, 1, 1])), Some(Codec::Mp2));
+    assert_eq!(codec(&subbands(3.0, [1, 1, 1, 20])), None);
+    let stepped = Scan {
+      mp3_steps: steps([enough, 0, 0, 0]).mp3_steps,
+      ..subbands(3.0, [1, 1, 1, 1])
+    };
+    assert_eq!(codec(&stepped), None);
+    // steps in the one segment that sits at LAME's offset are a grid in part, and are none
+    // in a segment elsewhere or at an offset no encoder has
+    let one = |offsets: [usize; SEGMENTS], segment_whole: [usize; SEGMENTS]| Scan {
+      mp3: count(4.0, offsets, [4.0; SEGMENTS]),
+      ..steps(segment_whole)
+    };
+    let lone = found(&one([48, 9, 300, 411], [enough, 0, 0, 0]), &thresholds).expect("one shows");
+    assert!(matches!(lone.evidence, Evidence::Part { segments: 1, .. }));
+    assert_eq!(codec(&one([48, 9, 300, 411], [0, enough, 0, 0])), None);
+    assert_eq!(codec(&one([50, 9, 300, 411], [enough, 0, 0, 0])), None);
+    // at the other rate one segment far out is enough at LAME's offset, and not at another
+    let converted = |offset: usize| Scan {
+      other_rate: Some(OtherRate {
+        rate: 44_100,
+        aac: quiet(),
+        aac_sine: quiet(),
+        mp3: count(6.0, [offset, 9, 300, 411], [13.0, 3.0, 3.0, 3.0]),
+      }),
+      ..scan(quiet())
+    };
+    let at_other = found(&converted(48), &thresholds).expect("one stands out at LAME's offset");
+    assert!(matches!(
+      at_other.evidence,
+      Evidence::CountAt { rate: 44_100, .. }
+    ));
+    assert_eq!(codec(&converted(50)), None);
   }
 }

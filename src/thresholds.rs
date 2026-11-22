@@ -277,6 +277,8 @@ pub struct ReadingThresholds {
   /// It applies where the file's offset is one an uncut decode has, as
   /// `uncut_grid_segments_agreeing` does. One segment of a lossless file can stand far out at
   /// some offset, and rarely at that one.
+  ///
+  /// The scan at the other rate takes one such segment too, for a decode converted afterwards.
   pub lone_grid_z: f64,
   /// Fewest segments whose subband count is lowest at a block-aligned phase, for a grid.
   ///
@@ -285,6 +287,9 @@ pub struct ReadingThresholds {
   /// filterbank's 32 samples apart, so every segment's count is lowest at the same phase,
   /// however little it stands out. The reading names Vorbis where a segment sits at the
   /// phase only its decodes have, and MP3 otherwise.
+  ///
+  /// It is compared too with the segments at the phase an uncut MP2 decode has, which read
+  /// as MP2 where MP3's quantizer steps show in none.
   pub block_phase_segments: usize,
   /// Robust z over which the AAC scan at the other rate finds a frame grid.
   ///
@@ -304,7 +309,8 @@ pub struct ReadingThresholds {
   /// Fewest segments that reach `mp3_whole_steps`, for an MP3 grid in part of the file.
   ///
   /// One at least. It applies where fewer segments reach it than a grid in the whole file
-  /// asks for.
+  /// asks for. One segment is enough where its lowest count is at the file's offset and that
+  /// offset is one an uncut decode has.
   pub mp3_whole_steps_segments: usize,
   /// Fewest scalefactor bands on whole steps in a segment, for an AAC grid.
   ///
