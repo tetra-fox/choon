@@ -191,11 +191,10 @@ pub struct Found {
 pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found> {
   let (codec, evidence, sine) = shown(scan, thresholds)?;
   // AAC's steps, which are read at the file's own rate
-  let stepped = match (&evidence, codec) {
-    (Evidence::CountAt { .. } | Evidence::Part { .. }, _)
-    | (_, Codec::Mp3 | Codec::Mp2 | Codec::Opus | Codec::Vorbis | Codec::Wma) => None,
-    (_, Codec::Aac) => aac_stepped(scan, thresholds),
-  };
+  let own_rate = !matches!(evidence, Evidence::CountAt { .. } | Evidence::Part { .. });
+  let stepped = (codec == Codec::Aac && own_rate)
+    .then(|| aac_stepped(scan, thresholds))
+    .flatten();
   let family = match (&evidence, codec) {
     // a section's start is not the stream's, so its offset names no encoder
     (Evidence::Part { .. }, _) => None,
@@ -395,9 +394,13 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
       .filter(|count| count.scan.z > count.z && count.agreed(f64::NEG_INFINITY) >= count.agreeing)
       .max_by(|a, b| (a.scan.z / a.z).total_cmp(&(b.scan.z / b.z)))
   }
-  let mp3_stepped = scan.mp3_steps.as_ref().is_some_and(|steps| {
-    let mut segments = steps.segment_whole.iter();
-    segments.any(|whole| *whole >= thresholds.mp3_whole_steps)
+  // MP3's steps, and the segments they show in
+  let mp3_steps = scan.mp3_steps.as_ref().map(|steps| {
+    let segments = steps.segment_whole.iter();
+    let showing = segments
+      .filter(|whole| **whole >= thresholds.mp3_whole_steps)
+      .count();
+    (steps, showing)
   });
   let counts = [
     Some(aac(&scan.aac, false)),
@@ -430,7 +433,7 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
       // nothing of layer II where MP3's steps show
       let z = if scan.segments_agreeing == super::SEGMENTS {
         thresholds.mp2_all_agreeing_grid_z
-      } else if scan.offset == MP2_UNCUT && !mp3_stepped {
+      } else if scan.offset == MP2_UNCUT && mp3_steps.is_none_or(|(_, showing)| showing == 0) {
         thresholds.mp2_uncut_grid_z
       } else {
         thresholds.mp2_grid_z
@@ -478,11 +481,7 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
   };
   // the quantizer's steps show a grid whose count stands out too little
   let stepped = || {
-    let steps = scan.mp3_steps.as_ref()?;
-    let segments = steps.segment_whole.iter();
-    let showing = segments
-      .filter(|whole| **whole >= thresholds.mp3_whole_steps)
-      .count();
+    let (steps, showing) = mp3_steps?;
     (showing >= thresholds.mp3_grid_segments_agreeing.max(1)).then(|| {
       let evidence = Evidence::Steps {
         offset: scan.mp3.offset,
@@ -493,11 +492,7 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
   };
   // and in fewer segments a grid in part of the file
   let stepped_part = || {
-    let steps = scan.mp3_steps.as_ref()?;
-    let segments = steps.segment_whole.iter();
-    let showing = segments
-      .filter(|whole| **whole >= thresholds.mp3_whole_steps)
-      .count();
+    let (_, showing) = mp3_steps?;
     (showing >= thresholds.mp3_whole_steps_segments.max(1)).then(|| {
       let evidence = Evidence::Part {
         segments: showing,

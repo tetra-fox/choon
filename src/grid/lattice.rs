@@ -27,6 +27,7 @@ use rayon::prelude::*;
 use realfft::num_complex::Complex;
 use realfft::{ComplexToReal, RealFftPlanner, RealToComplex};
 
+use super::in_stretch;
 use super::mdct::{DctIv, fold};
 use super::resample::Resampler;
 use crate::decode::opus::RATE;
@@ -483,9 +484,23 @@ fn hybrid(before: &Bands, bands: &Bands) -> Hybrid {
   }
 }
 
+/// whether a frame sits on the lattice by its channels' judgments: every channel judged sits on
+/// it, and one at least was judged. a channel is asked for only while the ones before it leave
+/// the frame open
+fn all_sit(channels: impl IntoIterator<Item = Option<bool>>) -> bool {
+  let mut any = false;
+  for sits in channels {
+    match sits {
+      Some(true) => any = true,
+      Some(false) => return false,
+      None => {}
+    }
+  }
+  any
+}
 /// whether a channel with `tested` bands, `hits` of them on the lattice, is judged, and whether
 /// it then sits on the lattice
-fn judged(tested: usize, hits: usize) -> Option<bool> {
+fn judged((tested, hits): (usize, usize)) -> Option<bool> {
   (tested >= MIN_TESTED).then_some(hits as f64 >= SHARE * tested as f64)
 }
 
@@ -621,18 +636,11 @@ fn sits(
   shifts: &[f64],
   bands: &mut impl FnMut(usize, usize, usize, Blocks) -> Bands,
 ) -> bool {
-  let mut any = false;
-  for (channel, shift) in shifts.iter().enumerate() {
+  all_sit(shifts.iter().enumerate().map(|(channel, shift)| {
     let read = bands(run, channel, frame, now);
     let before = before.map(|blocks| bands(run, channel, frame - 1, blocks));
-    let (tested, hits) = on_lattice(before.as_ref(), &read, *shift);
-    match judged(tested, hits) {
-      Some(true) => any = true,
-      Some(false) => return false,
-      None => {}
-    }
-  }
-  any
+    judged(on_lattice(before.as_ref(), &read, *shift))
+  }))
 }
 
 /// how many frames of each of `runs` sit on the lattice read one of `ways`, with each
@@ -705,10 +713,7 @@ fn counted(
       shift_at(place, |shift| {
         read
           .iter()
-          .filter(|(before, now)| {
-            let (tested, hits) = on_lattice(Some(before), now, shift);
-            judged(tested, hits) == Some(true)
-          })
+          .filter(|(before, now)| judged(on_lattice(Some(before), now, shift)) == Some(true))
           .count()
       })
     });
@@ -716,8 +721,7 @@ fn counted(
       .into_iter()
       .zip(&read)
       .filter_map(|((run, frame, any), (before, now))| {
-        let (tested, hits) = on_lattice(Some(before), now, shift);
-        match judged(tested, hits) {
+        match judged(on_lattice(Some(before), now, shift)) {
           Some(true) => Some((run, frame, true)),
           Some(false) => None,
           None => Some((run, frame, any)),
@@ -776,23 +780,16 @@ fn short_sits(
   channels: usize,
   bands: &mut impl FnMut(usize, usize) -> Bands,
 ) -> bool {
-  let mut any = false;
-  for channel in 0..channels {
+  all_sit((0..channels).map(|channel| {
     let now = bands(channel, frame);
-    let (tested, hits) = if alone {
+    judged(if alone {
       on_lattice(None, &now, 0.0)
     } else {
       let before = bands(channel, frame - 1);
       let steps = steps_with((short.alpha, short.beta), &before, &now, 0.0);
       tested_and_on(steps, Some(&before), &now)
-    };
-    match judged(tested, hits) {
-      Some(true) => any = true,
-      Some(false) => return false,
-      None => {}
-    }
-  }
-  any
+    })
+  }))
 }
 
 /// how many of a run of `frames` short frames sit on the lattice after the frame before them,
@@ -825,21 +822,19 @@ impl Stretch {
   /// the stretch of `channels` at `rate` whose first sample is frame `first` of the file;
   /// `None` when nothing is left of it at 48 kHz
   fn of(channels: &[&[f64]], first: u64, rate: Rate) -> Option<Self> {
-    let resampler = match rate {
-      Rate::Native => {
-        return Some(Self {
-          channels: channels
-            .iter()
-            .map(|c| pre_emphasized(c.iter().copied()))
-            .collect(),
-          start: first,
-        });
+    let (resampled, start) = match rate {
+      Rate::Native => (None, first),
+      Rate::From44100 => {
+        let (resampled, start) = Resampler::to_48000().brought(channels, first)?;
+        (Some(resampled), start)
       }
-      Rate::From44100 => Resampler::to_48000(),
     };
-    let (resampled, start) = resampler.brought(channels, first)?;
+    let channels = match &resampled {
+      Some(resampled) => resampled.iter().map(Vec::as_slice).collect(),
+      None => channels.to_vec(),
+    };
     Some(Self {
-      channels: resampled
+      channels: channels
         .iter()
         .map(|c| pre_emphasized(c.iter().copied()))
         .collect(),
@@ -893,9 +888,7 @@ impl Stretches {
             let stretch = self.stretches[run]
               .as_ref()
               .expect("a stretch with frames has samples");
-            // below the frame, so it fits
-            let shift = (stretch.start % FRAME as u64) as usize;
-            let start = (offset + FRAME - shift) % FRAME + frame * FRAME;
+            let start = in_stretch(offset, stretch.start, FRAME) + frame * FRAME;
             let short = usize::from(blocks == Blocks::Short);
             *kept[((run * 2 + channel) * 2 + short) * most + frame].get_or_insert_with(|| {
               celt.read(&stretch.channels[channel][start..start + 2 * FRAME], blocks)
@@ -920,9 +913,7 @@ impl Stretches {
           let mut counts = [0; 2];
           for stretch in self.stretches.iter().flatten() {
             let frames = (stretch.channels[0].len() / length).saturating_sub(3);
-            // below the frame, so it fits
-            let shift = (stretch.start % length as u64) as usize;
-            let first = (offset + length - shift) % length;
+            let first = in_stretch(offset, stretch.start, length);
             kept.clear();
             kept.resize(2 * frames, None);
             let run = short_sitting(short, frames, 2, |channel, frame| {
@@ -1026,8 +1017,7 @@ impl Unfilter {
     }
     let before = celt.bands(&self.taken[..2 * FRAME]);
     let now = celt.bands(&self.taken[FRAME..]);
-    let (tested, hits) = on_lattice(Some(&before), &now, 0.0);
-    judged(tested, hits)
+    judged(on_lattice(Some(&before), &now, 0.0))
   }
 
   /// whether the frame a frame after `at` sits on the lattice after the one at `at` with one
@@ -1041,21 +1031,12 @@ impl Unfilter {
     for lag in lags {
       for shape in TAPS {
         for gain in (1..=GAINS).map(|step| GAIN * step as f32) {
-          let mut any = false;
-          let mut off = false;
-          for channel in channels {
+          let sits = all_sit(channels.iter().map(|channel| {
             // the first channel's comb is run again after another's took its place
             self.comb(channel, at, lag, shape);
-            match self.judged(celt, channel, at, gain) {
-              Some(true) => any = true,
-              Some(false) => {
-                off = true;
-                break;
-              }
-              None => {}
-            }
-          }
-          if any && !off {
+            self.judged(celt, channel, at, gain)
+          }));
+          if sits {
             return Some(true);
           }
         }
@@ -1112,10 +1093,8 @@ impl Uncut {
     let length = stretch.channels[0].len();
     for (short, (celt, counts)) in SHORT.iter().zip(&mut self.short) {
       let frame = short.length;
-      // below the frame, so it fits
-      let shift = (stretch.start % frame as u64) as usize;
       for (grid, counts) in short.uncut_offsets().into_iter().zip(counts) {
-        let offset = (grid + frame - shift) % frame;
+        let offset = in_stretch(grid, stretch.start, frame);
         let frames = (length.saturating_sub(offset) / frame).saturating_sub(1);
         let mut kept = vec![None; stretch.channels.len() * frames];
         let run = short_sitting(*short, frames, stretch.channels.len(), |channel, at| {
@@ -1128,9 +1107,7 @@ impl Uncut {
       }
     }
     // the first frame of the grid at or after the stretch's first sample
-    let grid = UNCUT_OFFSET as u64;
-    let frame = FRAME as u64;
-    let offset = ((grid + frame - stretch.start % frame) % frame) as usize;
+    let offset = in_stretch(UNCUT_OFFSET, stretch.start, FRAME);
     let frames = (length.saturating_sub(offset) / FRAME).saturating_sub(1);
     let bands: Vec<Vec<[Bands; 2]>> = stretch
       .channels
@@ -1147,12 +1124,12 @@ impl Uncut {
     // the pitch post-filter is searched in pairs of frames spread over the window, each far
     // enough in for the longest lag, that do not sit on the lattice as they are
     let first = (*LAGS.end() + 2).saturating_sub(offset).div_ceil(FRAME) + 1;
+    let unshifted = vec![0.0; bands.len()];
     for pair in 0..SEARCHED {
       let frame = first + pair * frames.saturating_sub(first) / SEARCHED;
       if frame >= frames || self.unfiltered[0] >= MOST_SEARCHED {
         break;
       }
-      let unshifted = vec![0.0; bands.len()];
       let as_read = sits(
         (0, frame),
         WAYS[0],

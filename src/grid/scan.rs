@@ -10,7 +10,7 @@ use super::resample::Resampler;
 use super::segments::{Segment, Segments};
 use super::{
   AacSteps, CodecScan, MP3_HOP, Mp3Neighbours, Mp3Steps, OPUS_UNCUT_OFFSET, OpusHybrid, OpusScan,
-  OpusShifted, OpusShort, OpusUnfiltered, OtherRate, SEGMENTS, Scan,
+  OpusShifted, OpusShort, OpusUnfiltered, OtherRate, SEGMENTS, Scan, in_stretch,
 };
 
 /// MAD times this estimates the standard deviation of normally distributed values
@@ -35,9 +35,9 @@ pub(crate) struct Opus {
 }
 
 /// the number of jobs in one scan: four in each segment, for MP3, for AAC under each of its
-/// windows and for Vorbis, and with `wma` one more for WMA. with `opus`, set at a rate Opus is looked for at, one more per segment
-/// and one per length of short frame, and with `other_rate` too MP3's and AAC's three again in
-/// each segment at the other rate
+/// windows and for Vorbis, and with `wma` one more for WMA. with `opus`, set at a rate Opus is
+/// looked for at, one more per segment and one per length of short frame, and with
+/// `other_rate` too MP3's and AAC's three again in each segment at the other rate
 pub(crate) fn jobs(opus: bool, other_rate: bool, wma: bool) -> usize {
   (4 + usize::from(wma) + usize::from(opus) + 3 * usize::from(opus && other_rate)) * SEGMENTS
     + lattice::SHORT.len() * usize::from(opus)
@@ -191,9 +191,7 @@ pub(crate) fn scan(
       go_on().then(|| {
         let mp3_steps = || {
           mp3_bands.map(|bands| {
-            // below the hop, so it fits
-            let start = (segment.start % MP3_HOP as u64) as usize;
-            let offset = (mp3.offset + MP3_HOP - start) % MP3_HOP;
+            let offset = in_stretch(mp3.offset, segment.start, MP3_HOP);
             Mp3::new().steps(segment, offset, bands)
           })
         };
@@ -267,12 +265,7 @@ pub(crate) fn scan(
     mp3_steps,
     aac_steps,
     aac_sine_steps,
-    opus: opus.map(|opus| {
-      let mut scan = opus_scan(&frames, &opus.uncut, &short, opus.uncut_short);
-      let [searched, frames] = opus.unfiltered;
-      scan.unfiltered = Some(OpusUnfiltered { searched, frames });
-      scan
-    }),
+    opus: opus.map(|opus| opus_scan(&frames, &short, &opus)),
   })
 }
 
@@ -323,19 +316,17 @@ fn most(none: usize, counts: impl Iterator<Item = (usize, usize)>) -> (usize, us
 }
 
 /// the scan for Opus from what the segments' frames count at each offset of the file's grid,
-/// and what the windows' count on the grid of an uncut decode
-fn opus_scan(
-  counted: &[lattice::Counted],
-  uncut: &lattice::Counted,
-  short: &[Vec<[usize; 2]>],
-  uncut_short: [[[usize; 2]; 2]; 3],
-) -> OpusScan {
+/// those of 20 ms and the short ones of each length, and what the windows' count on the grid
+/// of an uncut decode
+fn opus_scan(counted: &[lattice::Counted], short: &[Vec<[usize; 2]>], opus: &Opus) -> OpusScan {
+  let uncut = &opus.uncut;
+  let [searched, unfiltered] = opus.unfiltered;
   // the frames read without the frame before count where one sits on the lattice after it
   let with_alone = |[after, either]: [usize; 2]| if after > 0 { either } else { 0 };
   let short = lattice::SHORT
     .iter()
     .zip(short)
-    .zip(uncut_short)
+    .zip(opus.uncut_short)
     .map(|((length, counted), uncut)| {
       let grids = length.uncut_offsets();
       // the first grid's offset where none counts any
@@ -386,7 +377,10 @@ fn opus_scan(
       uncut_steps: uncut.hybrid_points,
     }),
     short,
-    unfiltered: None,
+    unfiltered: Some(OpusUnfiltered {
+      searched,
+      frames: unfiltered,
+    }),
   }
 }
 
@@ -406,9 +400,7 @@ fn levelled(curve: &[f64]) -> Vec<f64> {
 /// modulo the hop, turned into the file's offsets for a segment starting at frame `start`
 fn in_file(curve: &[f64], start: u64) -> Vec<f64> {
   let hop = curve.len();
-  // below the hop, so it fits
-  let shift = (start % hop as u64) as usize;
-  (0..hop).map(|o| curve[(o + hop - shift) % hop]).collect()
+  (0..hop).map(|o| curve[in_stretch(o, start, hop)]).collect()
 }
 
 /// the scan of one codec from its segments' curves in the file's offsets

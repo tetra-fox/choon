@@ -7,7 +7,7 @@ use super::mdct::{DctIv, SplitMdct, Strided, fold_windowed};
 use super::scan::active_stereo;
 use super::segments::Segment;
 use super::steps::{BandScratch, WHOLE_STEP, band_step};
-use super::{AAC_HOP, NOISE16};
+use super::{AAC_HOP, NOISE16, in_stretch};
 use crate::kaiser;
 
 /// the tasks a job's offsets are split into at most, so that one file's scan can fill the pool
@@ -162,9 +162,7 @@ impl AacStepper {
     let mut counts = [0; 3];
     let mut lines = [const { Vec::new() }; 4];
     let mut scratch = BandScratch::default();
-    // below the hop, so it fits
-    let start = (segment.start % AAC_HOP as u64) as usize;
-    let offset = (offset + AAC_HOP - start) % AAC_HOP;
+    let offset = in_stretch(offset, segment.start, AAC_HOP);
     // the frames every offset holds, as the count takes them
     let frames = (segment.left.len() + 1 - 2 * AAC_HOP) / AAC_HOP;
     for frame in 0..frames {

@@ -119,6 +119,14 @@ pub(crate) const SEGMENT: usize = 40 * AAC_HOP;
 /// the rounding noise of 16-bit samples in samples scaled to [-1, 1): 2^-15 / sqrt(12)
 const NOISE16: f64 = 8.809_710_218_959_115e-6;
 
+/// where the grid at `offset` from the file's first sample starts in a stretch whose first
+/// sample is frame `start` of the file, for frames `hop` samples apart
+fn in_stretch(offset: usize, start: u64, hop: usize) -> usize {
+  // below the hop, so it fits
+  let shift = (start % hop as u64) as usize;
+  (offset + hop - shift) % hop
+}
+
 /// Codec whose frame grid the scan looks for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
