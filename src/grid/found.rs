@@ -245,6 +245,30 @@ pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found
 /// a run of them leaves the grid a whole number of these from where it was
 const VORBIS_STEP: usize = 128;
 
+/// where the long blocks of a libvorbis stream sit within a step, in a decode whose start was
+/// not cut
+const VORBIS_UNCUT: usize = 64;
+
+/// the phase of the filterbank a layer II decode's count sits at when its start was not cut
+const MP2_UNCUT: usize = 1;
+
+/// the phases the subband count of an uncut decode sits at for a codec whose blocks start a
+/// whole number of the filterbank's 32 samples apart: MP3's at the first, and Vorbis's at
+/// either
+const BLOCK_PHASES: [usize; 2] = [16, 17];
+
+/// whether a grid of `codec` at `offset`, under AAC's sine window when `sine`, is where an
+/// encoder's decode has it when its start was not cut
+fn uncut(codec: Codec, sine: bool, offset: usize) -> bool {
+  match codec {
+    Codec::Mp3 => Family::of_mp3(offset).is_some(),
+    Codec::Aac => Family::of_aac(offset, sine).is_some(),
+    Codec::Vorbis => offset % VORBIS_STEP == VORBIS_UNCUT,
+    // layer II's phase is weighed where its count is, against MP3's steps
+    Codec::Mp2 | Codec::Wma | Codec::Opus => false,
+  }
+}
+
 /// a count that may show a grid: its codec, whether it was taken under AAC's sine window, the
 /// z it has to pass, how many of its segments have to agree, and the samples between offsets
 /// that agree, `None` where they are one offset
@@ -365,6 +389,10 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
       .filter(|count| count.scan.z > count.z && count.agreed(f64::NEG_INFINITY) >= count.agreeing)
       .max_by(|a, b| (a.scan.z / a.z).total_cmp(&(b.scan.z / b.z)))
   }
+  let mp3_stepped = scan.mp3_steps.as_ref().is_some_and(|steps| {
+    let mut segments = steps.segment_whole.iter();
+    segments.any(|whole| *whole >= thresholds.mp3_whole_steps)
+  });
   let counts = [
     Some(aac(&scan.aac, false)),
     scan.aac_sine.as_ref().map(|scan| aac(scan, true)),
@@ -392,8 +420,12 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
     // layer II quantizes the filterbank's subband samples, which an MP3 decode's count does
     // not show. of 32 phases three segments share one by chance far more often than four
     scan.mp2.as_ref().map(|scan| {
+      // an MP3 decode's subband count sits at its grid's phase, so the uncut phase says
+      // nothing of layer II where MP3's steps show
       let z = if scan.segments_agreeing == super::SEGMENTS {
         thresholds.mp2_all_agreeing_grid_z
+      } else if scan.offset == MP2_UNCUT && !mp3_stepped {
+        thresholds.mp2_uncut_grid_z
       } else {
         thresholds.mp2_grid_z
       };
@@ -413,8 +445,24 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
     let (segments, count) = counts
       .into_iter()
       .flatten()
-      .map(|count| (count.agreed(thresholds.part_grid_z), count))
-      .filter(|(segments, _)| *segments >= thresholds.part_grid_segments.max(1))
+      .map(|count| {
+        // at an offset an uncut decode has, fewer segments are enough where the file's count
+        // stands out, and one where its own stands far out
+        let at_uncut = uncut(count.codec, count.sine, count.scan.offset);
+        let agreeing = count.agreed(f64::NEG_INFINITY);
+        let agreed = at_uncut
+          && count.scan.z > count.z
+          && agreeing >= thresholds.uncut_grid_segments_agreeing.max(1);
+        let alone = at_uncut && count.agreed(thresholds.lone_grid_z) > 0;
+        let segments = count.agreed(thresholds.part_grid_z).max(if agreed {
+          agreeing
+        } else {
+          usize::from(alone)
+        });
+        (segments, agreed || alone, count)
+      })
+      .filter(|(segments, uncut, _)| *uncut || *segments >= thresholds.part_grid_segments.max(1))
+      .map(|(segments, _, count)| (segments, count))
       .max_by(|(a, x), (b, y)| a.cmp(b).then(x.scan.z.total_cmp(&y.scan.z)))?;
     let evidence = Evidence::Part {
       segments,
@@ -437,6 +485,21 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
       (Codec::Mp3, evidence, false)
     })
   };
+  // and in fewer segments a grid in part of the file
+  let stepped_part = || {
+    let steps = scan.mp3_steps.as_ref()?;
+    let segments = steps.segment_whole.iter();
+    let showing = segments
+      .filter(|whole| **whole >= thresholds.mp3_whole_steps)
+      .count();
+    (showing >= thresholds.mp3_whole_steps_segments.max(1)).then(|| {
+      let evidence = Evidence::Part {
+        segments: showing,
+        scan: scan.mp3.clone(),
+      };
+      (Codec::Mp3, evidence, false)
+    })
+  };
   let stepped_aac = || {
     let (window, steps) = aac_stepped(scan, thresholds)?;
     let evidence = Evidence::AacSteps {
@@ -453,16 +516,29 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
       z: thresholds.other_rate_aac_z,
       ..aac(scan, sine)
     };
-    let count = clearest([
+    let counts = [
       Some(aac(&other.aac, false)),
       Some(aac(&other.aac_sine, true)),
       Some(mp3(&other.mp3)),
-    ])?;
+    ];
+    let count = clearest(counts)?;
     let evidence = Evidence::CountAt {
       rate: other.rate,
       scan: count.scan.clone(),
     };
     Some((count.codec, evidence, count.sine))
+  };
+  // the subband count sits at one phase in every segment of a decode whose blocks start a
+  // whole number of the filterbank's samples apart, however little it stands out
+  let phased = || {
+    let subbands = scan.mp2.as_ref()?;
+    let phases = subbands.segment_offset.iter();
+    let at = phases.filter(|phase| BLOCK_PHASES.contains(phase)).count();
+    (at >= thresholds.block_phase_segments.max(1)).then(|| {
+      let vorbis = subbands.segment_offset.contains(&BLOCK_PHASES[1]);
+      let codec = if vorbis { Codec::Vorbis } else { Codec::Mp3 };
+      (codec, Evidence::Count(subbands.clone()), false)
+    })
   };
   let opus = || {
     let opus = scan.opus.as_ref()?;
@@ -512,7 +588,9 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
     .or_else(stepped_aac)
     .or_else(opus)
     .or_else(converted)
+    .or_else(phased)
     .or_else(part)
+    .or_else(stepped_part)
 }
 
 #[cfg(test)]
@@ -836,5 +914,87 @@ mod tests {
     assert_eq!(shown.codec, Codec::Aac);
     assert_eq!(shown.evidence, Evidence::Count(codec_scan(40.0, 4)));
     assert_eq!(shown.family, Some(Family::Faac));
+  }
+
+  #[test]
+  fn an_uncut_decodes_offset_asks_for_less() {
+    let thresholds = ReadingThresholds::default();
+    // segments at `offsets` with own z `own`, summed to `z` at the first
+    let count = |z: f64, offsets: [usize; SEGMENTS], own: [f64; SEGMENTS]| CodecScan {
+      offset: offsets[0],
+      z,
+      segments_agreeing: offsets.iter().filter(|at| **at == offsets[0]).count(),
+      segment_z: own,
+      segment_offset: offsets,
+    };
+    let quiet = || count(3.0, [5, 300, 411, 520], [3.0; SEGMENTS]);
+    let scan = |mp3: CodecScan| Scan {
+      aac: quiet(),
+      aac_sine: None,
+      vorbis: None,
+      wma: None,
+      mp3,
+      mp2: None,
+      opus: None,
+      other_rate: None,
+      mp3_steps: None,
+      aac_steps: None,
+      aac_sine_steps: None,
+    };
+    let read = |scan: &Scan| found(scan, &thresholds).map(|f| (f.codec, f.evidence));
+    // two segments agree: a grid in part at LAME's offset, none at an offset no encoder has
+    let lame = count(8.0, [48, 48, 300, 411], [4.0; SEGMENTS]);
+    let part = Evidence::Part {
+      segments: 2,
+      scan: lame.clone(),
+    };
+    assert_eq!(read(&scan(lame)), Some((Codec::Mp3, part)));
+    assert_eq!(
+      read(&scan(count(8.0, [50, 50, 300, 411], [4.0; SEGMENTS]))),
+      None
+    );
+    // one segment far out by itself: a grid in part at LAME's offset alone
+    let alone = count(6.0, [48, 9, 300, 411], [13.0, 3.0, 3.0, 3.0]);
+    let part = Evidence::Part {
+      segments: 1,
+      scan: alone.clone(),
+    };
+    assert_eq!(read(&scan(alone)), Some((Codec::Mp3, part)));
+    assert_eq!(
+      read(&scan(count(6.0, [50, 9, 300, 411], [13.0, 3.0, 3.0, 3.0]))),
+      None
+    );
+    // whole steps in two segments are a grid, in one they are none
+    let steps = |segment_whole: [usize; SEGMENTS]| Scan {
+      mp3_steps: Some(Mp3Steps {
+        tested: 7_000,
+        stepped: 120,
+        whole: segment_whole.iter().sum(),
+        segment_whole,
+        neighbours: None,
+      }),
+      ..scan(quiet())
+    };
+    let enough = thresholds.mp3_whole_steps;
+    let stepped = found(&steps([enough, 0, enough, 2]), &thresholds).expect("two show");
+    assert!(matches!(
+      stepped.evidence,
+      Evidence::Part { segments: 2, .. }
+    ));
+    let whole = found(&steps([enough, enough, enough, 2]), &thresholds).expect("three show");
+    assert!(matches!(whole.evidence, Evidence::Steps { .. }));
+    assert_eq!(found(&steps([600, enough - 1, 0, 0]), &thresholds), None);
+    // an MP2 count three segments put at the uncut phase, and at another
+    let subbands = |z: f64, phases: [usize; SEGMENTS]| Scan {
+      mp2: Some(count(z, phases, [3.0; SEGMENTS])),
+      ..scan(quiet())
+    };
+    let codec = |scan: &Scan| found(scan, &thresholds).map(|f| f.codec);
+    assert_eq!(codec(&subbands(7.0, [1, 1, 1, 20])), Some(Codec::Mp2));
+    assert_eq!(codec(&subbands(7.0, [5, 5, 5, 20])), None);
+    // every segment at a block's phase: Vorbis where one sits at its own, MP3 otherwise
+    assert_eq!(codec(&subbands(3.0, [16, 17, 16, 16])), Some(Codec::Vorbis));
+    assert_eq!(codec(&subbands(3.0, [16, 16, 16, 16])), Some(Codec::Mp3));
+    assert_eq!(codec(&subbands(3.0, [16, 17, 16, 9])), None);
   }
 }

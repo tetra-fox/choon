@@ -211,6 +211,15 @@ pub struct ReadingThresholds {
   ///
   /// [`CodecScan::segments_agreeing`]: crate::grid::CodecScan::segments_agreeing
   pub mp3_grid_segments_agreeing: usize,
+  /// Fewest segments that agree, for a grid in part of the file at an uncut decode's offset.
+  ///
+  /// An encoder's delay puts the grid of its decode at a fixed offset when the start was not
+  /// cut ([`Family`](crate::grid::Family)), and a libvorbis stream's long blocks sit at one
+  /// place within each 128 samples. Fewer segments than `aac_grid_segments_agreeing`,
+  /// `mp3_grid_segments_agreeing` or `vorbis_grid_segments_agreeing` asks for show a grid in
+  /// part of the file there, with the same z, as the segments of a lossless file rarely
+  /// agree on that one offset.
+  pub uncut_grid_segments_agreeing: usize,
   /// Robust z over which the MP2 scan finds a frame grid.
   ///
   /// It is compared with [`CodecScan::z`](crate::grid::CodecScan::z) of
@@ -221,6 +230,11 @@ pub struct ReadingThresholds {
   /// The MP2 scan counts at 32 phases, so three segments share one by chance far more often
   /// than three share an offset of another codec's grid, and four far less often than three.
   pub mp2_all_agreeing_grid_z: f64,
+  /// Robust z over which an MP2 count at an uncut decode's phase finds a frame grid.
+  ///
+  /// An MP2 decode whose start was not cut has its count at one phase of the 32, which the
+  /// segments of a lossless file rarely agree on.
+  pub mp2_uncut_grid_z: f64,
   /// Fewest segments that put their lowest count at the file's phase, for an MP2 grid.
   ///
   /// It is compared with [`CodecScan::segments_agreeing`], as `mp3_grid_segments_agreeing` is.
@@ -258,6 +272,20 @@ pub struct ReadingThresholds {
   pub part_grid_z: f64,
   /// Fewest segments that pass `part_grid_z`, for a grid in part of the file, one at least.
   pub part_grid_segments: usize,
+  /// Robust z one segment's own count passes to show a grid in part of the file by itself.
+  ///
+  /// It applies where the file's offset is one an uncut decode has, as
+  /// `uncut_grid_segments_agreeing` does. One segment of a lossless file can stand far out at
+  /// some offset, and rarely at that one.
+  pub lone_grid_z: f64,
+  /// Fewest segments whose subband count is lowest at a block-aligned phase, for a grid.
+  ///
+  /// It is compared with the segments of [`Scan::mp2`](crate::grid::Scan::mp2) whose phase is
+  /// one an uncut MP3 or Vorbis decode has. Their blocks start a whole number of the
+  /// filterbank's 32 samples apart, so every segment's count is lowest at the same phase,
+  /// however little it stands out. The reading names Vorbis where a segment sits at the
+  /// phase only its decodes have, and MP3 otherwise.
+  pub block_phase_segments: usize,
   /// Robust z over which the AAC scan at the other rate finds a frame grid.
   ///
   /// It is compared with the z of [`OtherRate::aac`](crate::grid::OtherRate::aac) and of
@@ -273,6 +301,11 @@ pub struct ReadingThresholds {
   /// as `mp3_grid_segments_agreeing` must reach it, one at least. A band of lossless audio
   /// lands on a whole step by chance a few times in a file.
   pub mp3_whole_steps: usize,
+  /// Fewest segments that reach `mp3_whole_steps`, for an MP3 grid in part of the file.
+  ///
+  /// One at least. It applies where fewer segments reach it than a grid in the whole file
+  /// asks for.
+  pub mp3_whole_steps_segments: usize,
   /// Fewest scalefactor bands on whole steps in a segment, for an AAC grid.
   ///
   /// It is compared with each of
@@ -515,6 +548,9 @@ impl Default for ReadingThresholds {
       aac_grid_segments_agreeing: 3,
       mp3_grid_z: 7.0,
       mp3_grid_segments_agreeing: 3,
+      // of 5,400 lossless files of the corpus none has two segments agreeing at such an offset
+      // with a z over its codec's
+      uncut_grid_segments_agreeing: 2,
       // the lossless files reach 5.0 with two segments on the step at most
       vorbis_grid_z: 6.0,
       vorbis_grid_segments_agreeing: 3,
@@ -525,15 +561,24 @@ impl Default for ReadingThresholds {
       // 327 have four, from z 4.1
       mp2_grid_z: 12.0,
       mp2_all_agreeing_grid_z: 4.0,
+      // of 5,400 lossless files of the corpus none has three segments at that phase
+      mp2_uncut_grid_z: 6.0,
       mp2_grid_segments_agreeing: 3,
       // a lossless file's segment reaches 20 alone, and 7.1 beside another at its offset
       part_grid_z: 7.0,
       part_grid_segments: 2,
+      // a segment of the corpus's lossless files reaches 8.3 at such an offset
+      lone_grid_z: 12.0,
+      // four segments sit at two phases of 32 by chance once in 65,536 files, and none of the
+      // corpus's 5,400 lossless files does
+      block_phase_segments: 4,
       // the tuning's files with no AAC behind a conversion reach 9.63 there, and its converted
       // AAC decodes that show a grid start at 16.7
       other_rate_aac_z: 13.0,
-      // three stretches of the tuning's files that were never MP3 reach seven whole steps
-      mp3_whole_steps: 20,
+      // the second stretch of the corpus's files that were never MP3 reaches eight whole
+      // steps, of 4,490 files
+      mp3_whole_steps: 15,
+      mp3_whole_steps_segments: 2,
       // a stretch of the tuning's Vorbis decodes reaches 138 whole steps under one window, and of
       // its files that were never AAC 11
       aac_whole_steps: 200,

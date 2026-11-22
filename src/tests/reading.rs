@@ -286,25 +286,30 @@ fn a_file_decoded_from_mp3_in_half_reads_as_mixed_sources_by_its_grid() {
 }
 
 #[test]
-fn a_lossy_part_before_lossless_audio_reads_as_mixed_sources_and_possibly_lossy() {
+fn a_lossy_part_before_lossless_audio_reads_as_mixed_sources_by_one_stretch() {
   let dir = tempfile::tempdir().unwrap();
   let stem = fixtures::through_mp3(&music(3, 44_100, pink), Bitrate::Kbps128, dir.path());
   // the first twelve seconds from the MP3, the rest lossless: one of the four stretches the
-  // grid scan reads is in the MP3 part, too few to agree on a grid
+  // grid scan reads is in the MP3 part, far out at the offset an uncut decode has
   let intro = stem.spliced(&music(1, 44_100, pink), 12);
   let reading = analyzed(&flac(dir.path(), "intro.flac", &intro, 16));
-  assert_eq!(
-    reading.cutoff_verdict,
-    Verdict::MixedSources,
-    "{reading:#?}"
+  assert_eq!(reading.verdict, Verdict::MixedSources, "{reading:#?}");
+  let grid = reading.grid.as_ref().expect("a grid in part");
+  assert_eq!(grid.codec, Codec::Mp3);
+  assert!(
+    matches!(grid.evidence, Evidence::Part { segments: 1, .. }),
+    "{grid:?}"
   );
   assert!(
-    reading.summary.starts_with("65% of the time is full-band"),
+    reading.summary.contains("in 1 of the 4 stretches"),
     "{}",
     reading.summary
   );
-  assert_eq!(reading.verdict, Verdict::PossiblyLossy, "{reading:#?}");
-  assert_eq!(reading.grid, None);
+  assert!(
+    reading.summary.contains("65% of the time is full-band"),
+    "{}",
+    reading.summary
+  );
 }
 
 /// a 320 kbps stem under a bed at `gain`: a step where the highest bitrates cut, which a
