@@ -600,6 +600,7 @@ impl Default for ReadingThresholds {
       // of frames under 20 ms they reach one in the stretches and one in the windows
       opus_short_frames: 3,
       opus_short_uncut_frames: 3,
+      // of 3,837 lossless files of the corpus none has such a frame, of 40 pairs searched
       opus_unfiltered_frames: 4,
       fraunhofer_steps: FraunhoferSteps::default(),
       // the pilot files that were never Opus reach nine pairs of steps at this share, and a
