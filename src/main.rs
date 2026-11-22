@@ -100,6 +100,14 @@ struct Check {
   #[arg(long, value_name = "COUNT", requires = "max_full_minutes")]
   sampled_windows: Option<NonZeroUsize>,
 
+  /// Skip the scans for WMA and for a decode converted between 44.1 and 48 kHz
+  ///
+  /// A file then takes about a third less time. A decode from WMA, or one converted between
+  /// the two rates, can still read as possibly lossy by its cutoff. Every other reading is
+  /// the same. The option applies to every profile.
+  #[arg(long)]
+  fast: bool,
+
   /// Read up to N files at once, on N threads
   ///
   /// Without this option N is the number of cores. A file's grid scan runs on the same threads,
@@ -297,6 +305,16 @@ fn run(check: &Check) -> Result<u8, Failed> {
     }
     profiles
   };
+  let profiles: Vec<(String, Thresholds)> = profiles
+    .into_iter()
+    .map(|(name, mut thresholds)| {
+      if check.fast {
+        thresholds.measure.scan_wma = false;
+        thresholds.measure.scan_other_rate = false;
+      }
+      (name, thresholds)
+    })
+    .collect();
   let coverage = match (check.max_full_minutes, check.sampled_windows) {
     (Some(minutes), Some(windows)) => Coverage::Sampled {
       over_seconds: minutes * 60.0,

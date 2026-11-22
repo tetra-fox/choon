@@ -305,6 +305,7 @@ music/honest.flac: consistent (confidence 0.73)
 | `--json`                                   | print each file as one line of JSON                       |
 | `--profile FILE`                           | read with the thresholds in FILE in place of the defaults |
 | `--defaults`                               | print the default thresholds as JSON                      |
+| `--fast`                                   | skip the scans for WMA and for a converted sample rate    |
 | `--max-full-minutes M --sampled-windows N` | read files longer than M minutes at N one-second windows  |
 
 - A walk skips hidden files and directories; `choon check --help` lists the extensions it reads

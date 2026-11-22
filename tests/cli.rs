@@ -180,6 +180,25 @@ fn json_is_a_line_per_file_with_a_reading_per_profile() {
 }
 
 #[test]
+fn fast_leaves_out_the_wma_and_other_rate_scans_and_still_finds_an_mp3_decode() {
+  let dir = tempfile::tempdir().unwrap();
+  let (honest, fake) = honest_and_fake(dir.path());
+  let thorough = sorted_json(&choon(&["--json", &honest, &fake]));
+  let output = choon(&["--json", "--fast", &honest, &fake]);
+  assert_eq!(status(&output), 1, "{output:?}");
+  let fast = sorted_json(&output);
+  for (fast, thorough) in fast.iter().zip(&thorough) {
+    assert!(!thorough["grid"]["wma"].is_null() && !thorough["grid"]["otherRate"].is_null());
+    assert!(fast["grid"]["wma"].is_null() && fast["grid"]["otherRate"].is_null());
+    assert_eq!(fast["grid"]["mp3"], thorough["grid"]["mp3"]);
+    assert_eq!(
+      fast["readings"][0]["verdict"],
+      thorough["readings"][0]["verdict"]
+    );
+  }
+}
+
+#[test]
 fn a_wrong_argument_is_refused_before_any_file_is_read() {
   let dir = tempfile::tempdir().unwrap();
   let unknown = path(&dir.path().join("unknown.json"));
