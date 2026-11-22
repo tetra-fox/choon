@@ -674,6 +674,7 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
         bits,
         uncut: uncut.counted(),
         uncut_short: uncut.short_counted(),
+        unfiltered: uncut.unfiltered(),
       });
     measured.grid = scan_grid(segments, opus, &run, &mut measured)?;
   }

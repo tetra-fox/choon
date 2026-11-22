@@ -433,6 +433,14 @@ fn grid(checked: &Checked, reading: &Reading) -> String {
          {} in the windows",
         found.codec, shifted.offset, shifted.frames, shifted.uncut_frames
       ),
+      Evidence::Unfiltered { unfiltered } => format!(
+        "{} at offset {}, {} of {} frames on its energy lattice under its pitch filter in the \
+         windows",
+        found.codec,
+        found.evidence.offset(),
+        unfiltered.frames,
+        unfiltered.searched
+      ),
       Evidence::Hybrid { hybrid } => format!(
         "{} at offset {}, {} of {} hybrid frames on its energy lattice in the stretches, {} of \
          {} in the windows",

@@ -338,6 +338,12 @@ pub struct ReadingThresholds {
   /// [`OpusShifted::uncut_frames`](crate::grid::OpusShifted::uncut_frames), as
   /// `opus_shifted_frames` is with its count.
   pub opus_shifted_uncut_frames: usize,
+  /// Fewest frames on Opus's lattice once the pitch post-filter is taken off, in the windows.
+  ///
+  /// It is compared with [`OpusUnfiltered::frames`](crate::grid::OpusUnfiltered::frames),
+  /// where no other count makes an Opus grid. The search for the filter gives chance more
+  /// frames than `opus_uncut_frames` meets.
+  pub opus_unfiltered_frames: usize,
   /// Fewest frames under 20 ms on Opus's lattice at one offset.
   ///
   /// It is compared with [`OpusShort::frames`](crate::grid::OpusShort::frames) of each
@@ -594,6 +600,7 @@ impl Default for ReadingThresholds {
       // of frames under 20 ms they reach one in the stretches and one in the windows
       opus_short_frames: 3,
       opus_short_uncut_frames: 3,
+      opus_unfiltered_frames: 4,
       fraunhofer_steps: FraunhoferSteps::default(),
       // the pilot files that were never Opus reach nine pairs of steps at this share, and a
       // share of 0.04 with this many pairs

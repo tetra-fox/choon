@@ -887,6 +887,7 @@ fn found(reading: &Reading, scanned: bool) -> Vec<String> {
       ),
       Evidence::Shifted { .. } => format!("{codec} grid at another level"),
       Evidence::Hybrid { .. } => format!("{codec} hybrid grid"),
+      Evidence::Unfiltered { .. } => format!("{codec} grid under its pitch filter"),
       Evidence::Short { short } => format!("{codec} grid, {} ms frames", short.milliseconds()),
     });
     found.push(cutoff);

@@ -83,8 +83,9 @@
 //! - Clipping hides a grid frame by frame.
 //! - Vorbis's grid shows through the AAC scan, so a Vorbis decode reads as AAC by the count.
 //!   Its values do not sit on AAC's steps.
-//! - Opus frames the pitch post-filter ran over and its SILK mode are not found, nor are
-//!   frames of 2.5, 5 and 10 ms coded as several blocks or at another level than the decoder's.
+//! - Opus frames the pitch post-filter ran over are found on the grid of an uncut decode alone
+//!   ([`OpusUnfiltered`]). Its SILK mode is not found, nor are frames of 2.5, 5 and 10 ms coded
+//!   as several blocks or at another level than the decoder's.
 //! - A gain after an Opus decode moves the lattice, and the scan searches for one move a
 //!   channel ([`OpusShifted`]). A level that changes over time, as under a fade or a limiter,
 //!   hides the lattice where it changes.
@@ -223,6 +224,30 @@ pub struct OpusScan {
   /// Empty in measures kept by a version of the analyzer that did not count them.
   #[cfg_attr(feature = "serde", serde(default))]
   pub short: Vec<OpusShort>,
+  /// Frames counted once the pitch post-filter is taken off them.
+  ///
+  /// `None` in measures kept by a version of the analyzer that did not search for it.
+  #[cfg_attr(feature = "serde", serde(default))]
+  pub unfiltered: Option<OpusUnfiltered>,
+}
+
+/// How many frames carry Opus's band energies under the decoder's pitch post-filter.
+///
+/// An Opus decoder runs a comb filter at the pitch of the audio over frames the encoder
+/// marked, which moves their band energies off the lattice. In the windows measured, on the
+/// grid of an uncut decode, pairs of frames with a strong pitch that do not sit on the lattice
+/// are read again with each lag, gain and shape the filter can have taken off them.
+///
+/// The filter is searched with one setting held over both frames of a pair, so frames where
+/// it changes are not counted, and neither is a decode whose start was cut.
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct OpusUnfiltered {
+  /// Number of pairs of frames the filter was searched in, up to 40.
+  pub searched: usize,
+  /// Number of them whose later frame sits on the lattice with the filter taken off.
+  pub frames: usize,
 }
 
 /// How many frames of a file carry Opus's band energies as frames shorter than 20 ms.
@@ -636,6 +661,7 @@ mod tests {
       shifted: None,
       hybrid: None,
       short: Vec::new(),
+      unfiltered: None,
     };
     assert_eq!(scan.most(), (OPUS_UNCUT_OFFSET, 40));
     assert_eq!(Evidence::Lattice(scan.clone()).offset(), OPUS_UNCUT_OFFSET);

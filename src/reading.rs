@@ -480,6 +480,12 @@ fn weighed(
            hybrid mode."
         )
       }
+      Evidence::Unfiltered { unfiltered } => format!(
+        "The band energies of {} frames sit on the lattice of Opus's quantizer once the pitch \
+         post-filter of an Opus decoder is taken off them, on the frame grid of an Opus decode \
+         whose start was not cut.",
+        unfiltered.frames,
+      ),
       Evidence::Short { short } => {
         let (offset, frames) = short.most();
         format!(

@@ -6,7 +6,7 @@ use std::fmt;
 use super::lattice;
 use super::{
   AacSteps, Codec, CodecScan, Mp3Steps, OPUS_UNCUT_OFFSET, OpusHybrid, OpusScan, OpusShifted,
-  OpusShort, Scan,
+  OpusShort, OpusUnfiltered, Scan,
 };
 use crate::thresholds::ReadingThresholds;
 
@@ -64,6 +64,11 @@ pub enum Evidence {
     /// Counts of the frames of one length.
     short: OpusShort,
   },
+  /// Frames whose band energies sit on that lattice once the pitch post-filter is taken off.
+  Unfiltered {
+    /// Counts of the frames.
+    unfiltered: OpusUnfiltered,
+  },
 }
 
 impl Evidence {
@@ -78,6 +83,7 @@ impl Evidence {
       Self::Shifted { shifted } => shifted.most().0,
       Self::Hybrid { hybrid } => hybrid.most().0,
       Self::Short { short } => short.most().0,
+      Self::Unfiltered { .. } => OPUS_UNCUT_OFFSET,
     }
   }
 }
@@ -566,6 +572,14 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
       Evidence::Short {
         short: short.clone(),
       }
+    } else if let Some(unfiltered) = opus
+      .unfiltered
+      .as_ref()
+      .filter(|unfiltered| unfiltered.frames >= thresholds.opus_unfiltered_frames)
+    {
+      Evidence::Unfiltered {
+        unfiltered: unfiltered.clone(),
+      }
     } else {
       let hybrid = opus.hybrid.as_ref()?;
       let enough = |frames: usize, tested: usize, steps: usize| {
@@ -796,6 +810,7 @@ mod tests {
       shifted: None,
       hybrid: None,
       short: Vec::new(),
+      unfiltered: None,
     };
     let after = Scan {
       opus: Some(opus.clone()),
@@ -892,6 +907,7 @@ mod tests {
         shifted: None,
         hybrid: None,
         short: lengths.clone(),
+        unfiltered: None,
       }),
       ..scan((2.0, 0), (2.0, 0))
     };

@@ -8,6 +8,9 @@
 //! the prediction off it leaves a number on the quantizer's lattice.
 //!
 //! a frame comes back exactly when the pitch post-filter was off in it and in the frame before.
+//! the filter adds to each sample a share of the output one pitch period back, so with its lag,
+//! gain and shape known it comes off exactly. where a lag stands out in the samples, the frames
+//! of an uncut decode's grid are read again with each setting of the filter taken off.
 //! one coded as eight short blocks holds, in each band, the values of eight transforms side by
 //! side, so its band's energy is the sum over the eight. one coded without the frame before it
 //! predicts from its own lower bands alone. the hybrid mode codes only the top four bands this
@@ -18,7 +21,11 @@
 //! a half, a quarter and an eighth of the bins and predict with other shares; they are read as
 //! one block, after the frame before or without it.
 
+use std::sync::Arc;
+
 use rayon::prelude::*;
+use realfft::num_complex::Complex;
+use realfft::{ComplexToReal, RealFftPlanner, RealToComplex};
 
 use super::mdct::{DctIv, fold};
 use super::resample::Resampler;
@@ -133,6 +140,28 @@ const CELLS: usize = 8;
 const AGREE: f64 = 0.002;
 /// the largest shift taken for a channel, 18 dB of gain: a step moves by half the gain
 const SHIFT_LIMIT: f64 = 18.0 / (2.0 * DB);
+
+/// the lags the pitch post-filter runs at, in samples at 48 kHz
+const LAGS: std::ops::RangeInclusive<usize> = 15..=1022;
+/// the filter's taps at its lag and one and two samples either side of it, for each of its
+/// three shapes
+const TAPS: [[f32; 3]; 3] = [
+  [10048.0 / 32768.0, 7112.0 / 32768.0, 4248.0 / 32768.0],
+  [15200.0 / 32768.0, 8784.0 / 32768.0, 0.0],
+  [26208.0 / 32768.0, 3280.0 / 32768.0, 0.0],
+];
+/// the filter's gain is a whole number of these, from one to [`GAINS`]
+const GAIN: f32 = 0.093_75;
+const GAINS: usize = 8;
+/// the pairs of frames of a window the filter is searched in, and the most over a file
+const SEARCHED: usize = 4;
+const MOST_SEARCHED: usize = 40;
+/// the share of a stretch's power its strongest lag holds, for the filter to be searched there
+const PITCHED: f32 = 0.5;
+/// the points of the transform the lags are found with: three frames and the longest lag fit
+const LAG_POINTS: usize = 4096;
+/// the whole fractions of the strongest lag that are tried, each with the lags beside it
+const FRACTIONS: usize = 4;
 
 /// where the frames of a decode sit when nothing was cut from its start, from the file's first
 /// sample: libopus's encoders delay by the first of [`DELAYS`], and a frame's window reaches
@@ -911,10 +940,139 @@ impl Stretches {
   }
 }
 
+/// the search for the pitch post-filter in a pair of frames: the lags that stand out in their
+/// samples, and the samples with a setting of the filter taken off
+struct Unfilter {
+  forward: Arc<dyn RealToComplex<f32>>,
+  inverse: Arc<dyn ComplexToReal<f32>>,
+  padded: Vec<f32>,
+  spectrum: Vec<Complex<f32>>,
+  /// how much the samples have in common with themselves a lag earlier, by lag
+  alike: Vec<f32>,
+  /// what the filter adds at one lag and shape, for a gain of one
+  comb: Vec<f32>,
+  taken: Vec<f32>,
+}
+
+impl Unfilter {
+  fn new() -> Self {
+    let mut planner = RealFftPlanner::new();
+    Self {
+      forward: planner.plan_fft_forward(LAG_POINTS),
+      inverse: planner.plan_fft_inverse(LAG_POINTS),
+      padded: vec![0.0; LAG_POINTS],
+      spectrum: vec![Complex::new(0.0, 0.0); LAG_POINTS / 2 + 1],
+      alike: vec![0.0; LAG_POINTS],
+      comb: vec![0.0; 3 * FRAME],
+      taken: vec![0.0; 3 * FRAME],
+    }
+  }
+
+  /// the lags worth trying in `samples`, three frames of them: the strongest and its whole
+  /// fractions, each with the lags beside it. none where no lag holds enough of the power
+  fn lags(&mut self, samples: &[f32]) -> Vec<usize> {
+    self.padded[..samples.len()].copy_from_slice(samples);
+    self.padded[samples.len()..].fill(0.0);
+    let planned = "buffers of the planned lengths";
+    self
+      .forward
+      .process(&mut self.padded, &mut self.spectrum)
+      .expect(planned);
+    for bin in &mut self.spectrum {
+      *bin = Complex::new(bin.norm_sqr(), 0.0);
+    }
+    self
+      .inverse
+      .process(&mut self.spectrum, &mut self.alike)
+      .expect(planned);
+    let strongest = LAGS
+      .max_by(|a, b| self.alike[*a].total_cmp(&self.alike[*b]))
+      .expect("the lags are a range with members");
+    // a stretch of silence has no power, and no lag holds any of it
+    if self.alike[strongest] < PITCHED * self.alike[0] || self.alike[0] <= 0.0 {
+      return Vec::new();
+    }
+    let mut lags = Vec::new();
+    for fraction in 1..=FRACTIONS {
+      let middle = (strongest + fraction / 2) / fraction;
+      for lag in middle.saturating_sub(1)..=middle + 1 {
+        if LAGS.contains(&lag) && !lags.contains(&lag) {
+          lags.push(lag);
+        }
+      }
+    }
+    lags
+  }
+
+  /// what the filter of `shape` at `lag` adds to the three frames of `channel` from `at`, for
+  /// a gain of one
+  fn comb(&mut self, channel: &[f32], at: usize, lag: usize, shape: [f32; 3]) {
+    let [a, b, c] = shape;
+    for (i, comb) in self.comb.iter_mut().enumerate() {
+      let back = at + i - lag;
+      *comb = a * channel[back]
+        + b * (channel[back + 1] + channel[back - 1])
+        + c * (channel[back + 2] + channel[back - 2]);
+    }
+  }
+
+  /// whether the frame a frame after `at` in `channel` sits on the lattice after the one at
+  /// `at`, with the filter [`Unfilter::comb`] was run for taken off at `gain`. `None` where
+  /// too few of its bands can be tested
+  fn judged(&mut self, celt: &mut Celt, channel: &[f32], at: usize, gain: f32) -> Option<bool> {
+    let samples = &channel[at..at + 3 * FRAME];
+    for ((taken, sample), comb) in self.taken.iter_mut().zip(samples).zip(&self.comb) {
+      *taken = sample - gain * comb;
+    }
+    let before = celt.bands(&self.taken[..2 * FRAME]);
+    let now = celt.bands(&self.taken[FRAME..]);
+    let (tested, hits) = on_lattice(Some(&before), &now, 0.0);
+    judged(tested, hits)
+  }
+
+  /// whether the frame a frame after `at` sits on the lattice after the one at `at` with one
+  /// setting of the filter, held over both, taken off every channel, by the rule of [`sits`].
+  /// `None` where no lag stands out in the first channel, and the filter is not searched
+  fn sits(&mut self, celt: &mut Celt, channels: &[Vec<f32>], at: usize) -> Option<bool> {
+    let lags = self.lags(&channels[0][at..at + 3 * FRAME]);
+    if lags.is_empty() {
+      return None;
+    }
+    for lag in lags {
+      for shape in TAPS {
+        for gain in (1..=GAINS).map(|step| GAIN * step as f32) {
+          let mut any = false;
+          let mut off = false;
+          for channel in channels {
+            // the first channel's comb is run again after another's took its place
+            self.comb(channel, at, lag, shape);
+            match self.judged(celt, channel, at, gain) {
+              Some(true) => any = true,
+              Some(false) => {
+                off = true;
+                break;
+              }
+              None => {}
+            }
+          }
+          if any && !off {
+            return Some(true);
+          }
+        }
+      }
+    }
+    Some(false)
+  }
+}
+
 /// counts the frames on the lattice in the windows a file is measured at, with the frame grid
 /// of a decode whose start was not cut
 pub(crate) struct Uncut {
   celt: Celt,
+  unfilter: Unfilter,
+  /// the pairs of frames the pitch post-filter was searched in, and the ones that sit on the
+  /// lattice with it taken off
+  unfiltered: [usize; 2],
   /// the analysis of each length of short frame, and its counts as [`Uncut::short_counted`]
   /// gives them
   short: [(Celt, [[usize; 2]; 2]); 3],
@@ -928,6 +1086,8 @@ impl Uncut {
   pub(crate) fn new(rate: Rate, bits: u32) -> Self {
     Self {
       celt: Celt::new(bits, FRAME),
+      unfilter: Unfilter::new(),
+      unfiltered: [0; 2],
       short: SHORT.map(|short| (Celt::new(bits, short.length), [[0; 2]; 2])),
       rate,
       windows: Vec::new(),
@@ -972,7 +1132,7 @@ impl Uncut {
     let frame = FRAME as u64;
     let offset = ((grid + frame - stretch.start % frame) % frame) as usize;
     let frames = (length.saturating_sub(offset) / FRAME).saturating_sub(1);
-    let bands = stretch
+    let bands: Vec<Vec<[Bands; 2]>> = stretch
       .channels
       .iter()
       .map(|channel| {
@@ -984,6 +1144,30 @@ impl Uncut {
           .collect()
       })
       .collect();
+    // the pitch post-filter is searched in pairs of frames spread over the window, each far
+    // enough in for the longest lag, that do not sit on the lattice as they are
+    let first = (*LAGS.end() + 2).saturating_sub(offset).div_ceil(FRAME) + 1;
+    for pair in 0..SEARCHED {
+      let frame = first + pair * frames.saturating_sub(first) / SEARCHED;
+      if frame >= frames || self.unfiltered[0] >= MOST_SEARCHED {
+        break;
+      }
+      let unshifted = vec![0.0; bands.len()];
+      let as_read = sits(
+        (0, frame),
+        WAYS[0],
+        &unshifted,
+        &mut |_, channel, frame, _| bands[channel][frame][0],
+      );
+      if as_read {
+        continue;
+      }
+      let at = offset + (frame - 1) * FRAME;
+      if let Some(sits) = self.unfilter.sits(&mut self.celt, &stretch.channels, at) {
+        self.unfiltered[0] += 1;
+        self.unfiltered[1] += usize::from(sits);
+      }
+    }
     self.windows.push(bands);
   }
 
@@ -998,6 +1182,12 @@ impl Uncut {
     counted(&runs, channels, |run, channel, frame, blocks| {
       self.windows[run][channel][frame][usize::from(blocks == Blocks::Short)]
     })
+  }
+
+  /// the pairs of frames the pitch post-filter was searched in, and the ones of them that sit
+  /// on the lattice with it taken off
+  pub(crate) fn unfiltered(&self) -> [usize; 2] {
+    self.unfiltered
   }
 
   /// what the windows' frames of each length of [`SHORT`] count on the grid of each of

@@ -357,6 +357,58 @@ fn an_opus_decode_at_another_level_carries_opus_frames_once_the_level_is_taken_o
 }
 
 #[test]
+fn an_opus_decode_of_a_steady_pitch_carries_opus_frames_under_the_pitch_filter() {
+  let dir = tempfile::tempdir().unwrap();
+  let thresholds = ReadingThresholds::default();
+  // a voice-like tone at 150 Hz, each channel at its own level: a harmonic in every band,
+  // most of the power low, and phases that keep it from peaking once a period. the encoder
+  // marks nearly every frame of such a steady pitch for the decoder's pitch post-filter
+  let buzz = |level: f32| -> Vec<f32> {
+    (0..12 * 48_000)
+      .map(|i| {
+        let turn = std::f64::consts::TAU * 150.0 * i as f64 / 48_000.0;
+        let wave: f64 = (1..=133)
+          .map(|harmonic| {
+            let h = f64::from(harmonic);
+            (turn * h + (h * h * 0.37) % std::f64::consts::TAU).sin() / h.powf(1.5)
+          })
+          .sum();
+        level * (0.1 * wave) as f32
+      })
+      .collect()
+  };
+  let source = Audio {
+    rate: 48_000,
+    channels: vec![buzz(1.0), buzz(0.8)],
+  };
+  let through = through_opus(&source, 128, dir.path());
+  let measured = measure(flac(dir.path(), "buzz.flac", &through, 16), &settings()).unwrap();
+  let opus = measured.grid.as_ref().and_then(|scan| scan.opus.clone());
+  let opus = opus.expect("the rate is one Opus is looked for at");
+  let unfiltered = opus.unfiltered.clone().expect("the filter is searched");
+  assert!(
+    opus.frames < thresholds.opus_grid_frames && opus.uncut_frames < thresholds.opus_uncut_frames,
+    "{opus:?}"
+  );
+  assert!(
+    unfiltered.frames >= 2 * thresholds.opus_unfiltered_frames,
+    "{opus:?}"
+  );
+  let grid = measured.read(&thresholds).grid.expect("a grid is found");
+  assert_eq!(grid.codec, Codec::Opus);
+  assert!(
+    matches!(grid.evidence, Evidence::Unfiltered { .. }),
+    "{grid:?}"
+  );
+  // the same buzz never coded has no frame on the lattice with any filter taken off
+  let clean = measure(flac(dir.path(), "clean.flac", &source, 16), &settings()).unwrap();
+  let clean = clean.grid.as_ref().and_then(|scan| scan.opus.clone());
+  let clean = clean.and_then(|opus| opus.unfiltered).expect("searched");
+  assert_eq!(clean.frames, 0, "{clean:?}");
+  assert!(clean.searched > 0, "{clean:?}");
+}
+
+#[test]
 fn a_decode_of_opus_in_its_hybrid_mode_carries_hybrid_frames() {
   let dir = tempfile::tempdir().unwrap();
   let thresholds = ReadingThresholds::default();

@@ -10,7 +10,7 @@ use super::resample::Resampler;
 use super::segments::{Segment, Segments};
 use super::{
   AacSteps, CodecScan, MP3_HOP, Mp3Neighbours, Mp3Steps, OPUS_UNCUT_OFFSET, OpusHybrid, OpusScan,
-  OpusShifted, OpusShort, OtherRate, SEGMENTS, Scan,
+  OpusShifted, OpusShort, OpusUnfiltered, OtherRate, SEGMENTS, Scan,
 };
 
 /// MAD times this estimates the standard deviation of normally distributed values
@@ -29,6 +29,9 @@ pub(crate) struct Opus {
   pub(crate) uncut: lattice::Counted,
   /// the same for the short frames of each length, on the grid each delay of the encoder leaves
   pub(crate) uncut_short: [[[usize; 2]; 2]; 3],
+  /// the pairs of frames on that grid the pitch post-filter was searched in, and the ones that
+  /// sit on the lattice with it taken off
+  pub(crate) unfiltered: [usize; 2],
 }
 
 /// the number of jobs in one scan: four in each segment, for MP3, for AAC under each of its
@@ -264,7 +267,12 @@ pub(crate) fn scan(
     mp3_steps,
     aac_steps,
     aac_sine_steps,
-    opus: opus.map(|opus| opus_scan(&frames, &opus.uncut, &short, opus.uncut_short)),
+    opus: opus.map(|opus| {
+      let mut scan = opus_scan(&frames, &opus.uncut, &short, opus.uncut_short);
+      let [searched, frames] = opus.unfiltered;
+      scan.unfiltered = Some(OpusUnfiltered { searched, frames });
+      scan
+    }),
   })
 }
 
@@ -378,6 +386,7 @@ fn opus_scan(
       uncut_steps: uncut.hybrid_points,
     }),
     short,
+    unfiltered: None,
   }
 }
 
