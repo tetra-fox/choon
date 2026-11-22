@@ -39,9 +39,9 @@ The masters are only ever read. No audio is kept in the repository.
 - `--count N` takes the first N masters of a fixed shuffle, so a larger count holds every
   smaller one
 - `run` builds `corpus/reader` on the checkout first: a program on the library that prints a
-  file's measures with its reading. A reading stored by the same build is kept, so a stopped
+  file's measures with its reading. A file measured by the same build is kept, so a stopped
   run resumes
-- `run` ends by reading a twentieth of the files again, and exits 1 if a reading differs
+- `run` ends by reading a twentieth of the files it read again, and exits 1 if a reading differs
 - `run` writes `progress.log`, `status.json`, `errors.log` and `pids` under `DIR/run`
 
 ## Files

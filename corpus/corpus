@@ -450,7 +450,13 @@ def run(args) -> None:
     shutil.rmtree(SCRATCH, ignore_errors=True)
 
     def current(out: Path) -> bool:
-        return out.exists() and measures(out).exists() and json.loads(out.read_text())["choon"]["sha256"] == about["sha256"]
+        """whether the file was read by this build: its measures taken by it, or under
+        --reread its reading"""
+        if not (out.exists() and measures(out).exists()):
+            return False
+        record = json.loads(out.read_text())
+        by = record["choon"] if args.reread else record.get("measuredBy", record["choon"])
+        return by["sha256"] == about["sha256"]
 
     rows = masters(args.work, args.count)
     every = [(m, v, run_dir / "out" / m["id"] / f"{v['id']}.json") for m in rows for v in variants(args.work, m)]
@@ -464,8 +470,10 @@ def run(args) -> None:
         run_all(todo, args.jobs, reader, about, run_dir, "run", True)
 
     done = [job for job in every if current(job[2])]
-    size = min(REREAD_CHECK, len(done)) if args.reread else max(1, round(len(done) * RECHECK))
-    again = random.Random(2).sample(done, size) if done else []
+    # a run checks the files it read, not the ones it found read
+    read = done if args.reread else [job for job in todo if current(job[2])]
+    size = min(REREAD_CHECK, len(read)) if args.reread else max(1, round(len(read) * RECHECK))
+    again = random.Random(2).sample(read, size) if read else []
     rechecked = run_all(again, args.jobs, reader, about, run_dir, "recheck", False)
 
     def stored(out: Path) -> tuple:
