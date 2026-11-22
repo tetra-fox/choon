@@ -1,6 +1,6 @@
 //! the stretches of a file the grid is scanned in, filled as its samples are decoded: four at
-//! fixed places, and for each of those that is clipped the loudest stretch of the file that is
-//! not
+//! fixed places, and for each of those that is clipped or far quieter the loudest stretch of the
+//! file that is not clipped
 
 use super::resample::Resampler;
 use super::{SEGMENT, SEGMENTS};
@@ -16,6 +16,10 @@ const CLIPPED_SHARE: f64 = 0.05;
 /// the mean square under which a stretch is too quiet to stand in for a clipped segment,
 /// -40 dBFS: a fade or a pause holds too few values over the noise for a count
 const QUIET_POWER: f64 = 1e-4;
+
+/// the share of the loudest free stretch's power under which a segment gives way to it, 10 dB:
+/// a quiet passage holds few values an encoder had to quantize
+const QUIETER: f64 = 0.1;
 
 /// one stretch of the file the grid is scanned in, filled as its samples are decoded
 pub(super) struct Segment {
@@ -154,12 +158,12 @@ impl Segments {
   }
 
   /// puts the loudest stretch of the stream that is not clipped in the place of each segment
-  /// that is, and returns how many it replaced. a stretch that overlaps a segment kept is
-  /// passed over, so no samples are counted twice
+  /// that is, or that is far quieter than it, and returns how many it replaced. a stretch that
+  /// overlaps a segment kept is passed over, so no samples are counted twice
   pub(crate) fn settle(&mut self) -> usize {
     let mut replaced = 0;
     for index in 0..self.0.len() {
-      if !self.0[index].full() || !self.0[index].is_clipped() {
+      if !self.0[index].full() {
         continue;
       }
       let free = self.1.kept.iter().position(|spare| {
@@ -169,7 +173,9 @@ impl Segments {
           .enumerate()
           .all(|(other, segment)| other == index || !spare.overlaps(segment))
       });
-      if let Some(at) = free {
+      let gives_way =
+        |spare: &Segment| self.0[index].is_clipped() || self.0[index].power < QUIETER * spare.power;
+      if let Some(at) = free.filter(|at| gives_way(&self.1.kept[*at])) {
         self.0[index] = self.1.kept.remove(at);
         replaced += 1;
       }

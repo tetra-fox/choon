@@ -648,6 +648,34 @@ fn a_clipped_decode_is_scanned_where_it_does_not_clip() {
 }
 
 #[test]
+fn a_decode_quiet_where_it_is_scanned_is_scanned_where_it_is_loud() {
+  let dir = tempfile::tempdir().unwrap();
+  // a quiet recording gives an encoder at a high bitrate little to quantize
+  let quiet = |audio: &Audio, but: std::ops::Range<usize>| {
+    let mut quiet = audio.clone();
+    for channel in &mut quiet.channels {
+      for (at, sample) in channel.iter_mut().enumerate() {
+        if !but.contains(&at) {
+          *sample *= 0.003;
+        }
+      }
+    }
+    quiet
+  };
+  let found = |audio: &Audio, name: &str| {
+    let through = fixtures::through_mp3(audio, Bitrate::Kbps320, dir.path());
+    let measured = measure(flac(dir.path(), name, &through, 16), &settings()).unwrap();
+    let scan = measured.grid.as_ref().expect("scanned");
+    grid::found(scan, &ReadingThresholds::default()).map(|f| f.codec)
+  };
+  let source = fixtures::classical(fixtures::SECONDS);
+  assert_eq!(found(&quiet(&source, 0..0), "quiet.flac"), None);
+  // five loud seconds between the places of two segments
+  let loud = 15 * 44_100..20 * 44_100 + 11_025;
+  assert_eq!(found(&quiet(&source, loud), "loud.flac"), Some(Codec::Mp3));
+}
+
+#[test]
 fn an_mp2_decode_carries_its_grid_on_the_filterbanks_phases() {
   let dir = tempfile::tempdir().unwrap();
   let mp2 = dir.path().join("clip.mp2");

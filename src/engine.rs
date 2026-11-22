@@ -773,7 +773,7 @@ fn scan_grid(
   if replaced > 0 {
     debug!(
       replaced,
-      "clipped grid segments gave way to stretches that are not"
+      "clipped or quiet grid segments gave way to louder stretches"
     );
   }
   let clipped = segments.clipped();
