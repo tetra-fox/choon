@@ -264,6 +264,17 @@ pub struct ReadingThresholds {
   ///
   /// [`CodecScan::segments_agreeing`]: crate::grid::CodecScan::segments_agreeing
   pub wma_grid_segments_agreeing: usize,
+  /// Robust z over which the AC-3 scan finds a frame grid.
+  ///
+  /// It is compared with [`CodecScan::z`](crate::grid::CodecScan::z) of
+  /// [`Scan::ac3`](crate::grid::Scan::ac3).
+  pub ac3_grid_z: f64,
+  /// Fewest segments that put their lowest count at the file's offset, for an AC-3 grid.
+  ///
+  /// It is compared with [`CodecScan::segments_agreeing`], as `mp3_grid_segments_agreeing` is.
+  ///
+  /// [`CodecScan::segments_agreeing`]: crate::grid::CodecScan::segments_agreeing
+  pub ac3_grid_segments_agreeing: usize,
   /// Robust z a segment's own count passes to show a grid in part of the file.
   ///
   /// It is compared with each of [`CodecScan::segment_z`](crate::grid::CodecScan::segment_z)
@@ -569,6 +580,8 @@ impl Default for ReadingThresholds {
       // the lossless files reach 8.8 in one segment, and WMA decodes start at 208
       wma_grid_z: 12.0,
       wma_grid_segments_agreeing: 3,
+      ac3_grid_z: 12.0,
+      ac3_grid_segments_agreeing: 3,
       // of 1,026 lossless files none has three segments agreeing, and of 332 MP2 decodes
       // 327 have four, from z 4.1
       mp2_grid_z: 12.0,

@@ -232,8 +232,8 @@ pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found
       .any(|length| length.uncut_offsets().contains(&short.most().0))
       .then_some(Family::Libopus),
     (_, Codec::Opus) => (evidence.offset() == OPUS_UNCUT_OFFSET).then_some(Family::Libopus),
-    // no encoder of Vorbis, WMA or layer II is told from another by its offset
-    (_, Codec::Vorbis | Codec::Wma | Codec::Mp2) => None,
+    // no encoder of Vorbis, WMA, AC-3 or layer II is told from another by its offset
+    (_, Codec::Vorbis | Codec::Wma | Codec::Mp2 | Codec::Ac3) => None,
   };
   let quantizer = stepped
     .filter(|_| matches!(evidence, Evidence::Count(_)))
@@ -269,6 +269,8 @@ fn uncut(codec: Codec, sine: bool, offset: usize) -> bool {
     Codec::Mp3 => Family::of_mp3(offset).is_some(),
     Codec::Aac => Family::of_aac(offset, sine).is_some(),
     Codec::Vorbis => offset % VORBIS_STEP == VORBIS_UNCUT,
+    // a decoder cuts nothing from an AC-3 stream, whose first block starts at its first sample
+    Codec::Ac3 => offset == 0,
     // layer II's phase is weighed where its count is, against MP3's steps
     Codec::Mp2 | Codec::Wma | Codec::Opus => false,
   }
@@ -355,7 +357,7 @@ fn aac_stepped<'a>(
 
 /// the codec whose grid `scan` shows under `thresholds`, and what shows it. in turn:
 ///
-/// - MP3, MP2, AAC, Vorbis or WMA over its z threshold with as many segments agreeing as its
+/// - MP3, MP2, AAC, Vorbis, WMA or AC-3 over its z threshold with as many segments agreeing as its
 ///   own threshold asks, the one furthest over its z threshold when several are. AAC is read
 ///   under each window
 /// - MP3 by its quantizer's steps in enough segments, then AAC by its own
@@ -423,6 +425,15 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
         scan,
         thresholds.wma_grid_z,
         thresholds.wma_grid_segments_agreeing,
+      )
+    }),
+    scan.ac3.as_ref().map(|scan| {
+      Counted::of(
+        Codec::Ac3,
+        false,
+        scan,
+        thresholds.ac3_grid_z,
+        thresholds.ac3_grid_segments_agreeing,
       )
     }),
     Some(mp3(&scan.mp3)),
@@ -654,6 +665,7 @@ mod tests {
       aac_sine: Some(count(448, sine)),
       vorbis: None,
       wma: None,
+      ac3: None,
       mp3: count(0, 2.0),
       mp2: None,
       opus: None,
@@ -719,6 +731,7 @@ mod tests {
       aac_sine: None,
       vorbis: None,
       wma: None,
+      ac3: None,
       mp3: codec_scan(mp3.0, mp3.1),
       mp2: None,
       opus: None,
@@ -970,6 +983,7 @@ mod tests {
       aac_sine: None,
       vorbis: None,
       wma: None,
+      ac3: None,
       mp3,
       mp2: None,
       opus: None,

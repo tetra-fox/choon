@@ -795,12 +795,15 @@ pub enum LongWindow {
   Vorbis,
   /// Sine window of a WMA long block, 4096 points at a hop of 2048.
   Wma,
+  /// Kaiser-Bessel-derived window of an AC-3 block, 512 points at a hop of 256.
+  Ac3,
 }
 
 /// Returns `audio` through a transform coder with AAC's long blocks and decoded again.
 ///
-/// The coder is a 2048-point MDCT at a hop of 1024 under `window`, or a 4096-point one at a hop
-/// of 2048 under [`LongWindow::Wma`]. It drops every line above 16 kHz and rounds the others to
+/// The coder is a 2048-point MDCT at a hop of 1024 under `window`, a 4096-point one at a hop
+/// of 2048 under [`LongWindow::Wma`], or a 512-point one at a hop of 256 under
+/// [`LongWindow::Ac3`]. It drops every line above 16 kHz and rounds the others to
 /// a step of 0.7 times the level of their band of 16 lines, which zeroes most of them, as an
 /// encoder at a low bitrate does. The first block starts `delay` samples before the audio, so
 /// the decode's frame grid is at an offset of the hop less `delay`.
@@ -859,6 +862,7 @@ fn transform_coded(
     LongWindow::Sine => Window::Sine,
     LongWindow::Vorbis => Window::Vorbis,
     LongWindow::Wma => Window::Wma,
+    LongWindow::Ac3 => Window::Ac3,
   };
   let hop = window.hop();
   assert!(delay <= hop, "the delay is at most a hop");

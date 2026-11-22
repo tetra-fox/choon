@@ -133,6 +133,7 @@ fn a_transform_decode_carries_the_aac_grid_under_the_window_it_was_coded_with() 
     ("sine", LongWindow::Sine, Codec::Aac),
     ("vorbis", LongWindow::Vorbis, Codec::Vorbis),
     ("wma", LongWindow::Wma, Codec::Wma),
+    ("ac3", LongWindow::Ac3, Codec::Ac3),
   ] {
     let through = fixtures::through_transform(&source, window, 64);
     // the coder kept the audio where it should be: it differs by its rounding and its cut
@@ -144,11 +145,13 @@ fn a_transform_decode_carries_the_aac_grid_under_the_window_it_was_coded_with() 
     let sine = scan.aac_sine.as_ref().expect("the sine window is scanned");
     let vorbis = scan.vorbis.as_ref().expect("Vorbis's window is scanned");
     let wma = scan.wma.as_ref().expect("WMA's window is scanned");
+    let ac3 = scan.ac3.as_ref().expect("AC-3's window is scanned");
     let (own, others, hop) = match window {
-      LongWindow::KaiserBessel => (&scan.aac, [sine, vorbis, wma], 1024),
-      LongWindow::Sine => (sine, [&scan.aac, vorbis, wma], 1024),
-      LongWindow::Vorbis => (vorbis, [&scan.aac, sine, wma], 1024),
-      LongWindow::Wma => (wma, [&scan.aac, sine, vorbis], 2048),
+      LongWindow::KaiserBessel => (&scan.aac, [sine, vorbis, wma, ac3], 1024),
+      LongWindow::Sine => (sine, [&scan.aac, vorbis, wma, ac3], 1024),
+      LongWindow::Vorbis => (vorbis, [&scan.aac, sine, wma, ac3], 1024),
+      LongWindow::Wma => (wma, [&scan.aac, sine, vorbis, ac3], 2048),
+      LongWindow::Ac3 => (ac3, [&scan.aac, sine, vorbis, wma], 256),
     };
     assert_eq!(own.offset, hop - 64, "{name}: {scan:?}");
     assert_eq!(own.segments_agreeing, 4, "{name}: {scan:?}");
@@ -197,7 +200,7 @@ fn a_decode_of_aacs_quantizer_shows_its_steps_under_the_window_it_was_coded_with
     let (own, other) = match window {
       LongWindow::KaiserBessel => (kbd, sine),
       LongWindow::Sine => (sine, kbd),
-      LongWindow::Vorbis | LongWindow::Wma => {
+      LongWindow::Vorbis | LongWindow::Wma | LongWindow::Ac3 => {
         unreachable!("the steps are AAC's, coded under its windows")
       }
     };

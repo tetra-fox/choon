@@ -15,6 +15,7 @@ Check that lossless audio is actually lossless. A command-line tool and a Rust l
   encoder leaves, tuned on LAME at 96 to 320 kbps and V0 to V9 and on ffmpeg's AAC at 96 to
   256 kbps
 - Finds that grid after a conversion between 44.1 and 48 kHz
+- Shows when they were decoded from MP2, Vorbis, WMA, AC-3 or E-AC-3, by the same kind of grid
 - Shows when they were decoded from Opus, by the band energies its encoder quantizes, tuned on
   libopus at 16 to 256 kbps
 - Finds an Opus decode at 48 kHz or converted to 44.1 kHz, with or without a gain after the
@@ -48,7 +49,7 @@ spread across all windows.
 ### Frame grid
 
 In a file that claims a lossless format, four stretches of the samples are also scanned for the
-frame grid of an MP3, AAC, Vorbis or WMA encoder. The encoder transforms its input in frames on a fixed
+frame grid of an MP3, AAC, Vorbis, WMA or AC-3 encoder. The encoder transforms its input in frames on a fixed
 grid and zeroes many transform values. Running its transform again on the decoded samples, with
 frames where the encoder put them, finds those values back at the level of the samples' rounding
 noise.
@@ -58,7 +59,8 @@ the encoder used. The scan runs under both: the Kaiser-Bessel-derived window of 
 and Nero, and the sine window of Apple and FAAC. A Vorbis long block has the same length and hop
 under a window of its own, and the scan runs under that one too. A WMA long block is twice as
 long, a 4096-point transform at a hop of 2048 under a sine window, and the scan runs at that
-length as well. MP2 quantizes the output of
+length as well. An AC-3 block is a 512-point transform at a hop of 256 under a window of its
+own, which E-AC-3 shares, and the scan runs at that length too. MP2 quantizes the output of
 the filterbank MP3 starts with, and the scan counts that output at each of its 32 phases.
 
 The scan counts the values above that noise at every offset of each codec's grid. A grid is one
@@ -170,7 +172,7 @@ for its long blocks, so a grid's offset and window fit an encoder family:
 | Verdict          | Description                                                                 |
 | ---------------- | --------------------------------------------------------------------------- |
 | consistent       | nearly every window reaches the top of the claimed band                     |
-| likely transcode | the samples carry an MP3, MP2, AAC, Vorbis, WMA or Opus frame grid          |
+| likely transcode | the samples carry an MP3, MP2, AAC, Vorbis, WMA, AC-3 or Opus frame grid    |
 | mixed sources    | a frame grid in part of the file, or part of the time or band band-limited  |
 | possibly lossy   | the cutoff reads as a transcode or mixed sources, and no frame grid shows   |
 | inconclusive     | too little audio, no pattern, or a cut indistinguishable from an honest one |
@@ -489,7 +491,7 @@ audio cannot be shared. Each lossy file was encoded from a master, decoded, and 
   as consistent
 - The grid thresholds were tuned on LAME's MP3 and ffmpeg's AAC; [Encoders](#encoders) lists
   what the scan finds of others
-- A grid shows that the samples were decoded from MP3, MP2, AAC, Vorbis, WMA or Opus at some
+- A grid shows that the samples were decoded from MP3, MP2, AAC, Vorbis, WMA, AC-3 or Opus at some
   point, as in a master built from such material
 - A lossy sample that was processed and mixed into a master, as a pitched or filtered clip
   under other sounds, leaves no grid and is not found

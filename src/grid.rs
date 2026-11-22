@@ -1,4 +1,4 @@
-//! Frame grids that MP3, MP2, AAC, Vorbis, WMA and Opus encoders leave in decoded audio.
+//! Frame grids that MP3, MP2, AAC, Vorbis, WMA, AC-3 and Opus encoders leave in decoded audio.
 //!
 //! An encoder transforms its input in frames on a fixed grid and quantizes what the transform
 //! gives. The decoder's synthesis inverts the encoder's analysis, so running that analysis again
@@ -31,7 +31,9 @@
 //! finds the other's grid weakly. A Vorbis long block has the same length and hop under a
 //! window of its own, and the analysis runs with that window too, at the file's rate alone.
 //! A WMA long block is a 4096-point MDCT at a hop of 2048 under a sine window, and the
-//! analysis runs at that length as well.
+//! analysis runs at that length as well. An AC-3 block is a 512-point MDCT at a hop of 256
+//! under a Kaiser-Bessel-derived window of its own, which E-AC-3 shares, and the analysis
+//! runs at that length too.
 //! The MP3 analysis is the layer III hybrid filterbank: the
 //! 512-tap polyphase filterbank, an 18-line MDCT per subband and the alias-reduction
 //! butterflies, at a hop of 576. Short blocks are not analyzed.
@@ -143,6 +145,8 @@ pub enum Codec {
   Vorbis,
   /// WMA, read with its long block's transform, twice the length of AAC's.
   Wma,
+  /// AC-3 or E-AC-3, read with the transform of a block, a quarter the length of AAC's.
+  Ac3,
   /// MP3, layer III.
   Mp3,
   /// MP2, layer II, read by the subband samples of the filterbank it shares with MP3.
@@ -157,6 +161,7 @@ impl fmt::Display for Codec {
       Self::Aac => "AAC",
       Self::Vorbis => "Vorbis",
       Self::Wma => "WMA",
+      Self::Ac3 => "AC-3",
       Self::Mp3 => "MP3",
       Self::Mp2 => "MP2",
       Self::Opus => "Opus",
@@ -410,7 +415,7 @@ impl OpusShifted {
   }
 }
 
-/// Scan of a file for the frame grids of MP3, MP2, AAC, Vorbis, WMA and Opus.
+/// Scan of a file for the frame grids of MP3, MP2, AAC, Vorbis, WMA, AC-3 and Opus.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
@@ -433,6 +438,11 @@ pub struct Scan {
   /// and in measures kept by a version of the analyzer that did not scan with it.
   #[cfg_attr(feature = "serde", serde(default))]
   pub wma: Option<CodecScan>,
+  /// AC-3's grid, with the 512-sample window of its blocks at a hop of 256.
+  ///
+  /// `None` in measures kept by a version of the analyzer that did not scan for it.
+  #[cfg_attr(feature = "serde", serde(default))]
+  pub ac3: Option<CodecScan>,
   /// MP3's grid.
   pub mp3: CodecScan,
   /// MP2's grid, over the 32 phases of the filterbank.

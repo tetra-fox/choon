@@ -23,7 +23,13 @@ pub(crate) enum Window {
   Vorbis,
   /// the sine window of a WMA long block, which is twice as long at twice the hop
   Wma,
+  /// the Kaiser-Bessel-derived window of an AC-3 block, with an alpha of 5: 512 samples at a
+  /// hop of 256
+  Ac3,
 }
+
+/// the samples an AC-3 block advances by
+const AC3_HOP: usize = 256;
 
 impl Window {
   /// the samples a long block advances by
@@ -31,6 +37,7 @@ impl Window {
     match self {
       Self::Kbd | Self::Sine | Self::Vorbis => AAC_HOP,
       Self::Wma => 2 * AAC_HOP,
+      Self::Ac3 => AC3_HOP,
     }
   }
 
@@ -44,6 +51,7 @@ impl Window {
     let length = 2 * self.hop();
     match self {
       Self::Kbd => kbd_window(length, 4.0),
+      Self::Ac3 => kbd_window(length, 5.0),
       Self::Sine | Self::Wma => (0..length)
         .map(|n| (std::f64::consts::PI * (n as f64 + 0.5) / length as f64).sin())
         .collect(),
@@ -63,8 +71,8 @@ fn frames(samples: usize, hop: usize) -> usize {
   (samples + 1 - 2 * hop) / hop
 }
 
-/// the analysis of a long block, AAC's, Vorbis's or WMA's: its window and an orthonormal MDCT,
-/// transformed in single precision
+/// the analysis of a long block, AAC's, Vorbis's or WMA's, or of an AC-3 block: its window and
+/// an orthonormal MDCT, transformed in single precision
 pub(super) struct Aac {
   /// the samples a block advances by, and the lines its transform gives
   hop: usize,
