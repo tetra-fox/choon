@@ -46,7 +46,7 @@ The masters are only ever read. No audio is kept in the repository.
 
 ## Files
 
-A master gives about 94 files:
+A master gives about 100 files:
 
 | Kind                  | Files                                                                       |
 | --------------------- | --------------------------------------------------------------------------- |
@@ -57,10 +57,12 @@ A master gives about 94 files:
 | Vorbis (libvorbis)    | q2 to q8 and q10                                                            |
 | MP2 (ffmpeg)          | 128, 192, 256, 384 kbps                                                     |
 | WMA (ffmpeg)          | 64, 128, 192, 320 kbps                                                      |
+| AC-3 (ffmpeg)         | 192, 384, 448, 640 kbps                                                     |
+| E-AC-3 (ffmpeg)       | 192, 384 kbps                                                               |
 | Encoded twice         | MP3, AAC, Opus or Vorbis decoded and encoded again as MP3                   |
 | Altered decodes       | of MP3 CBR 128, CBR 320, V0 and AAC 128, 256: decoded to 16 bits, by mpg123, LAME and FAAD2, dithered, gained by 3 dB up and down, peak normalized, resampled between 44.1 and 48 kHz |
 
-MP2, WMA and Vorbis q10 are encoded in memory each run; the rest are kept under `DIR/lossy`.
+MP2, WMA, AC-3, E-AC-3 and Vorbis q10 are encoded in memory each run; the rest are kept under `DIR/lossy`.
 
 ## Rereading
 

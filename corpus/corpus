@@ -71,6 +71,8 @@ CHAINS = {
 UNKEPT = {
     **{f"mp2-{k}": (["-c:a", "mp2", "-b:a", f"{k}k"], "mp2", "mp3") for k in (128, 192, 256, 384)},
     **{f"wma-{k}": (["-c:a", "wmav2", "-b:a", f"{k}k"], "asf", "asf") for k in (64, 128, 192, 320)},
+    **{f"ac3-{k}": (["-c:a", "ac3", "-b:a", f"{k}k"], "ac3", "ac3") for k in (192, 384, 448, 640)},
+    **{f"eac3-{k}": (["-c:a", "eac3", "-b:a", f"{k}k"], "eac3", "eac3") for k in (192, 384)},
     "vorbis-q10": (["-c:a", "libvorbis", "-q:a", "10"], "ogg", "ogg"),
 }
 # the settings whose decodes are also altered
