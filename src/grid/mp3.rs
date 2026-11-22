@@ -52,6 +52,11 @@ const SUBBANDS: usize = 32;
 /// the subbands whose line sums [`Mp3::hybrid`] keeps side by side
 const SIDE_BY_SIDE: usize = 16;
 
+/// the granules every offset of the grid holds in a segment of `samples` samples
+fn granules(samples: usize) -> usize {
+  (samples - MP3_HOP - 512 - SUBBAND_SAMPLES * 32) / MP3_HOP
+}
+
 /// the MP3 analysis: the layer III hybrid filterbank. the count of a grid's offsets runs it in
 /// single precision, the quantizer's steps in double
 pub(super) struct Mp3<T = f64> {
@@ -183,8 +188,7 @@ impl Mp3<f32> {
   pub(super) fn curves(&self, segment: &Segment) -> (Vec<f64>, Vec<f64>) {
     let left: Vec<f32> = segment.left.iter().map(|s| *s as f32).collect();
     let right: Vec<f32> = segment.right.iter().map(|s| *s as f32).collect();
-    // the granules every offset holds
-    let granules = (left.len() - MP3_HOP - 512 - SUBBAND_SAMPLES * 32) / MP3_HOP;
+    let granules = granules(left.len());
     let phases: Vec<([f64; LINES], f64)> = (0..32)
       .into_par_iter()
       .map(|phase| self.phase(&left[phase..], &right[phase..], granules))
@@ -274,7 +278,7 @@ impl Mp3<f64> {
     bands: &[usize; 23],
   ) -> Vec<GranuleSteps> {
     let mut scratch = BandScratch::default();
-    let granules = (segment.left.len() - MP3_HOP - 512 - SUBBAND_SAMPLES * 32) / MP3_HOP;
+    let granules = granules(segment.left.len());
     let (phase, from) = (offset % 32, offset / 32);
     let left = self.polyphase(&segment.left[phase..]);
     let right = self.polyphase(&segment.right[phase..]);

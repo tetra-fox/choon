@@ -58,6 +58,11 @@ impl Window {
   }
 }
 
+/// the long frames every offset of the grid holds in a segment of `samples` samples
+fn frames(samples: usize, hop: usize) -> usize {
+  (samples + 1 - 2 * hop) / hop
+}
+
 /// the analysis of a long block, AAC's, Vorbis's or WMA's: its window and an orthonormal MDCT,
 /// transformed in single precision
 pub(super) struct Aac {
@@ -87,7 +92,7 @@ impl Aac {
       |samples: &[f64]| Strided::new(&samples.iter().map(|s| *s as f32).collect::<Vec<_>>());
     let (left, right) = (channel(&segment.left), channel(&segment.right));
     let hop = window.hop();
-    let frames = (segment.left.len() + 1 - 2 * hop) / hop;
+    let frames = frames(segment.left.len(), hop);
     (0..hop)
       .into_par_iter()
       .with_min_len(hop / TASKS)
@@ -163,8 +168,7 @@ impl AacStepper {
     let mut lines = [const { Vec::new() }; 4];
     let mut scratch = BandScratch::default();
     let offset = in_stretch(offset, segment.start, AAC_HOP);
-    // the frames every offset holds, as the count takes them
-    let frames = (segment.left.len() + 1 - 2 * AAC_HOP) / AAC_HOP;
+    let frames = frames(segment.left.len(), AAC_HOP);
     for frame in 0..frames {
       let at = offset + frame * AAC_HOP;
       let [l, r, m, s] = &mut lines;
