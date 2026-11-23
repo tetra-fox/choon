@@ -635,8 +635,16 @@ mod tests {
     let never: CancelCheck = Arc::new(|| false);
     let checked = |path: &Path| {
       let progress = [Arc::default()];
-      let (checked, _) =
-        analyzed(path, &profiles, Coverage::Full, false, &progress, &never).unwrap();
+      let (checked, _) = analyzed(
+        path,
+        &profiles,
+        Coverage::Full,
+        None,
+        false,
+        &progress,
+        &never,
+      )
+      .unwrap();
       Box::new(checked)
     };
     (checked(&honest), checked(&fake))

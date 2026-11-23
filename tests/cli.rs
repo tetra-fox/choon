@@ -801,6 +801,92 @@ fn a_line_of_a_measures_file_that_does_not_parse_is_a_file_not_read() {
 }
 
 #[test]
+fn a_file_out_of_time_before_its_first_window_is_not_read() {
+  let dir = tempfile::tempdir().unwrap();
+  let (honest, _) = honest_and_fake(dir.path());
+  // a millionth of a second is over before the audio is opened
+  let output = choon(&["--timeout", "0.000001", &honest]);
+  assert_eq!(status(&output), 2, "{output:?}");
+  let line = String::from_utf8(output.stdout).unwrap();
+  assert!(
+    line.starts_with(&format!(
+      "{honest}: not read (the analysis ran out of time "
+    )),
+    "{line}"
+  );
+  // time enough reads the file as without a timeout
+  let output = choon(&["--timeout", "3600", &honest]);
+  assert_eq!(status(&output), 0, "{output:?}");
+  assert_eq!(output.stdout, choon(&[&honest]).stdout);
+
+  for none in ["0", "-1", "nan", "inf", "soon"] {
+    let output = choon(&[&format!("--timeout={none}"), &honest]);
+    assert_eq!(status(&output), 2, "{none}: {output:?}");
+    assert!(output.stdout.is_empty(), "{output:?}");
+  }
+}
+
+/// what `choon check --json --timeout 3` prints of a FLAC whose writer gives its first `given`
+/// bytes at once and holds the rest back until the file's time is up, which leaves the
+/// analysis waiting that far in
+#[cfg(unix)]
+fn held_back(given: impl Fn(usize) -> usize) -> Output {
+  use std::time::{Duration, Instant};
+
+  let dir = tempfile::tempdir().unwrap();
+  let slow = fifo(dir.path(), "slow.flac");
+  let flac = fixtures::flac(&music(1, 44_100, pink), 16, false);
+  let timeout = Duration::from_secs(3);
+  let started = Instant::now();
+  let child = Command::new(env!("CARGO_BIN_EXE_choon"))
+    .args(["check", "--json", "--timeout", "3"])
+    .arg(&slow)
+    .stdout(Stdio::piped())
+    .spawn()
+    .unwrap();
+  let mut writer = std::fs::File::create(&slow).unwrap();
+  writer.write_all(&flac[..given(flac.len())]).unwrap();
+  std::thread::sleep((started + timeout + Duration::from_millis(200)) - Instant::now());
+  drop(writer);
+  child.wait_with_output().unwrap()
+}
+
+#[cfg(unix)]
+#[test]
+fn a_file_out_of_time_part_way_prints_a_reading_of_the_part_measured() {
+  let output = held_back(|all| all * 3 / 4);
+  // a part reading counts as any reading does
+  assert_eq!(status(&output), 0, "{output:?}");
+  let line: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+  let windows = line["windows"].as_u64().unwrap();
+  assert!(
+    windows > 0 && windows < fixtures::SECONDS as u64,
+    "{windows} windows"
+  );
+  let limitations = line["readings"][0]["limitations"].as_array().unwrap();
+  let out_of_time = "The analysis ran out of time and covers only the part read by then";
+  assert!(
+    limitations
+      .iter()
+      .any(|limitation| limitation == out_of_time),
+    "{limitations:?}"
+  );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_file_opened_and_out_of_time_before_a_window_is_not_read() {
+  // under a second of audio
+  let output = held_back(|_| 32_768);
+  assert_eq!(status(&output), 2, "{output:?}");
+  let line: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+  assert_eq!(
+    line["error"],
+    "the analysis ran out of time before a window was measured"
+  );
+}
+
+#[test]
 fn several_profiles_share_a_line_and_only_a_lossy_verdict_names_an_encoder() {
   let dir = tempfile::tempdir().unwrap();
   let (_, fake) = honest_and_fake(dir.path());

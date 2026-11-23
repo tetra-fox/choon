@@ -24,8 +24,8 @@ use std::time::{Duration, Instant};
 use choon::grid::{Evidence, Family, Scan};
 use choon::picture::Shown;
 use choon::{
-  CancelCheck, Claimed, Coverage, Error, Flag, HeAac, MeasureThresholds, Measured, OpusUse,
-  Reading, ReadingThresholds, Settings, Verdict,
+  CancelCheck, Claimed, Coverage, Error, Flag, HeAac, Limitation, MeasureThresholds, Measured,
+  OpusUse, Reading, ReadingThresholds, Settings, Verdict,
 };
 use clap::{Args, ColorChoice, Parser, Subcommand};
 use rayon::iter::{ParallelBridge, ParallelIterator};
@@ -107,7 +107,7 @@ struct Check {
   #[arg(
     long,
     value_name = "FILE",
-    conflicts_with_all = ["max_full_minutes", "sampled_windows", "null", "follow"]
+    conflicts_with_all = ["max_full_minutes", "sampled_windows", "timeout", "null", "follow"]
   )]
   from_measures: Option<PathBuf>,
 
@@ -126,6 +126,15 @@ struct Check {
   /// Read a file longer than --max-full-minutes at COUNT one-second windows
   #[arg(long, value_name = "COUNT", requires = "max_full_minutes")]
   sampled_windows: Option<NonZeroUsize>,
+
+  /// Stop measuring a file after SECONDS and read what was measured by then
+  ///
+  /// The time is each file's own, from when it is started, over every measuring of it. A file
+  /// out of time still prints a reading, which covers the part measured and says so among its
+  /// limitations. A file with no window measured by then is not read. Without this option a
+  /// file is measured to its end.
+  #[arg(long, value_name = "SECONDS", value_parser = seconds)]
+  timeout: Option<Duration>,
 
   /// Skip the scans for WMA and for a decode converted between 44.1 and 48 kHz
   ///
@@ -438,7 +447,7 @@ fn run(check: &Check) -> Result<u8, Failed> {
   let (events, received) = mpsc::sync_channel(jobs);
   let measure = {
     let (stop, profiles, events) = (&*stop, &profiles, events.clone());
-    let save = keep.is_some();
+    let (save, timeout) = (keep.is_some(), check.timeout);
     move |(file, path): (usize, &PathBuf)| {
       if stop.load(Ordering::Relaxed) {
         return;
@@ -458,16 +467,31 @@ fn run(check: &Check) -> Result<u8, Failed> {
       // program's own part, is caught here, so that the run goes on to the other files either
       // way. the panic's own message is on stderr by then. nothing the analysis borrows is left
       // half changed, as it only reads what it is given
-      let run = AssertUnwindSafe(|| analyzed(path, profiles, coverage, save, &progress, &canceled));
+      // a time too far off for the clock to hold never comes
+      let deadline = timeout.and_then(|timeout| Instant::now().checked_add(timeout));
+      let run = AssertUnwindSafe(|| {
+        analyzed(
+          path, profiles, coverage, deadline, save, &progress, &canceled,
+        )
+      });
       let (result, kept) = match catch_unwind(run) {
+        // the time ran out after the audio was opened and before its first window
+        Ok(Ok((checked, _))) if checked.windows == 0 && out_of_time(&checked) => (
+          Err(Unread::NotRead(
+            "the analysis ran out of time before a window was measured".to_string(),
+          )),
+          Vec::new(),
+        ),
         Ok(Ok((checked, kept))) => (Ok(Box::new(checked)), kept),
         Ok(Err(Error::Canceled)) => return,
         Ok(Err(Error::Open(e))) => (Err(Unread::Open(e)), Vec::new()),
         Ok(Err(Error::NotAudio(why) | Error::Unsupported(why))) => {
           (Err(Unread::NotRead(why)), Vec::new())
         }
-        Ok(Err(Error::OutOfTime)) => unreachable!("no analysis has a deadline"),
-        Ok(Err(Error::Panicked)) | Err(_) => (
+        Ok(Err(failed @ (Error::OutOfTime | Error::Panicked))) => {
+          (Err(Unread::NotRead(failed.to_string())), Vec::new())
+        }
+        Err(_) => (
           Err(Unread::NotRead(Error::Panicked.to_string())),
           Vec::new(),
         ),
@@ -568,6 +592,14 @@ impl Keep<'_> {
     }
     Ok(())
   }
+}
+
+/// whether a reading of `checked` says its measuring ran out of time
+fn out_of_time(checked: &Checked) -> bool {
+  checked
+    .readings
+    .iter()
+    .any(|read| read.reading.limitations.contains(&Limitation::OutOfTime))
 }
 
 /// the exit status `result` asks for
@@ -868,6 +900,15 @@ fn minutes(text: &str) -> Result<f64, String> {
   Ok(minutes)
 }
 
+/// the time `text` names in seconds, refusing none and one no clock counts
+fn seconds(text: &str) -> Result<Duration, String> {
+  let seconds: f64 = text.parse().map_err(|e| format!("{e}"))?;
+  Duration::try_from_secs_f64(seconds)
+    .ok()
+    .filter(|time| !time.is_zero())
+    .ok_or_else(|| "not a time in seconds".to_string())
+}
+
 /// the profile in the file at `path`, named after the file
 fn profile(path: &Path) -> Result<(String, Thresholds), Failed> {
   let failed = |e: String| Failed::Profile(path.to_path_buf(), e);
@@ -891,12 +932,13 @@ struct Measuring {
 
 /// what the file at `path` measured, with its readings under each of `profiles`, and its lines
 /// for the measures file when `save`. profiles whose measure thresholds are the same share one
-/// measuring, so the file is decoded once for them. each measuring says how far it is in the
-/// next of `progress`, which holds one for each.
+/// measuring, so the file is decoded once for them, and every measuring stops at `deadline`.
+/// each measuring says how far it is in the next of `progress`, which holds one for each.
 fn analyzed(
   path: &Path,
   profiles: &[(String, Thresholds)],
   coverage: Coverage,
+  deadline: Option<Instant>,
   save: bool,
   progress: &[Arc<AtomicU32>],
   canceled: &CancelCheck,
@@ -911,10 +953,10 @@ fn analyzed(
     }
     let settings = Settings {
       coverage,
+      deadline,
       thresholds: thresholds.measure.clone(),
       progress: Some(progress[measurings.len()].clone()),
       canceled: Some(canceled.clone()),
-      ..Settings::default()
     };
     let started = Instant::now();
     let measured = choon::measure(path, &settings)?;
