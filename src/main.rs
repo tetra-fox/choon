@@ -885,8 +885,12 @@ fn shown(
           Err(unread) => {
             bars.ended(file, Some(Counted::NotRead));
             match &unread {
+              // the files not read are listed at the end, which says it again where stderr
+              // is the terminal too. the one file of a check has no list
               Unread::Open(_) | Unread::Unmeasured(_) => {
-                bars.complain(&complaint(&path, &unread));
+                if one || !io::stderr().is_terminal() {
+                  bars.complain(&complaint(&path, &unread));
+                }
               }
               Unread::NotRead(why) => alone = Some(not_read(&path, why, colour)),
             }
