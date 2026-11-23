@@ -828,7 +828,8 @@ fn a_file_out_of_time_before_its_first_window_is_not_read() {
 
 /// what `choon check --json --timeout 3` prints of a FLAC whose writer gives its first `given`
 /// bytes at once and holds the rest back until the file's time is up, which leaves the
-/// analysis waiting that far in
+/// analysis waiting that far in. the program sets the file's time before it opens the file,
+/// and the writer's own open returns no sooner, so the time counted from there ends later
 #[cfg(unix)]
 fn held_back(given: impl Fn(usize) -> usize) -> Output {
   use std::time::{Duration, Instant};
@@ -837,7 +838,6 @@ fn held_back(given: impl Fn(usize) -> usize) -> Output {
   let slow = fifo(dir.path(), "slow.flac");
   let flac = fixtures::flac(&music(1, 44_100, pink), 16, false);
   let timeout = Duration::from_secs(3);
-  let started = Instant::now();
   let child = Command::new(env!("CARGO_BIN_EXE_choon"))
     .args(["check", "--json", "--timeout", "3"])
     .arg(&slow)
@@ -845,8 +845,9 @@ fn held_back(given: impl Fn(usize) -> usize) -> Output {
     .spawn()
     .unwrap();
   let mut writer = std::fs::File::create(&slow).unwrap();
+  let opened = Instant::now();
   writer.write_all(&flac[..given(flac.len())]).unwrap();
-  std::thread::sleep((started + timeout + Duration::from_millis(200)) - Instant::now());
+  std::thread::sleep((opened + timeout).saturating_duration_since(Instant::now()));
   drop(writer);
   child.wait_with_output().unwrap()
 }
