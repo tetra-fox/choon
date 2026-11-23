@@ -384,7 +384,7 @@ done
   without the spectrogram and waveform data
 - A line is written when its file is read. A file not read has none, and a file read with
   profiles that measure differently has one for each measuring, one after the other
-- A line takes about 290 bytes for each second of audio read: 68 kB for a 4-minute file
+- A line takes about 300 bytes for each second of audio read: 68 kB for a 4-minute file
 - `--from-measures` prints each file as the check printed it, lines, JSON or a terminal's
   tables, with the same exit code. No audio file is opened
 - A reading's `measureSeconds` is 0 there, and `readSeconds` is the time the reading took
