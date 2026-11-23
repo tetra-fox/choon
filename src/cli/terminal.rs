@@ -16,7 +16,9 @@ use comfy_table::{CellAlignment, ContentArrangement, LineStyle, Table, TableStyl
 use console::{Alignment, Term};
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 
-use crate::{Checked, NOT_READ, encoder, flag_words, flagged, khz, label, said};
+use crate::{
+  Checked, NOT_READ, detailed, encoder, flag_words, flagged, khz, label, piped, piped_unread,
+};
 
 /// the verdicts in the order the summary counts them
 const VERDICTS: [Verdict; 5] = [
@@ -35,7 +37,19 @@ pub struct Row<'a> {
   pub outcome: Result<Box<Checked>, String>,
 }
 
+/// how a terminal shows what was read
+#[derive(Clone, Copy)]
+pub struct Look {
+  /// whether the files are read under several profiles, which are then named
+  pub profiled: bool,
+  pub verbose: bool,
+  pub colour: bool,
+  /// the terminal's columns
+  pub width: u16,
+}
+
 /// what a file that ended adds to the counts beside the bar
+#[derive(Clone, Copy, PartialEq)]
 pub enum Counted {
   /// a reading flagged with this verdict
   Flagged(Verdict),
@@ -43,12 +57,17 @@ pub enum Counted {
 }
 
 /// what the bar counts, in the order it says them
-const COUNTED: [(Option<Verdict>, &str); 4] = [
-  (Some(Verdict::LikelyTranscode), "likely transcode"),
-  (Some(Verdict::MixedSources), "mixed sources"),
-  (Some(Verdict::PossiblyLossy), "possibly lossy"),
-  (None, NOT_READ),
+const COUNTED: [Counted; 4] = [
+  Counted::Flagged(Verdict::LikelyTranscode),
+  Counted::Flagged(Verdict::MixedSources),
+  Counted::Flagged(Verdict::PossiblyLossy),
+  Counted::NotRead,
 ];
+
+/// `verdict` in words, in its colour when `colour`
+pub fn worded(verdict: Verdict, colour: bool) -> String {
+  painted(Some(verdict), label(verdict), colour)
+}
 
 /// `text` in the colour of `verdict`, or of a file not read without one, when `colour`
 pub fn painted(verdict: Option<Verdict>, text: &str, colour: bool) -> String {
@@ -171,11 +190,7 @@ impl Bars {
       remove(&self.multi, &bar);
     }
     self.done += 1;
-    let counted = counted.map(|counted| match counted {
-      Counted::Flagged(verdict) => Some(verdict),
-      Counted::NotRead => None,
-    });
-    if let Some(at) = COUNTED.iter().position(|(kind, _)| Some(*kind) == counted) {
+    if let Some(at) = COUNTED.iter().position(|kind| Some(*kind) == counted) {
       self.counts[at] += 1;
     }
     self.count();
@@ -191,7 +206,11 @@ impl Bars {
       Some(total) => format!("{} of {total}", self.done),
       None => format!("{} read", self.done),
     };
-    for ((_, words), count) in COUNTED.iter().zip(self.counts) {
+    for (kind, count) in COUNTED.iter().zip(self.counts) {
+      let words = match kind {
+        Counted::Flagged(verdict) => label(*verdict),
+        Counted::NotRead => NOT_READ,
+      };
       if count > 0 {
         said += &format!(", {count} {words}");
       }
@@ -351,16 +370,10 @@ fn length(time: Duration) -> String {
   }
 }
 
-/// one file's reading in detail, under each profile when `profiled`: aligned lines of a label
-/// and its value, wrapped at `width` columns, with the reading's summary when `verbose`
-pub fn readout(
-  path: &Path,
-  checked: &Checked,
-  profiled: bool,
-  verbose: bool,
-  colour: bool,
-  width: u16,
-) -> String {
+/// one file's reading in detail, under each profile when there are several: aligned lines of
+/// a label and its value, wrapped at the terminal's width, with the reading's summary when
+/// verbose
+pub fn readout(path: &Path, checked: &Checked, look: Look) -> String {
   let claimed = &checked.claimed;
   let mut format = vec![claimed.codec.clone(), format!("{} Hz", claimed.sample_rate)];
   if let Some(bits) = claimed.bit_depth {
@@ -381,11 +394,11 @@ pub fn readout(
   for read in &checked.readings {
     let reading = &read.reading;
     text += &legible(path);
-    if profiled {
+    if look.profiled {
       text += &format!(" [{}]", read.profile);
     }
     text += "\n";
-    let mut table = table(width);
+    let mut table = table(look.width);
     let mut add = |label: &str, value: String| {
       table.add_row([label, &value]);
     };
@@ -405,10 +418,7 @@ pub fn readout(
         format!("{he_aac}, core at {} Hz", he_aac.core_rate),
       );
     }
-    add(
-      "Verdict",
-      painted(Some(reading.verdict), label(reading.verdict), colour),
-    );
+    add("Verdict", worded(reading.verdict, look.colour));
     add("Grid", grid(checked, reading));
     add(
       "Cutoff",
@@ -426,7 +436,7 @@ pub fn readout(
       let flags: Vec<&str> = reading.flags.iter().copied().map(flag_words).collect();
       add("Flags", flags.join(", "));
     }
-    if verbose {
+    if look.verbose {
       add("Summary", reading.summary.clone());
     }
     if !reading.limitations.is_empty() {
@@ -552,19 +562,17 @@ const INDENT: usize = 2;
 /// the spaces between two columns
 const GAP: usize = 2;
 
-/// what a check of many files found: the flagged files, or every file when `verbose`, by
-/// directory, then the files not read, each flagged file in detail when `verbose`, and last
-/// the count of each verdict, under each profile when `profiled`, with the files read and not
-/// read, how long it took and what an interrupt `left`
-pub fn tables(
-  rows: &[Row<'_>],
-  profiled: bool,
-  verbose: bool,
-  took: Duration,
-  left: Option<&str>,
-  colour: bool,
-  width: u16,
-) -> String {
+/// what a check of many files found: the flagged files, or every file when verbose, by
+/// directory, then the files not read, each flagged file in detail when verbose, and last
+/// the count of each verdict, under each profile when there are several, with the files read
+/// and not read, how long it `took` and what an interrupt `left`
+pub fn tables(rows: &[Row<'_>], look: Look, took: Duration, left: Option<&str>) -> String {
+  let Look {
+    profiled,
+    verbose,
+    colour,
+    width,
+  } = look;
   let read: Vec<(&Path, &Checked)> = rows
     .iter()
     .filter_map(|row| Some((&*row.path, &**row.outcome.as_ref().ok()?)))
@@ -573,11 +581,6 @@ pub fn tables(
     .iter()
     .filter_map(|row| Some((&*row.path, row.outcome.as_ref().err()?.as_str())))
     .collect();
-  let found: Vec<(&Path, &Checked)> = read
-    .iter()
-    .copied()
-    .filter(|(_, checked)| checked.readings.iter().any(|r| flagged(r.reading.verdict)))
-    .collect();
   let mut sections = Vec::new();
 
   if width < TABLE_MIN_WIDTH {
@@ -585,17 +588,17 @@ pub fn tables(
     for row in rows {
       let path = legible(&row.path);
       match &row.outcome {
-        Ok(checked) => {
-          if verbose || checked.readings.iter().any(|r| flagged(r.reading.verdict)) {
-            lines += &format!("{path}: {}\n", said(checked, colour));
-          }
+        Ok(checked) if verbose || checked.flag().is_some() => {
+          lines += &piped(path, checked, colour);
         }
-        Err(why) => lines += &format!("{path}: {} ({why})\n", painted(None, NOT_READ, colour)),
+        Ok(_) => continue,
+        Err(why) => lines += &piped_unread(path, why, colour),
       }
+      lines += "\n";
     }
     sections.push(lines);
   } else {
-    sections.push(listing(rows, profiled, verbose, colour, usize::from(width)));
+    sections.push(listing(rows, look));
     let mut unread = String::new();
     if !not_read.is_empty() {
       unread += "Not read\n--------\n";
@@ -608,8 +611,9 @@ pub fn tables(
 
   let mut detail = String::new();
   if verbose {
-    for (path, checked) in &found {
-      detail += &readout(path, checked, profiled, true, colour, width);
+    let flagged = read.iter().filter(|(_, checked)| checked.flag().is_some());
+    for (path, checked) in flagged {
+      detail += &readout(path, checked, look);
     }
   }
   sections.push(detail.trim_end().to_string() + "\n");
@@ -632,7 +636,7 @@ pub fn tables(
     }
     counts.set_header(header);
     for verdict in VERDICTS {
-      let mut row = vec![painted(Some(verdict), label(verdict), colour)];
+      let mut row = vec![worded(verdict, colour)];
       row.extend((0..profiles.len()).map(|profile| {
         read
           .iter()
@@ -683,7 +687,14 @@ enum Entry {
 /// directories under it, which are named from there. a file named itself is under its
 /// directory as named, or on a line of its own by its path, ahead of the directories, when
 /// no other file named shares the directory. empty when no file is listed
-fn listing(rows: &[Row<'_>], profiled: bool, verbose: bool, colour: bool, width: usize) -> String {
+fn listing(rows: &[Row<'_>], look: Look) -> String {
+  let Look {
+    profiled,
+    verbose,
+    colour,
+    ..
+  } = look;
+  let width = usize::from(look.width);
   let none = Path::new("");
   // how many of the files named themselves each directory holds
   let mut named: HashMap<&Path, usize> = HashMap::new();
@@ -725,7 +736,7 @@ fn listing(rows: &[Row<'_>], profiled: bool, verbose: bool, colour: bool, width:
       .and_then(|_| alike(files, colour));
     let lines: Vec<Entry> = files
       .iter()
-      .flat_map(|(row, name)| cells(row, name, profiled, verbose, colour))
+      .flat_map(|(row, name)| cells(row, name, look))
       .map(Entry::File)
       .collect();
     if alike.is_none() && lines.is_empty() {
@@ -821,28 +832,18 @@ fn heading(directory: &Path) -> String {
 /// each reading when `verbose`, which also has a cell for the grid with its offset. without
 /// it a grid no encoder is named for has its codec in the encoder's cell. none for a file not
 /// read
-fn cells(
-  row: &Row<'_>,
-  name: &str,
-  profiled: bool,
-  verbose: bool,
-  colour: bool,
-) -> Vec<Vec<String>> {
+fn cells(row: &Row<'_>, name: &str, look: Look) -> Vec<Vec<String>> {
   let Ok(checked) = &row.outcome else {
     return Vec::new();
   };
   let readings = checked.readings.iter();
   readings
-    .filter(|read| verbose || flagged(read.reading.verdict))
+    .filter(|read| look.verbose || flagged(read.reading.verdict))
     .map(|read| {
       let reading = &read.reading;
       let grid = reading.grid.as_ref();
-      let mut cells = vec![painted(
-        Some(reading.verdict),
-        label(reading.verdict),
-        colour,
-      )];
-      if verbose {
+      let mut cells = vec![worded(reading.verdict, look.colour)];
+      if look.verbose {
         cells.push(grid.map_or_else(String::new, |found| {
           format!("{}, offset {}", found.codec, found.evidence.offset())
         }));
@@ -850,10 +851,10 @@ fn cells(
       cells.push(reading.cutoff_hz.map_or_else(String::new, khz));
       cells.push(match (encoder(reading), grid) {
         (Some(encoder), _) => encoder,
-        (None, Some(found)) if !verbose => found.codec.to_string(),
+        (None, Some(found)) if !look.verbose => found.codec.to_string(),
         (None, _) => String::new(),
       });
-      if profiled {
+      if look.profiled {
         cells.push(read.profile.clone());
       }
       cells.push(name.to_string());
@@ -905,12 +906,8 @@ fn alike(files: &[Listed<'_>], colour: bool) -> Option<String> {
   }
   found.extend(encoder(first));
   let count = readings.len();
-  let verdict = painted(Some(first.verdict), label(first.verdict), colour);
-  Some(if found.is_empty() {
-    format!("{count} of {count} {verdict}")
-  } else {
-    format!("{count} of {count} {verdict} ({})", found.join(", "))
-  })
+  let verdict = worded(first.verdict, colour);
+  Some(detailed(format!("{count} of {count} {verdict}"), &found))
 }
 
 /// `text` in at most `width` columns, with `...` in the place of its middle when it is wider
@@ -952,11 +949,9 @@ mod tests {
 
   use choon::fixtures::{self, Bitrate, music, pink};
   use choon::grid::{Codec, Family};
-  use choon::{CancelCheck, Coverage};
+  use choon::{CancelCheck, Coverage, Verdict};
 
-  use choon::Verdict;
-
-  use super::{Row, cut, legible, readout, room, tables};
+  use super::{Look, Row, cut, legible, readout, room, tables};
   use crate::{Checked, Thresholds, analyzed, encoder, khz};
 
   /// what the shipped thresholds make of an honest FLAC and of one made from a 128 kbps MP3
@@ -984,6 +979,16 @@ mod tests {
       Box::new(checked)
     };
     (checked(&honest), checked(&fake))
+  }
+
+  /// one profile's readings without colour in a terminal of `width` columns
+  fn look(verbose: bool, width: u16) -> Look {
+    Look {
+      profiled: false,
+      verbose,
+      colour: false,
+      width,
+    }
   }
 
   /// `text` without the codes that colour it
@@ -1055,7 +1060,8 @@ mod tests {
   #[test]
   fn a_readout_lines_up_its_values_and_wraps_them_under_themselves() {
     let (_, fake) = honest_and_fake();
-    let text = readout(Path::new("album/fake.flac"), &fake, false, true, false, 60);
+    let plain = look(true, 60);
+    let text = readout(Path::new("album/fake.flac"), &fake, plain);
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines[0], "album/fake.flac");
     assert!(
@@ -1077,7 +1083,11 @@ mod tests {
     assert!(lines[summary + 1].starts_with("                "), "{text}");
     assert!(lines.iter().all(|line| line.len() <= 60), "{text}");
 
-    let coloured = readout(Path::new("album/fake.flac"), &fake, false, true, true, 60);
+    let coloured = Look {
+      colour: true,
+      ..plain
+    };
+    let coloured = readout(Path::new("album/fake.flac"), &fake, coloured);
     assert!(
       coloured.contains("\u{1b}[31mlikely transcode\u{1b}[0m"),
       "{coloured}"
@@ -1097,7 +1107,7 @@ mod tests {
   /// `tables` of `rows` without colour: the lines of the list, which end before the counts
   fn listed(rows: &[Row<'_>], verbose: bool, width: u16) -> Vec<String> {
     let took = Duration::from_secs(30);
-    let text = tables(rows, false, verbose, took, None, false, width);
+    let text = tables(rows, look(verbose, width), took, None);
     let lines = text.lines().take_while(|line| !line.is_empty());
     lines.map(str::to_string).collect()
   }
@@ -1115,7 +1125,8 @@ mod tests {
       },
     ];
     let took = Duration::from_secs(30);
-    let text = tables(&rows, false, false, took, None, false, 100);
+    let plain = look(false, 100);
+    let text = tables(&rows, plain, took, None);
     let lines: Vec<&str> = text.lines().collect();
     let cells = |line: &str| -> Vec<String> {
       let cells = line.split("  ").filter(|cell| !cell.is_empty());
@@ -1163,14 +1174,18 @@ mod tests {
 
     // an interrupt is said with the totals
     let left = Some("5 of 8 files left");
-    let cut_short = tables(&rows, false, false, took, left, false, 100);
+    let cut_short = tables(&rows, plain, took, left);
     assert_eq!(
       cells(cut_short.lines().last().unwrap()),
       ["Interrupted", "5 of 8 files left"]
     );
 
     // colour changes no column
-    let coloured = tables(&rows, false, false, took, None, true, 100);
+    let coloured = Look {
+      colour: true,
+      ..plain
+    };
+    let coloured = tables(&rows, coloured, took, None);
     assert!(
       coloured.contains("\u{1b}[31mlikely transcode\u{1b}[0m"),
       "{coloured}"
@@ -1182,7 +1197,7 @@ mod tests {
       row("a/1.flac", None, &honest),
       row("a/2.flac", None, &honest),
     ];
-    let text = tables(&clean, false, false, took, None, false, 100);
+    let text = tables(&clean, plain, took, None);
     assert!(text.starts_with("Verdict            Files\n"), "{text}");
   }
 

@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cli::inputs::{EXTENSIONS, Found, Inputs};
 use crate::cli::measures::{Group, Groups, Kept};
-use crate::cli::terminal::{self, Bars, Counted, Row};
+use crate::cli::terminal::{self, Bars, Counted, Look, Row};
 
 /// every file read is consistent with its format, possibly lossy, or the analyzer cannot tell
 const CLEAN: u8 = 0;
@@ -219,6 +219,23 @@ struct Checked {
   readings: Vec<Read>,
 }
 
+impl Checked {
+  /// the worst verdict a profile flags the file with, which a terminal counts and lists it by
+  fn flag(&self) -> Option<Verdict> {
+    let reads = |verdict| {
+      let read = |read: &Read| read.reading.verdict == verdict;
+      self.readings.iter().any(read)
+    };
+    [
+      Verdict::LikelyTranscode,
+      Verdict::MixedSources,
+      Verdict::PossiblyLossy,
+    ]
+    .into_iter()
+    .find(|verdict| reads(*verdict))
+  }
+}
+
 /// what is printed for a file with `--json`
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -266,7 +283,7 @@ struct NotAudio<'a> {
   /// left out for a path that `file` holds whole
   #[serde(skip_serializing_if = "Option::is_none")]
   file_bytes: Option<&'a [u8]>,
-  error: String,
+  error: &'a str,
 }
 
 fn main() -> ExitCode {
@@ -743,7 +760,7 @@ fn printed(
           })
           .expect("a reading serializes")
         } else {
-          piped(file, &checked)
+          piped(file.display(), &checked, false)
         }
       }
       Err(unread @ (Unread::Open(_) | Unread::Unmeasured(_))) => {
@@ -755,11 +772,11 @@ fn printed(
           serde_json::to_string(&NotAudio {
             file: file.to_string_lossy(),
             file_bytes: raw(file),
-            error: why,
+            error: &why,
           })
           .expect("strings and bytes serialize")
         } else {
-          format!("{}: {NOT_READ} ({why})", file.display())
+          piped_unread(file.display(), &why, false)
         }
       }
     };
@@ -820,17 +837,7 @@ fn shown(
         let outcome = match result {
           Ok(checked) => {
             // a file under several profiles counts once, as the worst any of them reads it
-            let found = [
-              Verdict::LikelyTranscode,
-              Verdict::MixedSources,
-              Verdict::PossiblyLossy,
-            ]
-            .into_iter()
-            .find(|verdict| {
-              let reads = |read: &Read| read.reading.verdict == *verdict;
-              checked.readings.iter().any(reads)
-            });
-            bars.ended(file, found.map(Counted::Flagged));
+            bars.ended(file, checked.flag().map(Counted::Flagged));
             Ok(checked)
           }
           Err(unread) => {
@@ -857,7 +864,12 @@ fn shown(
   }
   bars.finish();
   rows.sort_by(|a, b| a.path.cmp(&b.path));
-  let width = console::Term::stdout().size().1;
+  let look = Look {
+    profiled,
+    verbose: check.verbose,
+    colour,
+    width: console::Term::stdout().size().1,
+  };
   let left = cut_short(interrupted, total, tally.finished).then(|| match total {
     Some(total) => format!("{} of {total} files left", total - tally.finished),
     None => "measures left unread".to_string(),
@@ -869,18 +881,10 @@ fn shown(
         outcome: Ok(checked),
         ..
       },
-    ] if one => terminal::readout(path, checked, profiled, check.verbose, colour, width),
+    ] if one => terminal::readout(path, checked, look),
     // stderr has said why it could not be opened, or that an interrupt came before it was read
     [] | [_] if one => alone.unwrap_or_default(),
-    _ => terminal::tables(
-      &rows,
-      profiled,
-      check.verbose,
-      started.elapsed(),
-      left.as_deref(),
-      colour,
-      width,
-    ),
+    _ => terminal::tables(&rows, look, started.elapsed(), left.as_deref()),
   };
   if !text.is_empty() {
     print(&mut io::stdout().lock(), text.trim_end())?;
@@ -1168,8 +1172,14 @@ fn checked(
 const VERDICT_WIDTH: usize = "likely transcode".len();
 
 /// a file's line where lines are piped: its path, then its readings
-fn piped(path: &Path, checked: &Checked) -> String {
-  format!("{}: {}", path.display(), said(checked, false))
+fn piped(path: impl std::fmt::Display, checked: &Checked, colour: bool) -> String {
+  format!("{path}: {}", said(checked, colour))
+}
+
+/// the line of a file not read as audio where lines are piped: its path, then why
+fn piped_unread(path: impl std::fmt::Display, why: &str, colour: bool) -> String {
+  let status = terminal::painted(None, NOT_READ, colour);
+  format!("{path}: {status} ({why})")
 }
 
 /// a terminal's line for the one file of a check when it is not read as audio: the status
@@ -1192,12 +1202,7 @@ fn said(checked: &Checked, colour: bool) -> String {
   let words = |reading: &Reading, kind: Option<String>| {
     let mut found = found(reading, checked.grid.is_some());
     found.extend(kind);
-    let verdict = terminal::painted(Some(reading.verdict), label(reading.verdict), colour);
-    if found.is_empty() {
-      verdict
-    } else {
-      format!("{verdict} ({})", found.join(", "))
-    }
+    detailed(terminal::worded(reading.verdict, colour), &found)
   };
   match &checked.readings[..] {
     [read] => words(&read.reading, kind),
@@ -1207,6 +1212,15 @@ fn said(checked: &Checked, colour: bool) -> String {
       .chain(kind)
       .collect::<Vec<_>>()
       .join("; "),
+  }
+}
+
+/// `status` with what was found in parentheses after it, when anything was
+fn detailed(status: String, found: &[String]) -> String {
+  if found.is_empty() {
+    status
+  } else {
+    format!("{status} ({})", found.join(", "))
   }
 }
 
