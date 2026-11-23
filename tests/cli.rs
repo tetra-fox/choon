@@ -770,20 +770,18 @@ fn a_line_of_a_measures_file_that_does_not_parse_is_a_file_not_read() {
   assert_eq!(status(&again), 2, "{again:?}");
   let lines = sorted_lines(&again);
   assert_eq!(lines.len(), 3, "{lines:?}");
-  let has = |start: &str| lines.iter().any(|line| line.starts_with(start));
-  assert!(
-    has("cut.flac: not read (missing field `measure`"),
-    "{lines:?}"
-  );
-  assert!(
-    has(String::from_utf8(output.stdout).unwrap().trim_end()),
-    "{lines:?}"
-  );
-  // a line that names no file is named by its place in the measures file
-  assert!(
-    has(&format!("{measures}:1: not read (expected ")),
-    "{lines:?}"
-  );
+  // each says which line of the measures file is at fault, and a line that names no file is
+  // named by its place there
+  let mut expected = [
+    "cut.flac: not read (measures file line 4: missing field `measure`)".to_string(),
+    String::from_utf8(output.stdout)
+      .unwrap()
+      .trim_end()
+      .to_string(),
+    format!("{measures}:1: not read (measures file line 1: expected ident)"),
+  ];
+  expected.sort();
+  assert_eq!(lines, expected);
 
   let again = choon(&["--json", "--from-measures", &measures]);
   assert_eq!(status(&again), 2, "{again:?}");
@@ -793,6 +791,11 @@ fn a_line_of_a_measures_file_that_does_not_parse_is_a_file_not_read() {
     .filter(|line: &serde_json::Value| line["error"].is_string())
     .collect();
   assert_eq!(unread.len(), 2, "{unread:?}");
+  let cut = unread.iter().find(|line| line["file"] == "cut.flac");
+  assert_eq!(
+    cut.unwrap()["error"],
+    "measures file line 4: missing field `measure`"
+  );
 
   let missing = path(&dir.path().join("missing.jsonl"));
   let output = choon(&["--from-measures", &missing]);

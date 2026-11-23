@@ -32,7 +32,7 @@ use rayon::iter::{ParallelBridge, ParallelIterator};
 use serde::{Deserialize, Serialize};
 
 use crate::cli::inputs::{EXTENSIONS, Found, Inputs};
-use crate::cli::measures::{Group, Groups, Kept};
+use crate::cli::measures::{self, Group, Groups, Kept};
 use crate::cli::terminal::{self, Bars, Counted, Look, Row};
 
 /// every file read is consistent with its format, possibly lossy, or the analyzer cannot tell
@@ -1152,12 +1152,15 @@ fn analyzed(
 }
 
 /// a file's readings under each of `profiles` from the lines a measures file holds for it
-fn read_again(lines: &[Vec<u8>], profiles: &[(String, Thresholds)]) -> Result<Checked, Unread> {
+fn read_again(
+  lines: &[(usize, Vec<u8>)],
+  profiles: &[(String, Thresholds)],
+) -> Result<Checked, Unread> {
   let measurings = lines
     .iter()
-    .map(|line| {
-      let kept: Kept<'_> =
-        serde_json::from_slice(line).map_err(|e| Unread::NotRead(e.to_string()))?;
+    .map(|(number, line)| {
+      let kept: Kept<'_> = serde_json::from_slice(line)
+        .map_err(|e| Unread::NotRead(measures::unparsed(*number, &e)))?;
       Ok(Measuring {
         thresholds: kept.measure.into_owned(),
         measured: kept.measured.into_owned(),

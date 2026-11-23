@@ -62,7 +62,22 @@ pub struct Group {
   pub line: usize,
   /// the file the lines name, or why the first line names none
   pub path: Result<PathBuf, String>,
-  pub lines: Vec<Vec<u8>>,
+  /// each line with its number in the measures file
+  pub lines: Vec<(usize, Vec<u8>)>,
+}
+
+/// why line `line` of the measures file gives no measures, as a file not read says it
+fn fault(line: usize, why: impl std::fmt::Display) -> String {
+  format!("measures file line {line}: {why}")
+}
+
+/// why line `line` of the measures file does not parse. serde_json ends its message with
+/// where in the text it stopped, which in a file of lines is always line 1 and reads as the
+/// line of the file, so that end is left off
+pub fn unparsed(line: usize, error: &serde_json::Error) -> String {
+  let said = error.to_string();
+  let place = format!(" at line {} column {}", error.line(), error.column());
+  fault(line, said.strip_suffix(&place).unwrap_or(&said))
 }
 
 /// a line as it is read: its number, the file it names or why it names none, and its bytes
@@ -119,12 +134,12 @@ impl Groups {
       match line {
         Ok(bytes) if bytes.trim_ascii().is_empty() => {}
         Ok(bytes) => {
-          let named = serde_json::from_slice(&bytes).map_err(|e| e.to_string());
+          let named = serde_json::from_slice(&bytes).map_err(|e| unparsed(self.read, &e));
           return Some((self.read, named, bytes));
         }
         Err(e) => {
           self.failed = true;
-          return Some((self.read, Err(e.to_string()), Vec::new()));
+          return Some((self.read, Err(fault(self.read, e)), Vec::new()));
         }
       }
     }
@@ -137,11 +152,11 @@ impl Iterator for Groups {
 
   fn next(&mut self) -> Option<Group> {
     let (line, named, bytes) = self.ahead.take().or_else(|| self.line())?;
-    let mut lines = vec![bytes];
+    let mut lines = vec![(line, bytes)];
     if let Ok(named) = &named {
       loop {
         match self.line() {
-          Some((_, Ok(next), bytes)) if next == *named => lines.push(bytes),
+          Some((line, Ok(next), bytes)) if next == *named => lines.push((line, bytes)),
           ahead => {
             self.ahead = ahead;
             break;
