@@ -100,6 +100,7 @@ honest() {
 }
 never="README Verdicts: only a grid makes a likely transcode"
 limits="README Limitations"
+scans="docs/limitations.md"
 
 for n in 576 1152 1024 2048; do
   from "loop-$n" m44 "atrim=start_sample=44100:end_sample=$((44100 + n)),aloop=loop=-1:size=$n,atrim=end=34"
@@ -251,7 +252,7 @@ to16 "$work/opus128.opus" opus128
 to16 "$work/vorbis6.ogg" vorbis6 -af asetpts=N/SR/TB
 
 table="samples/README"
-enc="README Encoder family"
+enc="docs/encoders.md Encoder family"
 # a decode as 16-bit FLAC: name, expectation, source, how
 decode() {
   local khz
@@ -282,7 +283,7 @@ for base in lame128 ffaac128 opus128; do
   cut="lossy:$codec:none"
   rate=$(rate_of "$work/$base.wav")
   grid="README Features: the grid"
-  clip="$limits: clipping hides the grid frame by frame"
+  clip="$scans: clipping hides the grid frame by frame"
   level=$found level_src=$grid changing=$found
   if [ $codec = Opus ]; then
     level_src="README Features: with or without a gain after the decode"
@@ -292,8 +293,8 @@ for base in lame128 ffaac128 opus128; do
   treated $base gain+3 "$level" "$level_src" "3 dB up" "volume=3dB"
   treated $base normalised "$level" "$level_src" "peak normalised to full scale" "volume=2.2"
   treated $base replaygain "$level" "$level_src" "a ReplayGain of -7.3 dB applied" "volume=-7.3dB"
-  treated $base fade "$changing" "$grid, $limits: a level that changes over time after an Opus decode" "a 10 s fade in and out" "afade=t=in:d=10,afade=t=out:st=24:d=10"
-  treated $base limiter "$changing" "$grid, $limits: a level that changes over time after an Opus decode" "8 dB up into a limiter" "volume=8dB,alimiter=limit=0.9"
+  treated $base fade "$changing" "$grid, $scans: a level that changes over time after an Opus decode" "a 10 s fade in and out" "afade=t=in:d=10,afade=t=out:st=24:d=10"
+  treated $base limiter "$changing" "$grid, $scans: a level that changes over time after an Opus decode" "8 dB up into a limiter" "volume=8dB,alimiter=limit=0.9"
   treated $base clipped atmost "$clip" "12 dB up, clipping" "volume=12dB"
   ff -i "$work/$base.wav" -filter_complex "volume=-3dB" -c:a pcm_f32le "$work/$base.float.wav"
   ff -i "$work/$base.float.wav" -af "aresample=osf=s16:dither_method=triangular" -c:a pcm_s16le "$work/$base-then-dither.wav"
@@ -311,9 +312,9 @@ for base in lame128 ffaac128 opus128; do
     treated $base to-48 "lossy:$codec" "README Features: finds that grid after a conversion between 44.1 and 48 kHz" "converted to 48 kHz" "aresample=48000"
     treated $base to-48-and-back atmost "nothing says of two conversions" "to 48 kHz and back" "aresample=48000,aresample=44100"
   fi
-  treated $base to-96 atmost "$limits: after any other conversion possibly lossy at most" "converted to 96 kHz" "aresample=96000"
-  treated $base to-88 atmost "$limits: after any other conversion possibly lossy at most" "converted to 88.2 kHz" "aresample=88200"
-  treated $base speed atmost "$limits: after any other conversion possibly lossy at most" "0.1% faster, as off a drifting clock" "asetrate=$rate*1.001,aresample=$rate"
+  treated $base to-96 atmost "$scans: after any other conversion possibly lossy at most" "converted to 96 kHz" "aresample=96000"
+  treated $base to-88 atmost "$scans: after any other conversion possibly lossy at most" "converted to 88.2 kHz" "aresample=88200"
+  treated $base speed atmost "$scans: after any other conversion possibly lossy at most" "0.1% faster, as off a drifting clock" "asetrate=$rate*1.001,aresample=$rate"
   for n in 1 100 577 10000; do
     treated $base "cut-$n" "$cut" "$grid, $enc: the offsets are those of a decode whose start was not cut" "the first $n samples cut" "atrim=start_sample=$n"
   done
@@ -325,7 +326,7 @@ for base in lame128 ffaac128 opus128; do
   treated $base mono-to-stereo "$found" "$grid" "folded to mono, copied to both channels" "pan=stereo|c0=0.5*c0+0.5*c1|c1=0.5*c0+0.5*c1"
   treated $base mid-side "$found" "$grid" "mid and side in place of left and right" "pan=stereo|c0=0.5*c0+0.5*c1|c1=0.5*c0-0.5*c1"
   treated $base to-5.1 "$found" "$grid, $limits: reads only the first two channels" "upmixed to 5.1" "pan=5.1|c0=c0|c1=c1|c2=0.5*c0+0.5*c1|c3=0.1*c0|c4=0.7*c0|c5=0.7*c1"
-  treated $base analog atmost "$limits: after any other conversion possibly lossy at most" "an analog round trip: an odd rate and back, noise 70 dB down, a low-pass at 20 kHz" "aresample=47117,aresample=$rate,$(both 'x+0.0003*(random(ch)*2-1)'),lowpass=f=20000"
+  treated $base analog atmost "$scans: after any other conversion possibly lossy at most" "an analog round trip: an odd rate and back, noise 70 dB down, a low-pass at 20 kHz" "aresample=47117,aresample=$rate,$(both 'x+0.0003*(random(ch)*2-1)'),lowpass=f=20000"
 done
 # a start cut by 577 samples and a gain, on the other bases
 for base in lameV0 lame320 fdk128 vorbis6; do
@@ -458,15 +459,15 @@ for point in $(seq 1 $((points - 1))); do
 done
 note C-seektable-wrong.flac "as:C-honest_16-44.flac" "$wraps" "a seek table whose every point is the first frame"
 ff -i "$work/s44.wav" -c:a flac -f flac pipe:1 > C-flac-piped.flac
-note C-flac-piped.flac consistent "README Limitations: a file written to a pipe is scanned once it is read" "a FLAC written to a pipe, which states no length"
+note C-flac-piped.flac consistent "docs/limitations.md: a file written to a pipe is scanned once it is read" "a FLAC written to a pipe, which states no length"
 ff -i "$work/s44.wav" -c:a pcm_s16le -f wav pipe:1 > C-wav-piped.wav
-note C-wav-piped.wav consistent "README Supported formats: a WAV that states no size is as long as its bytes" "a WAV written to a pipe, its data size 0xFFFFFFFF"
+note C-wav-piped.wav consistent "docs/formats.md: a WAV that states no size is as long as its bytes" "a WAV written to a pipe, its data size 0xFFFFFFFF"
 cp C-honest-plain.wav C-wav-size-0.wav
 poke C-wav-size-0.wav $(($(find_at C-wav-size-0.wav 'data') + 4)) '\x00\x00\x00\x00'
-note C-wav-size-0.wav consistent "README Supported formats: a WAV that states no size is as long as its bytes" "a WAV whose data size is 0"
+note C-wav-size-0.wav consistent "docs/formats.md: a WAV that states no size is as long as its bytes" "a WAV whose data size is 0"
 cp "$work/lame128.mp3" C-xing-lies.mp3
 poke C-xing-lies.mp3 $(($(find_at C-xing-lies.mp3 'Xing|Info') + 8)) "$(be32 12)"
-note C-xing-lies.mp3 consistent "README Supported formats: an MP3 is read to its last frame" "a Xing header that states 12 frames"
+note C-xing-lies.mp3 consistent "docs/formats.md: an MP3 is read to its last frame" "a Xing header that states 12 frames"
 cp "$work/lame128.mp3" C-xing-lies-long.mp3
 poke C-xing-lies-long.mp3 $(($(find_at C-xing-lies-long.mp3 'Xing|Info') + 8)) "$(be32 4000000)"
 note C-xing-lies-long.mp3 limited "rustdoc Limitation::LengthPastBytes" "a Xing header that states 4,000,000 frames"
@@ -557,25 +558,26 @@ done
 
 # what formats allow at the edge
 supported="README Supported formats"
+formats="docs/formats.md"
 wavpack -q -y -b256 "$work/s44.wav" -o C-wavpack-hybrid.wv
-note C-wavpack-hybrid.wv "refused:hybrid WavPack" "$supported" "wavpack -b256"
+note C-wavpack-hybrid.wv "refused:hybrid WavPack" "$formats" "wavpack -b256"
 ff -i "$work/s44.wav" -c:a pcm_u8 "$work/u8s.wav"
 wavpack -q -y "$work/u8s.wav" -o C-wavpack-8bit.wv
-note C-wavpack-8bit.wv "refused:8-bit" "$supported" "wavpack of 8-bit samples"
+note C-wavpack-8bit.wv "refused:8-bit" "$formats" "wavpack of 8-bit samples"
 ff -i "$work/s44.wav" -filter_complex "pan=5.1|c0=c0|c1=c1|c2=c0|c3=c1|c4=c0|c5=c1" -c:a pcm_s16le "$work/six.wav"
 wavpack -q -y "$work/six.wav" -o C-wavpack-6ch.wv
-note C-wavpack-6ch.wv "refused:channels" "$supported" "wavpack of six channels"
+note C-wavpack-6ch.wv "refused:channels" "$formats" "wavpack of six channels"
 lossless "$work/m44.wav" C-wavpack-float_f32-44.wv
-note C-wavpack-float_f32-44.wv honest "$supported: WavPack as float" "wavpack of float samples"
+note C-wavpack-float_f32-44.wv honest "$formats: WavPack as float" "wavpack of float samples"
 ff -i "$work/m44.wav" -c:a pcm_s32le "$work/s32.wav"
 wavpack -q -y "$work/s32.wav" -o C-wavpack-32bit.wv
-note C-wavpack-32bit.wv honest "$supported: WavPack at 32 bits" "wavpack of 32-bit samples"
+note C-wavpack-32bit.wv honest "$formats: WavPack at 32 bits" "wavpack of 32-bit samples"
 mac "$work/s32.wav" C-ape-32bit.ape -c2000 > /dev/null 2>&1
-note C-ape-32bit.ape "refused:32-bit" "$supported" "mac of 32-bit samples"
+note C-ape-32bit.ape "refused:32-bit" "$formats" "mac of 32-bit samples"
 mac "$work/m44.wav" C-ape-float.ape -c2000 > /dev/null 2>&1
-note C-ape-float.ape "refused:float" "$supported" "mac of float samples"
+note C-ape-float.ape "refused:float" "$formats" "mac of float samples"
 mac "$work/u8s.wav" C-ape-8bit.ape -c2000 > /dev/null 2>&1
-note C-ape-8bit.ape honest "$supported: Monkey's Audio at 8 bits" "mac of 8-bit samples"
+note C-ape-8bit.ape honest "$formats: Monkey's Audio at 8 bits" "mac of 8-bit samples"
 mac "$work/six.wav" C-ape-6ch.ape -c2000 > /dev/null 2>&1
 note C-ape-6ch.ape honest "$supported, $limits: reads only the first two channels" "mac of six channels"
 fdkaac -S -p 23 -b 128 -o C-aac-ld.m4a "$work/s44.wav"
@@ -583,7 +585,7 @@ note C-aac-ld.m4a open "$supported lists AAC-LC, HE-AAC and HE-AAC v2 only" "fdk
 fdkaac -S -p 39 -b 128 -o C-aac-eld.m4a "$work/s44.wav"
 note C-aac-eld.m4a open "$supported lists AAC-LC, HE-AAC and HE-AAC v2 only" "fdkaac -p 39 (AAC-ELD)"
 fdkaac -S -p 5 -b 64 -o C-he-aac.m4a "$work/s44.wav"
-note C-he-aac.m4a open "$supported: HE-AAC with the band its decoder rebuilds" "fdkaac -p 5 -b 64"
+note C-he-aac.m4a open "$formats: HE-AAC with the band its decoder rebuilds" "fdkaac -p 5 -b 64"
 fdkaac -S -p 29 -b 32 -o C-he-aac-v2.m4a "$work/s44.wav"
 note C-he-aac-v2.m4a open "$supported: HE-AAC v2" "fdkaac -p 29 -b 32"
 fdkaac -S -p 2 -b 128 -f 2 -o C-aac-adts.aac "$work/s44.wav"

@@ -22,8 +22,8 @@ vorbis-tools, fdkaac, flac, WavPack and Monkey's Audio. It also writes
 
 1. the file
 2. what it should read as
-3. where that expectation comes from: a section of the README, `samples/README.md`, the
-   program's help or a type's documentation
+3. where that expectation comes from: a section of the README, a file under `docs/`,
+   `samples/README.md`, the program's help or a type's documentation
 4. how the file was made
 
 | Expectation        | A case passes when                                                         |
@@ -32,7 +32,7 @@ vorbis-tools, fdkaac, flac, WavPack and Monkey's Audio. It also writes
 | `consistent`       | the verdict is consistent                                                  |
 | `lossy:CODEC`      | a grid of CODEC is found; `any` for whichever codec                        |
 | `lossy:CODEC:NAME` | and the encoder family is NAME; `none` for no family after a cut start     |
-| `atmost`           | it is read; the README says the decode may not be found                    |
+| `atmost`           | it is read; `docs/limitations.md` says it may not be found                 |
 | `as:FILE`          | the verdict, grid, family and cutoff are FILE's                            |
 | `limited`          | it is not read, or its reading states what was not read                    |
 | `refused:WORDS`    | it is not read, and the reason holds WORDS                                 |
