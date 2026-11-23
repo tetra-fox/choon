@@ -44,9 +44,10 @@ pub(crate) fn jobs(opus: bool, other_rate: bool, wma: bool) -> usize {
 }
 
 /// the scan of full `segments`. each codec of each segment is a job on rayon's thread pool that
-/// splits its offsets into tasks on the same pool. Opus is among the codecs with `opus`, and
-/// with `other_rate` a file at 44.1 or 48 kHz is scanned for MP3 and AAC at the other of the
-/// two too. `go_on` is asked before each job and the scan is `None` once it says not to;
+/// splits its offsets into tasks on the same pool. Opus is among the codecs with `opus`, WMA
+/// with `wma`, and with `other_rate` a file at 44.1 or 48 kHz is scanned for MP3 and AAC at
+/// the other of the two too. `go_on` is asked before each job and the scan is `None` once it
+/// says not to;
 /// `ended` is called as each job ends. panics when a segment is not full.
 pub(crate) fn scan(
   segments: &Segments,
@@ -291,9 +292,9 @@ enum Rate {
   Other,
 }
 
-/// what one job of a scan looks for: MP3's or AAC's grid in one segment at one rate, Opus's
-/// frames in every segment at the offsets from the one given, or its short frames of one
-/// length in every segment
+/// what one job of a scan looks for: MP3's grid or the grid under one window in one segment
+/// at one rate, Opus's frames in every segment at the offsets from the one given, or its
+/// short frames of one length in every segment
 #[derive(Clone, Copy)]
 enum Job<'a> {
   Aac(Window, &'a Segment, Rate),
@@ -302,8 +303,9 @@ enum Job<'a> {
   OpusShort(&'a lattice::Stretches, lattice::Short),
 }
 
-/// what a job found: MP3's and AAC's counts of transform values on a log scale at each offset
-/// of the file's grid at the job's rate, Opus's counts of frames at each of the job's offsets
+/// what a job found: MP3's and a window's counts of transform values on a log scale at each
+/// offset of the file's grid at the job's rate, Opus's counts of frames at each of the job's
+/// offsets
 enum Curve {
   Aac(Window, Rate, Vec<f64>),
   /// with the counts of the subband samples at the 32 phases of the filterbank
