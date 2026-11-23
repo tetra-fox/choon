@@ -5,6 +5,8 @@ use std::borrow::Cow;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Split};
 use std::path::PathBuf;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use choon::{MeasureThresholds, Measured};
 use serde::{Deserialize, Serialize};
@@ -87,6 +89,28 @@ impl Groups {
     }
   }
 
+  /// the groups until `stop` says the run is stopped. `total` is set to how many groups the
+  /// file holds once it is read to its end, which is looked for before `stop` is: a stop that
+  /// comes after the last group was given leaves a run that read them all
+  pub fn until<'a>(
+    mut self,
+    stop: &'a AtomicBool,
+    total: &'a OnceLock<usize>,
+  ) -> impl Iterator<Item = Group> + 'a {
+    let mut given = 0;
+    std::iter::from_fn(move || {
+      let Some(group) = self.next() else {
+        total.get_or_init(|| given);
+        return None;
+      };
+      if stop.load(Ordering::Relaxed) {
+        return None;
+      }
+      given += 1;
+      Some(group)
+    })
+  }
+
   /// the next line that is not blank
   fn line(&mut self) -> Option<Line> {
     while !self.failed {
@@ -130,5 +154,41 @@ impl Iterator for Groups {
       path: named.map(Named::path),
       lines,
     })
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use std::fs::File;
+  use std::sync::OnceLock;
+  use std::sync::atomic::{AtomicBool, Ordering};
+
+  use super::Groups;
+
+  #[test]
+  fn a_stop_after_the_last_group_leaves_the_file_read_to_its_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let measures = dir.path().join("measures.jsonl");
+    // two files, the first with two measurings
+    let lines = "{\"file\": \"a\"}\n{\"file\": \"a\"}\n\n{\"file\": \"b\"}\n";
+    std::fs::write(&measures, lines).unwrap();
+    let groups = || Groups::new(File::open(&measures).unwrap());
+
+    let (stop, total) = (AtomicBool::new(false), OnceLock::new());
+    let mut read = groups().until(&stop, &total);
+    assert_eq!(read.next().unwrap().lines.len(), 2);
+    assert_eq!(read.next().unwrap().line, 4);
+    assert_eq!(total.get(), None);
+    stop.store(true, Ordering::Relaxed);
+    assert!(read.next().is_none());
+    assert_eq!(total.get(), Some(&2));
+
+    // a stop before the last group ends the groups with their number unknown
+    let (stop, total) = (AtomicBool::new(false), OnceLock::new());
+    let mut read = groups().until(&stop, &total);
+    assert!(read.next().is_some());
+    stop.store(true, Ordering::Relaxed);
+    assert!(read.next().is_none());
+    assert_eq!(total.get(), None);
   }
 }

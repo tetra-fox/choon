@@ -15,9 +15,9 @@ use std::num::NonZeroUsize;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
+use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -420,10 +420,10 @@ fn run(check: &Check) -> Result<u8, Failed> {
       Source::Files(inputs.files)
     }
   };
-  // a measures file says how many files it holds only once it is read through
+  // how many files there are. a measures file says only once it is read to its end
   let total = match &source {
-    Source::Files(files) => Some(files.len()),
-    Source::Kept(..) => None,
+    Source::Files(files) => OnceLock::from(files.len()),
+    Source::Kept(..) => OnceLock::new(),
   };
   let mut keep = match &check.save_measures {
     Some(path) => Some(Keep {
@@ -463,7 +463,7 @@ fn run(check: &Check) -> Result<u8, Failed> {
   });
   let (events, received) = mpsc::sync_channel(jobs);
   thread::scope(|scope| {
-    let (pool, plan, stop) = (&pool, &plan, &*stop);
+    let (pool, plan, stop, total) = (&pool, &plan, &*stop, &total);
     // the sender moves to this thread and is dropped with it, which ends the events
     scope.spawn(move || {
       pool.install(|| match source {
@@ -475,7 +475,7 @@ fn run(check: &Check) -> Result<u8, Failed> {
           .for_each(|(file, found)| check_file(file, found, plan, &events)),
         // a run that is stopped reads no more of the measures file
         Source::Kept(measures, groups) => groups
-          .take_while(|_| !stop.load(Ordering::Relaxed))
+          .until(stop, total)
           .enumerate()
           .par_bridge()
           .for_each(|(file, group)| check_group(measures, file, group, plan, &events)),
@@ -501,6 +501,7 @@ fn run(check: &Check) -> Result<u8, Failed> {
     // an output that ended early stops the files under way, and the scope waits for them
     stop.store(true, Ordering::Relaxed);
     ended?;
+    let total = total.get().copied();
     if !cut_short(&interrupted, total, tally.finished) {
       return Ok(tally.code);
     }
@@ -689,8 +690,9 @@ impl Tally {
 
 /// what a terminal's summary says of the run beside its files
 struct Run<'a> {
-  /// how many files there are to read, where that is known before they are read
-  total: Option<usize>,
+  /// how many files there are to read, once that is known: from the start for files named,
+  /// and for a measures file when it is read to its end
+  total: &'a OnceLock<usize>,
   /// the directories named
   roots: &'a [PathBuf],
   /// whether the files are read under several profiles
@@ -850,9 +852,10 @@ fn shown(
       anstream::AutoStream::choice(&io::stdout()) != anstream::ColorChoice::Never
     }
   };
-  let one = total == Some(1);
-  let mut bars = Bars::new(total);
-  let mut rows = Vec::with_capacity(total.unwrap_or(0));
+  let known = total.get().copied();
+  let one = known == Some(1);
+  let mut bars = Bars::new(known);
+  let mut rows = Vec::with_capacity(known.unwrap_or(0));
   // of the one file of a check, which no list holds, the line that says why it was not read
   let mut alone = None;
   loop {
@@ -909,6 +912,7 @@ fn shown(
     colour,
     width: console::Term::stdout().size().1,
   };
+  let total = total.get().copied();
   let left = cut_short(interrupted, total, tally.finished).then(|| match total {
     Some(total) => format!("{} of {total} files left", total - tally.finished),
     None => "measures left unread".to_string(),
