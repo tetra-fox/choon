@@ -25,7 +25,7 @@ use realfft::num_complex::Complex;
 
 use crate::decode::{Decoder, Filled, hint_of};
 use crate::grid::aac::{Window, aac_bands};
-use crate::grid::mdct::{DctIv, fold};
+use crate::grid::mdct::{DctIv, fold_windowed};
 
 /// Bitrate an MP3 is written at.
 pub use mp3lame_encoder::Bitrate;
@@ -869,8 +869,7 @@ fn transform_coded(
   let window = window.samples();
   let kept = (16_000.0 * 2.0 * hop as f64 / f64::from(audio.rate)) as usize;
   let mut dct = DctIv::new(hop);
-  let (mut frame, mut folded) = (vec![0.0f32; 2 * hop], vec![0.0f32; hop]);
-  let mut lines = vec![0.0f32; hop];
+  let (mut folded, mut lines) = (vec![0.0f32; hop], vec![0.0f32; hop]);
   let quarter = hop / 2;
   let channels = audio
     .channels
@@ -883,10 +882,7 @@ fn transform_coded(
       let mut out = vec![0.0f32; padded.len()];
       for start in (0..padded.len() - hop).step_by(hop) {
         let block = &padded[start..start + 2 * hop];
-        for ((f, x), w) in frame.iter_mut().zip(block).zip(&window) {
-          *f = x * w;
-        }
-        fold(&frame, &mut folded);
+        fold_windowed(block, &window, &mut folded);
         dct.process(&folded, &mut lines);
         lines[kept.min(hop)..].fill(0.0);
         quantize(&mut lines[..kept.min(hop)]);
