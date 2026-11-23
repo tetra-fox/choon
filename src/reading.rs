@@ -5,7 +5,7 @@ use crate::aggregate::{Measures, measures, middle, percentile, upsample_ratio};
 use crate::decode::opus::OpusUse;
 use crate::engine::{Measured, grid_looked_for};
 use crate::flags::{Flag, findings};
-use crate::grid::{self, Codec, Evidence, Family, Found, Scan};
+use crate::grid::{self, Codec, Evidence, Family, Found};
 use crate::limitation::{Limitation, khz};
 use crate::thresholds::{EncoderProfile, ReadingThresholds};
 use crate::window::{Step, Window};
@@ -344,7 +344,7 @@ impl Measured {
       .as_ref()
       .and_then(|scan| grid::found(scan, thresholds));
     if grid_looked_for(claimed, self.dsd_rate) {
-      found = weighed(found, grid.as_ref(), self.grid.as_ref(), thresholds);
+      found = weighed(found, grid.as_ref(), self.grid.is_some(), thresholds);
     }
     limitations.extend(found.limitations);
     if let Some(he_aac) = &self.he_aac {
@@ -390,13 +390,14 @@ impl Measured {
   }
 }
 
-/// the cutoff reading `found` of a file a grid is looked for in, weighed with its `scan`, `None`
-/// when none ran, and the `grid` the scan found: a grid makes a likely transcode, and a cutoff
-/// that reads as lossy without one makes a doubt. so does an MP3 count just short of a grid
+/// the cutoff reading `found` of a file a grid is looked for in, weighed with the `grid` its
+/// scan found: a grid makes a likely transcode, one in part of the file mixed sources, and a
+/// cutoff that reads as lossy without one makes a doubt, whether the scan found none or, not
+/// `scanned`, did not run
 fn weighed(
   found: CutoffReading,
   grid: Option<&Found>,
-  scan: Option<&Scan>,
+  scanned: bool,
   thresholds: &ReadingThresholds,
 ) -> CutoffReading {
   if let Some(grid) = grid {
@@ -407,25 +408,23 @@ fn weighed(
     if grid.codec == Codec::Aac && !stepped {
       limitations.push(Limitation::AacGridWithoutSteps);
     }
-    if let Evidence::Part { segments, scan } = &grid.evidence {
-      return CutoffReading {
-        verdict: Verdict::MixedSources,
-        confidence: thresholds.confidence_cap,
-        summary: format!(
-          "The samples carry an {name} frame grid at offset {} in {segments} of the {} stretches \
-           scanned (z {:.0}): part of the audio passed through an {name} encoder. {}",
-          scan.offset,
-          grid::SEGMENTS,
-          scan.z,
-          found.summary
-        ),
-        limitations,
-        ..found
-      };
-    }
     let evidence = match &grid.evidence {
-      // read above
-      Evidence::Part { .. } => String::new(),
+      Evidence::Part { segments, scan } => {
+        return CutoffReading {
+          verdict: Verdict::MixedSources,
+          confidence: thresholds.confidence_cap,
+          summary: format!(
+            "The samples carry an {name} frame grid at offset {} in {segments} of the {} \
+             stretches scanned (z {:.0}): part of the audio passed through an {name} encoder. {}",
+            scan.offset,
+            grid::SEGMENTS,
+            scan.z,
+            found.summary
+          ),
+          limitations,
+          ..found
+        };
+      }
       Evidence::Count(scan) => format!(
         "The samples carry an {name} frame grid at offset {} (z {:.0}, {} of {} segments \
          agreeing), as audio decoded from {name} does.",
@@ -520,7 +519,7 @@ fn weighed(
     Verdict::LikelyTranscode | Verdict::MixedSources => {
       let mut limitations = found.limitations;
       limitations.push(Limitation::CutoffWithoutGrid);
-      let unconfirmed = if scan.is_some() {
+      let unconfirmed = if scanned {
         "No MP3, MP2, AAC, Vorbis, WMA, AC-3 or Opus frame grid shows in the samples"
       } else {
         "The samples were not scanned for a codec's frame grid"
