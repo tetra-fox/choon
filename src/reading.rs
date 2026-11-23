@@ -230,9 +230,9 @@ impl Measured {
   /// that reads as lossy without one makes the file possibly lossy, whether the scan found no
   /// grid or did not run. A DSD file is read by its cutoff alone, as a lossy file is.
   ///
-  /// A grid that shows in some of the stretches alone, each past
-  /// [`ReadingThresholds::part_grid_z`], reads as mixed sources: part of the file is
-  /// consistent with a decode, and the scan cannot tell how much of it.
+  /// A grid that shows in some of the stretches alone ([`Evidence::Part`]) reads as mixed
+  /// sources: part of the file is consistent with a decode, and the scan cannot tell how much
+  /// of it.
   ///
   /// # Examples
   ///

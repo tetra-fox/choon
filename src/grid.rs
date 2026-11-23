@@ -84,8 +84,9 @@
 //!   conversion it is not found. Opus's energies are still found after a conversion from 48 to
 //!   44.1 kHz.
 //! - Clipping hides a grid frame by frame.
-//! - Vorbis's grid shows through the AAC scan, so a Vorbis decode reads as AAC by the count.
-//!   Its values do not sit on AAC's steps.
+//! - Vorbis's grid shows through the AAC scan too, so a Vorbis decode whose grid does not stand
+//!   out under Vorbis's own window can read as AAC by the count. Its values do not sit on AAC's
+//!   steps.
 //! - Opus frames the pitch post-filter ran over are found on the grid of an uncut decode alone
 //!   ([`OpusUnfiltered`]). Its SILK mode is not found, nor are frames of 2.5, 5 and 10 ms coded
 //!   as several blocks or at another level than the decoder's.
@@ -483,8 +484,10 @@ pub struct Scan {
   pub opus: Option<OpusScan>,
   /// MP3's and AAC's grids in the samples brought to the other of 44.1 and 48 kHz.
   ///
-  /// `None` at any other sample rate, and in measures kept by a version of the analyzer that
-  /// did not scan at the other rate.
+  /// `None` where
+  /// [`MeasureThresholds::scan_other_rate`](crate::MeasureThresholds::scan_other_rate) is off,
+  /// at any other sample rate, and in measures kept by a version of the analyzer that did not
+  /// scan at the other rate.
   #[cfg_attr(feature = "serde", serde(default))]
   pub other_rate: Option<OtherRate>,
 }

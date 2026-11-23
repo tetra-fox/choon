@@ -15,7 +15,11 @@ use crate::thresholds::ReadingThresholds;
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(untagged))]
 pub enum Evidence {
-  /// Offset whose transform values count far fewer than the others, for MP3 and AAC.
+  /// Offset whose transform values count far fewer than the others.
+  ///
+  /// It is the count of MP3, MP2, AAC, Vorbis, WMA or AC-3. Where enough segments' subband
+  /// counts sit at the phase an uncut MP3, Vorbis or MP2 decode has, it is the subband count,
+  /// however little it stands out ([`ReadingThresholds::block_phase_segments`]).
   Count(CodecScan),
   /// Such an offset in the samples brought to another rate, for a decode converted afterwards.
   CountAt {
@@ -27,7 +31,10 @@ pub enum Evidence {
   },
   /// Such an offset in some of the segments alone, for a file decoded from the codec in part.
   Part {
-    /// Number of segments whose own count stands out at the offset.
+    /// Number of segments that show the grid.
+    ///
+    /// A segment shows it by its own count at the offset or, for MP3, by enough scalefactor
+    /// bands on whole steps of the quantizer.
     segments: usize,
     /// Offset and how far its count stands out.
     #[cfg_attr(feature = "serde", serde(flatten))]
@@ -116,8 +123,8 @@ pub enum Family {
   Faac,
   /// Nero's AAC encoder: the Kaiser-Bessel-derived window and a delay of 2624 samples.
   ///
-  /// Named only where the steps of AAC's quantizer show ([`Found::quantizer`]). A Vorbis decode
-  /// reads as AAC, at this offset about one time in thirteen, and shows none.
+  /// Named only where the steps of AAC's quantizer show ([`Found::quantizer`]). A Vorbis
+  /// decode's AAC count sits at this offset about one time in thirteen, and shows none.
   Nero,
   /// ffmpeg's AAC encoder or fdk-aac: the Kaiser-Bessel-derived window, their delay cut whole.
   FfmpegOrFdk,
@@ -357,9 +364,9 @@ fn aac_stepped<'a>(
 
 /// the codec whose grid `scan` shows under `thresholds`, and what shows it. in turn:
 ///
-/// - MP3, MP2, AAC, Vorbis, WMA or AC-3 over its z threshold with as many segments agreeing as its
-///   own threshold asks, the one furthest over its z threshold when several are. AAC is read
-///   under each window
+/// - MP3, MP2, AAC, Vorbis, WMA or AC-3 over its z threshold with as many segments agreeing as
+///   its own threshold asks, the one furthest over its z threshold when several are. AAC is
+///   read under each window
 /// - MP3 by its quantizer's steps in enough segments, then AAC by its own
 /// - Opus with enough frames on its lattice in the segments or in the windows: at the
 ///   decoder's level, at another, as frames under 20 ms, with the pitch post-filter taken

@@ -84,7 +84,7 @@ pub enum Limitation {
   FilteredAt20Khz,
   /// Cutoff that shows only the lowest of several lossy generations.
   LowestCutoffOnly,
-  /// AAC grid without AAC's quantizer steps, which a Vorbis or WMA decode's grid reads as too.
+  /// AAC grid without AAC's quantizer steps, as a Vorbis or WMA decode's grid can read too.
   AacGridWithoutSteps,
   /// Cutoff at an encoder's without a frame grid.
   ///
