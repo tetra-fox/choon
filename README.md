@@ -325,7 +325,7 @@ music/honest.flac: consistent (confidence 0.73)
 - The list fits the terminal's width: a name too long for its line has `...` in its middle, and
   a terminal under 60 columns gets the piped lines
 - `--verbose` lists every file, with a column for each grid and its offset, and every
-  directory file by file
+  directory file by file, then prints each flagged file in detail
 - A walk skips hidden files and directories; `choon check --help` lists the extensions it reads
 - A file named twice, or named and inside a directory named, is read once
 - With no audio file to read, `choon: no audio files found` goes to stderr and the exit is 0
@@ -357,9 +357,9 @@ music/honest.flac: consistent (confidence 0.73)
 | 2         | a file that could not be read, or a wrong argument    |
 | 130       | an interrupt before every file was read               |
 
-- On an interrupt (Ctrl-C, or SIGTERM on Unix) no further file is started and the files under
-  way are dropped. The files already read keep their lines, in the output and in the measures
-  file, and stderr says `choon: interrupted: N of M files read`
+- On an interrupt (Ctrl-C, or SIGTERM or SIGHUP on Unix) no further file is started and the
+  files under way are dropped. The files already read keep their lines, in the output and in
+  the measures file, and stderr says `choon: interrupted: N of M files read`
 - A file without a line was not read, so a script that goes on later gives those files again
 - A second interrupt ends the program at once
 
@@ -390,9 +390,11 @@ done
   tables, with the same exit code. No audio file is opened
 - A reading's `measureSeconds` is 0 there, and `readSeconds` is the time the reading took
 - A profile reads a file only from a measuring made with its own `measure` thresholds. Without
-  one the file is not read and stderr names the profile and the file
+  one the file is not read, and stderr or a terminal's `Not read` list names the profile and
+  the file
 - Measures saved with `--fast` are read again with `--fast`
-- A line that does not parse is a file not read, named `FILE:LINE` when it names no file
+- A line that does not parse is a file not read, as `not read (measures file line 12: ...)`,
+  and is named `FILE:LINE` when it names no file
 
 ### Library
 
