@@ -101,7 +101,8 @@ struct Check {
   /// A line holds the file's path, the program's version, the measure thresholds and the
   /// measures without the spectrogram and waveform data, and is written when its file is
   /// read. A file read with profiles that measure differently has a line for each measuring.
-  /// A file not read has none. --from-measures reads the lines again.
+  /// A file not read has none. An existing FILE is replaced. --from-measures reads the lines
+  /// again.
   #[arg(long, value_name = "FILE", conflicts_with = "from_measures")]
   save_measures: Option<PathBuf>,
 
