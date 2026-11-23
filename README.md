@@ -49,10 +49,10 @@ spread across all windows.
 ### Frame grid
 
 In a file that claims a lossless format, four stretches of the samples are also scanned for the
-frame grid of an MP3, AAC, Vorbis, WMA or AC-3 encoder. The encoder transforms its input in frames on a fixed
-grid and zeroes many transform values. Running its transform again on the decoded samples, with
-frames where the encoder put them, finds those values back at the level of the samples' rounding
-noise.
+frame grid of an MP3, AAC, Vorbis, WMA or AC-3 encoder. The encoder transforms its input in
+frames on a fixed grid and zeroes many transform values. Running its transform again on the
+decoded samples, with frames where the encoder put them, finds those values back at the level of
+the samples' rounding noise.
 
 AAC gives a long block one of two windows, and the zeroed values come back only under the one
 the encoder used. The scan runs under both: the Kaiser-Bessel-derived window of ffmpeg, fdk-aac
@@ -76,6 +76,7 @@ granules where the count puts them, the scan counts the bands whose values all s
 step.
 
 - Three stretches with enough such bands are an MP3 grid where the count stands out too little
+- Two such stretches are an MP3 grid in part of the file
 - Steps finer than the rounding noise of 16-bit samples, as most are at 320 kbps, leave nothing
   to count
 
@@ -177,8 +178,9 @@ for its long blocks, so a grid's offset and window fit an encoder family:
 | possibly lossy   | the cutoff reads as a transcode or mixed sources, and no frame grid shows   |
 | inconclusive     | too little audio, no pattern, or a cut indistinguishable from an honest one |
 
-- A grid in two of the four stretches scanned, each far over the grid's threshold, reads as mixed
-  sources. The scan cannot tell how much of the file the section covers
+- A grid in two of the four stretches scanned reads as mixed sources, and so does one in a
+  single stretch at the offset of a decode whose start was not cut. The scan cannot tell how
+  much of the file the section covers
 - A lossy file is also consistent when it stops where its own bitrate cuts
 - In a lossy file and a DSD file, where no grid is looked for, a likely transcode is nearly every
   window stopping at one known encoder cutoff with a sharp shelf
@@ -483,8 +485,9 @@ audio cannot be shared. Each lossy file was encoded from a master, decoded, and 
 - Opus is looked for at 44.1 and 48 kHz only
 - An Opus decode folded to mono, with one channel copied to both, turned to mid and side, or
   truncated to 8 bits is not found
-- A lossy section shows a grid only in the stretches that fall in it: one in a single stretch,
-  or between the four, is found by its cutoff alone, as possibly lossy at most
+- A lossy section shows a grid only in the stretches that fall in it. One in a single stretch
+  is found by its grid only at the offset of a decode whose start was not cut, and one between
+  the four by its cutoff alone, as possibly lossy at most
 - Clipping hides the grid frame by frame, so a decode made louder until it clips can lose it. The
   scan reads stretches that are not clipped where the file has them. A file clipped throughout
   can read as consistent, with a limitation that says the stretches scanned were clipped
@@ -493,8 +496,8 @@ audio cannot be shared. Each lossy file was encoded from a master, decoded, and 
   throughout can still read as consistent
 - The grid thresholds were tuned on LAME's MP3 and ffmpeg's AAC; [Encoders](#encoders) lists
   what the scan finds of others
-- A grid shows that the samples were decoded from MP3, MP2, AAC, Vorbis, WMA, AC-3 or Opus at some
-  point, as in a master built from such material
+- A grid shows that the samples were decoded from MP3, MP2, AAC, Vorbis, WMA, AC-3 or Opus at
+  some point, as in a master built from such material
 - A lossy sample that was processed and mixed into a master, as a pitched or filtered clip
   under other sounds, leaves no grid and is not found
 - A cutoff near 20 kHz, where MP3 320 and AAC cut and many recordings are filtered anyway, reads
