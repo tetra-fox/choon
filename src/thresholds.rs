@@ -580,7 +580,9 @@ impl Default for ReadingThresholds {
       // the lossless files reach 8.8 in one segment, and WMA decodes start at 208
       wma_grid_z: 12.0,
       wma_grid_segments_agreeing: 3,
-      ac3_grid_z: 12.0,
+      // a segment of the held-out lossless files reaches 6.6, and lower thresholds find few
+      // more decodes
+      ac3_grid_z: 8.0,
       ac3_grid_segments_agreeing: 3,
       // of 1,026 lossless files none has three segments agreeing, and of 332 MP2 decodes
       // 327 have four, from z 4.1
