@@ -62,9 +62,10 @@ Exit status:
     2  a file could not be read, or an argument was wrong
   130  an interrupt ended the run before every file was read
 
-A file the analyzer cannot open as audio is one that could not be read. On an interrupt the
-files under way are dropped, the files already read keep their lines, and stderr says how
-many were read. A second interrupt ends the program at once.")]
+A file the analyzer cannot open as audio is one that could not be read. An interrupt is
+Ctrl-C, or SIGTERM or SIGHUP on Unix. On one the files under way are dropped, the files
+already read keep their lines, and stderr says how many were read. A second interrupt ends
+the program at once.")]
   Check(Check),
 }
 
@@ -106,9 +107,10 @@ struct Check {
 
   /// Read the measures --save-measures wrote to FILE in place of audio files
   ///
-  /// Each file is printed as a check of it prints it, under each --profile or the defaults,
-  /// and no audio is opened or decoded. A profile reads a file only from measures taken
-  /// with its own measure thresholds, so --fast is given again for measures taken with it.
+  /// Each file is printed as a check of its audio prints it, under each --profile or the
+  /// defaults, with a measureSeconds of 0 in the JSON. No audio is opened or decoded. A
+  /// profile reads a file only from measures taken with its own measure thresholds, and a
+  /// file without them is not read, so --fast is given again for measures taken with it.
   /// The reading thresholds are free to differ.
   #[arg(
     long,
@@ -135,7 +137,7 @@ struct Check {
 
   /// Stop measuring a file after SECONDS and read what was measured by then
   ///
-  /// The time is each file's own, from when it is started, over every measuring of it. A file
+  /// Each file has SECONDS from when it is started, for all its measurings together. A file
   /// out of time still prints a reading, which covers the part measured and says so among its
   /// limitations. A file with no window measured by then is not read. Without this option a
   /// file is measured to its end.
@@ -171,8 +173,9 @@ struct Check {
   ///
   /// A terminal otherwise lists only the flagged files, read as a likely transcode, mixed
   /// sources or possibly lossy, and those not read, and gives a directory whose files all read
-  /// alike one line. With this option the list also states each grid's offset. Lines and JSON
-  /// always hold every file.
+  /// alike one line. With this option the list also states each grid's offset. A file checked
+  /// alone is always shown in detail, and with its reading's summary under this option. Lines
+  /// and JSON always hold every file.
   #[arg(short, long)]
   verbose: bool,
 
@@ -1042,7 +1045,7 @@ fn minutes(text: &str) -> Result<f64, String> {
   Ok(minutes)
 }
 
-/// the time `text` names in seconds, refusing none and one no clock counts
+/// the time `text` names in seconds, refusing no time and one a `Duration` cannot hold
 fn seconds(text: &str) -> Result<Duration, String> {
   let seconds: f64 = text.parse().map_err(|e| format!("{e}"))?;
   Duration::try_from_secs_f64(seconds)
@@ -1068,7 +1071,7 @@ struct Measuring {
   /// the thresholds it was made with
   thresholds: MeasureThresholds,
   measured: Measured,
-  /// how long it took, in seconds; none for one read from a measures file
+  /// how long it took, in seconds; 0 for one read from a measures file
   seconds: f64,
 }
 
