@@ -35,9 +35,9 @@ pub(crate) struct Opus {
 }
 
 /// the number of jobs in one scan: five in each segment, for MP3, for AAC under each of its
-/// windows, for Vorbis and for AC-3, and with `wma` one more for WMA. with `opus`, set at a rate Opus is
-/// looked for at, one more per segment and one per length of short frame, and with
-/// `other_rate` too MP3's and AAC's three again in each segment at the other rate
+/// windows, for Vorbis and for AC-3, and with `wma` one more for WMA. with `opus`, set at a
+/// rate Opus is looked for at, one more per segment and one per length of short frame, and
+/// with `other_rate` too MP3's and AAC's three again in each segment at the other rate
 pub(crate) fn jobs(opus: bool, other_rate: bool, wma: bool) -> usize {
   (5 + usize::from(wma) + usize::from(opus) + 3 * usize::from(opus && other_rate)) * SEGMENTS
     + lattice::SHORT.len() * usize::from(opus)
@@ -395,10 +395,12 @@ fn opus_scan(counted: &[lattice::Counted], short: &[Vec<[usize; 2]>], opus: &Opu
 /// count drifts from offset to offset with the audio that enters and leaves its frames, and
 /// the drifts of four segments can sum to a low stretch of offsets. a grid lowers one offset
 fn levelled(curve: &[f64]) -> Vec<f64> {
+  let mut near = Vec::with_capacity(2 * NEAR + 1);
   (0..curve.len())
     .map(|o| {
-      let near = &curve[o.saturating_sub(NEAR)..(o + NEAR + 1).min(curve.len())];
-      curve[o] - median(near.to_vec())
+      near.clear();
+      near.extend_from_slice(&curve[o.saturating_sub(NEAR)..(o + NEAR + 1).min(curve.len())]);
+      curve[o] - median(&mut near)
     })
     .collect()
 }
@@ -430,8 +432,12 @@ fn codec_scan(curves: &[Vec<f64>]) -> CodecScan {
 /// how far the lowest entry of `curve` sits below the median in robust standard deviations,
 /// and its index: the first lowest
 fn robust_z(curve: &[f64]) -> (f64, usize) {
-  let middle = median(curve.to_vec());
-  let mad = MAD_TO_SD * median(curve.iter().map(|c| (c - middle).abs()).collect());
+  let mut sorted = curve.to_vec();
+  let middle = median(&mut sorted);
+  for value in &mut sorted {
+    *value = (*value - middle).abs();
+  }
+  let mad = MAD_TO_SD * median(&mut sorted);
   let (lowest, at) = curve
     .iter()
     .enumerate()
@@ -446,8 +452,8 @@ fn robust_z(curve: &[f64]) -> (f64, usize) {
   (z, at)
 }
 
-/// the median of `values`, the mean of the middle two for an even count
-fn median(mut values: Vec<f64>) -> f64 {
+/// the median of `values`, the mean of the middle two for an even count. sorts them
+fn median(values: &mut [f64]) -> f64 {
   values.sort_by(f64::total_cmp);
   let half = values.len() / 2;
   if values.len().is_multiple_of(2) {
