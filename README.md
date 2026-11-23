@@ -263,9 +263,12 @@ cargo install choon
 
 ```console
 $ choon check music/
-likely transcode  (MP3 grid, cutoff 16.8 kHz, MP3 ~128 kbps)  music/lame-128.flac
-possibly lossy    (cutoff 19.4 kHz, MP3 ~224 kbps, no grid)  music/cut-19.flac
-likely transcode  (MP3 grid, cutoff 20.2 kHz, MP3 ~320 kbps)  music/lame-320.flac
+  Verdict           Grid  Cutoff    Encoder        File
+  ----------------  ----  --------  -------------  -------------
+music/
+  possibly lossy          19.4 kHz  MP3 ~224 kbps  cut-19.flac
+  likely transcode  MP3   16.8 kHz  MP3 ~128 kbps  lame-128.flac
+  likely transcode  MP3   20.2 kHz  MP3 ~320 kbps  lame-320.flac
 
 Verdict            Files
 ------------------ -------
@@ -279,16 +282,10 @@ Files read             4
 Files not read         0
 Wall time          0.9 s
 Files per minute     255
-
-Verdict            Grid            Cutoff     Encoder         Path
------------------- --------------- ---------- --------------- ---------------------
-possibly lossy                     19.4 kHz   MP3 ~224 kbps   music/cut-19.flac
-likely transcode   MP3, offset 1   16.8 kHz   MP3 ~128 kbps   music/lame-128.flac
-likely transcode   MP3, offset 1   20.2 kHz   MP3 ~320 kbps   music/lame-320.flac
 ```
 
-A terminal shows a progress bar per file and one for the run, each flagged file as it is found,
-then these tables. One file alone gets its reading in detail, with its summary in sentences under
+A terminal shows a progress bar per file and one for the run with the counts so far, then the
+flagged files by directory and the counts. One file alone gets its reading in detail, with its summary in sentences under
 `--verbose`. Piped or with `--json`, each file is one line, in the order files finish:
 
 ```console
@@ -309,7 +306,7 @@ music/honest.flac: consistent (confidence 0.73)
 | ------------------------------------------ | --------------------------------------------------------- |
 | `-j`, `--jobs N`                           | read up to N files at once, on N threads                  |
 | `-L`, `--follow`                           | follow symbolic links in a directory                      |
-| `-v`, `--verbose`                          | print every file in a terminal, flagged ones in detail    |
+| `-v`, `--verbose`                          | list every file in a terminal, flagged ones in detail     |
 | `--color WHEN`                             | colour the verdicts: `auto`, `always` or `never`          |
 | `--json`                                   | print each file as one line of JSON                       |
 | `--profile FILE`                           | read with the thresholds in FILE in place of the defaults |
@@ -320,6 +317,14 @@ music/honest.flac: consistent (confidence 0.73)
 | `--fast`                                   | skip the scans for WMA and for a converted sample rate    |
 | `--max-full-minutes M --sampled-windows N` | read files longer than M minutes at N one-second windows  |
 
+- A terminal's list names a directory given once, the directories under it from there, and
+  each file by its name. A file given itself is listed under its directory, or by its path
+  when no other file given shares the directory
+- A directory whose files all read alike is one line, as
+  `album/  12 of 12 likely transcode (MP3 grid, cutoff 16.5 to 16.9 kHz, MP3 (LAME) ~128 kbps)`
+- The list fits the terminal's width: a name too long for its line has `...` in its middle, and
+  a terminal under 60 columns gets the piped lines
+- `--verbose` lists every file with each grid's offset, and every directory file by file
 - A walk skips hidden files and directories; `choon check --help` lists the extensions it reads
 - A file named twice, or named and inside a directory named, is read once
 - With no audio file to read, `choon: no audio files found` goes to stderr and the exit is 0

@@ -23,10 +23,19 @@ pub struct Problem {
   pub unread: bool,
 }
 
+/// a file to read
+pub struct Found {
+  pub path: PathBuf,
+  /// which of [`Inputs::roots`] a walk found it under; `None` for a file named itself
+  pub root: Option<usize>,
+}
+
 /// the files to read, in the order given, and what the walks could not read
 #[derive(Default)]
 pub struct Inputs {
-  pub files: Vec<PathBuf>,
+  pub files: Vec<Found>,
+  /// the directories named, as they were named
+  pub roots: Vec<PathBuf>,
   pub problems: Vec<Problem>,
 }
 
@@ -52,16 +61,21 @@ impl Inputs {
     // a file named twice, or named and inside a directory named, is read once, where it first
     // comes. two different paths to one file are two files here
     let mut seen = HashSet::new();
-    inputs.files.retain(|file| seen.insert(file.clone()));
+    inputs.files.retain(|file| seen.insert(file.path.clone()));
     Ok(inputs)
   }
 
   fn add(&mut self, path: &Path, follow: bool) {
     // a path that cannot be looked at is left for the analysis to fail on, which reports it
     if !path.is_dir() {
-      self.files.push(path.to_path_buf());
+      self.files.push(Found {
+        path: path.to_path_buf(),
+        root: None,
+      });
       return;
     }
+    let root = Some(self.roots.len());
+    self.roots.push(path.to_path_buf());
     let walk = WalkDir::new(path)
       .follow_links(follow)
       .sort_by_file_name()
@@ -72,7 +86,10 @@ impl Inputs {
       match entry {
         // a link not followed is neither a file nor a directory
         Ok(entry) if entry.file_type().is_file() && audio(entry.path()) => {
-          self.files.push(entry.into_path());
+          self.files.push(Found {
+            path: entry.into_path(),
+            root,
+          });
         }
         Ok(_) => {}
         Err(e) => self.problems.push(Problem {

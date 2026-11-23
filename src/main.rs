@@ -31,9 +31,9 @@ use clap::{Args, ColorChoice, Parser, Subcommand};
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use serde::{Deserialize, Serialize};
 
-use crate::cli::inputs::{EXTENSIONS, Inputs};
+use crate::cli::inputs::{EXTENSIONS, Found, Inputs};
 use crate::cli::measures::{Group, Groups, Kept};
-use crate::cli::terminal::{self, Bars, Row};
+use crate::cli::terminal::{self, Bars, Counted, Row};
 
 /// every file read is consistent with its format, possibly lossy, or the analyzer cannot tell
 const CLEAN: u8 = 0;
@@ -167,10 +167,12 @@ struct Check {
   #[arg(short = 'L', long)]
   follow: bool,
 
-  /// Print every file in a terminal, and every flagged file in detail
+  /// List every file in a terminal, and every flagged file in detail
   ///
   /// A terminal otherwise lists only the flagged files, read as a likely transcode, mixed
-  /// sources or possibly lossy, and those not read. Lines and JSON always hold every file.
+  /// sources or possibly lossy, and those not read, and gives a directory whose files all read
+  /// alike one line. With this option the list also states each grid's offset. Lines and JSON
+  /// always hold every file.
   #[arg(short, long)]
   verbose: bool,
 
@@ -201,6 +203,7 @@ struct Thresholds {
 }
 
 /// what a file measured, without its windows, and its reading under each profile
+#[cfg_attr(test, derive(Clone))]
 struct Checked {
   claimed: Claimed,
   duration: f64,
@@ -243,6 +246,7 @@ struct Analyzed<'a> {
 }
 
 /// one profile's reading of a file, with how long it took
+#[cfg_attr(test, derive(Clone))]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Read {
@@ -297,10 +301,11 @@ enum Event {
     progress: Vec<Arc<AtomicU32>>,
   },
   /// the file numbered `file` is read or could not be, with the lines the measures file gets
-  /// for it
+  /// for it. `root` is which of the directories named it was found under
   Done {
     file: usize,
     path: PathBuf,
+    root: Option<usize>,
     result: Result<Box<Checked>, Unread>,
     kept: Vec<String>,
   },
@@ -388,6 +393,8 @@ fn run(check: &Check) -> Result<u8, Failed> {
     _ => Coverage::Full,
   };
   let mut code = CLEAN;
+  // the directories named, which a terminal lists their files under
+  let mut roots = Vec::new();
   let source = match &check.from_measures {
     Some(path) => {
       let file = File::open(path).map_err(|e| Failed::Measures(path.clone(), e))?;
@@ -411,6 +418,7 @@ fn run(check: &Check) -> Result<u8, Failed> {
         eprintln!("choon: no audio files found");
         return Ok(code);
       }
+      roots = inputs.roots;
       Source::Files(inputs.files)
     }
   };
@@ -469,10 +477,11 @@ fn run(check: &Check) -> Result<u8, Failed> {
   let measure = {
     let (stop, profiles, events) = (&*stop, &profiles, events.clone());
     let (save, timeout) = (keep.is_some(), check.timeout);
-    move |(file, path): (usize, &PathBuf)| {
+    move |(file, found): (usize, &Found)| {
       if stop.load(Ordering::Relaxed) {
         return;
       }
+      let path = &found.path;
       let progress: Vec<Arc<AtomicU32>> = (0..measurings).map(|_| Arc::default()).collect();
       let name = path.file_name().unwrap_or(path.as_os_str());
       let event = Event::Started {
@@ -520,6 +529,7 @@ fn run(check: &Check) -> Result<u8, Failed> {
       let done = Event::Done {
         file,
         path: path.clone(),
+        root: found.root,
         result,
         kept,
       };
@@ -550,6 +560,7 @@ fn run(check: &Check) -> Result<u8, Failed> {
       let done = Event::Done {
         file,
         path,
+        root: None,
         result,
         kept: Vec::new(),
       };
@@ -577,6 +588,7 @@ fn run(check: &Check) -> Result<u8, Failed> {
     let ended = if !check.json && io::stdout().is_terminal() {
       let run = Run {
         total,
+        roots: &roots,
         profiled: profiles.len() > 1,
         started,
         interrupted: &interrupted,
@@ -621,6 +633,8 @@ impl Tally {
 struct Run<'a> {
   /// how many files there are to read, where that is known before they are read
   total: Option<usize>,
+  /// the directories named
+  roots: &'a [PathBuf],
   /// whether the files are read under several profiles
   profiled: bool,
   started: Instant,
@@ -635,7 +649,7 @@ fn cut_short(interrupted: &AtomicBool, total: Option<usize>, finished: usize) ->
 /// what a check reads
 enum Source<'a> {
   /// audio files, to measure
-  Files(Vec<PathBuf>),
+  Files(Vec<Found>),
   /// the measures file at this path, by the groups of its lines
   Kept(&'a Path, Groups),
 }
@@ -755,8 +769,8 @@ fn printed(
   Ok(())
 }
 
-/// shows the files under way in a terminal with each finding above them, then one file's reading
-/// in detail or the tables of many, and counts each file in `tally`
+/// shows the files under way in a terminal over a count of what was found, then one file's
+/// reading in detail or the list and the counts of many, and counts each file in `tally`
 fn shown(
   received: Receiver<Event>,
   check: &Check,
@@ -766,6 +780,7 @@ fn shown(
 ) -> Result<(), Failed> {
   let Run {
     total,
+    roots,
     profiled,
     started,
     interrupted,
@@ -778,8 +793,10 @@ fn shown(
     }
   };
   let one = total == Some(1);
-  let mut bars = Bars::new(total.unwrap_or(0));
+  let mut bars = Bars::new(total);
   let mut rows = Vec::with_capacity(total.unwrap_or(0));
+  // of the one file of a check, which no list holds, the line that says why it was not read
+  let mut alone = None;
   loop {
     match received.recv_timeout(TICK) {
       Ok(Event::Started {
@@ -790,44 +807,51 @@ fn shown(
       Ok(Event::Done {
         file,
         path,
+        root,
         result,
         kept,
       }) => {
-        bars.ended(file);
         tally.count(&result);
         if let Some(keep) = keep {
           keep.write(&kept)?;
         }
         let outcome = match result {
           Ok(checked) => {
-            let flagged = checked
-              .readings
-              .iter()
-              .any(|read| flagged(read.reading.verdict));
-            if !one && (flagged || check.verbose) {
-              bars
-                .say(&listed(&path, &checked, colour))
-                .map_err(Failed::Output)?;
-            }
+            // a file under several profiles counts once, as the worst any of them reads it
+            let found = [
+              Verdict::LikelyTranscode,
+              Verdict::MixedSources,
+              Verdict::PossiblyLossy,
+            ]
+            .into_iter()
+            .find(|verdict| {
+              let reads = |read: &Read| read.reading.verdict == *verdict;
+              checked.readings.iter().any(reads)
+            });
+            bars.ended(file, found.map(Counted::Flagged));
             Ok(checked)
           }
-          Err(unread @ (Unread::Open(_) | Unread::Unmeasured(_))) => {
-            bars.complain(&complaint(&path, &unread));
+          Err(unread) => {
+            bars.ended(file, Some(Counted::NotRead));
+            match &unread {
+              Unread::Open(_) | Unread::Unmeasured(_) => {
+                bars.complain(&complaint(&path, &unread));
+              }
+              Unread::NotRead(why) => alone = Some(not_read(&path, why, colour)),
+            }
             Err(unread.to_string())
           }
-          Err(Unread::NotRead(why)) => {
-            bars
-              .say(&not_read(&path, &why, colour))
-              .map_err(Failed::Output)?;
-            Err(why)
-          }
         };
-        rows.push(Row { path, outcome });
+        rows.push(Row {
+          path,
+          root: root.map(|root| roots[root].as_path()),
+          outcome,
+        });
       }
       Err(RecvTimeoutError::Timeout) => {}
       Err(RecvTimeoutError::Disconnected) => break,
     }
-    bars.tick();
+    bars.tick().map_err(Failed::Output)?;
   }
   bars.finish();
   rows.sort_by(|a, b| a.path.cmp(&b.path));
@@ -841,10 +865,11 @@ fn shown(
       Row {
         path,
         outcome: Ok(checked),
+        ..
       },
     ] if one => terminal::readout(path, checked, profiled, check.verbose, colour, width),
-    // its failure is already on the screen, and stderr says of an interrupt
-    [] | [_] if one => return Ok(()),
+    // stderr has said why it could not be opened, or that an interrupt came before it was read
+    [] | [_] if one => alone.unwrap_or_default(),
     _ => terminal::tables(
       &rows,
       profiled,
@@ -855,7 +880,9 @@ fn shown(
       width,
     ),
   };
-  print(&mut io::stdout().lock(), text.trim_end())?;
+  if !text.is_empty() {
+    print(&mut io::stdout().lock(), text.trim_end())?;
+  }
   Ok(())
 }
 
@@ -1143,47 +1170,18 @@ fn piped(path: &Path, checked: &Checked) -> String {
   format!("{}: {}", path.display(), said(checked, false))
 }
 
-/// a file's line in a terminal: its verdict in a column of its own, what was found, then its
-/// path, which comes last so that it can be copied whole. several readings share the line
-/// unpadded
-fn listed(path: &Path, checked: &Checked, colour: bool) -> String {
-  let path = terminal::legible(path);
-  let [read] = &checked.readings[..] else {
-    return format!("{}  {path}", said(checked, colour));
-  };
-  let reading = &read.reading;
-  let mut found = found(reading, checked.grid.is_some());
-  found.extend(kind(checked));
-  status_line(
-    &terminal::painted(Some(reading.verdict), label(reading.verdict), colour),
-    label(reading.verdict).len(),
-    &found.join(", "),
-    &path,
-  )
-}
-
-/// a terminal's line for a file not read as audio
+/// a terminal's line for the one file of a check when it is not read as audio: the status
+/// padded to the verdicts' width, why in parentheses, then its path
 fn not_read(path: &Path, why: &str, colour: bool) -> String {
-  status_line(
-    &terminal::painted(None, NOT_READ, colour),
-    NOT_READ.len(),
-    why,
-    &terminal::legible(path),
+  let pad = " ".repeat(VERDICT_WIDTH - NOT_READ.len());
+  format!(
+    "{}{pad}  ({why})  {}",
+    terminal::painted(None, NOT_READ, colour),
+    terminal::legible(path)
   )
 }
 
 const NOT_READ: &str = "not read";
-
-/// `status`, `width` columns wide as printed, padded to the verdicts' column, then `found` in
-/// parentheses when there is any, then `path`
-fn status_line(status: &str, width: usize, found: &str, path: &str) -> String {
-  let pad = " ".repeat(VERDICT_WIDTH.saturating_sub(width));
-  if found.is_empty() {
-    format!("{status}{pad}  {path}")
-  } else {
-    format!("{status}{pad}  ({found})  {path}")
-  }
-}
 
 /// a file's readings, each its verdict and what was found in parentheses, named after their
 /// profile when there are several, with the verdicts coloured when `colour`
