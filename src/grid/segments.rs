@@ -21,6 +21,10 @@ const QUIET_POWER: f64 = 1e-4;
 /// a quiet passage holds few values an encoder had to quantize
 const QUIETER: f64 = 0.1;
 
+/// the mean square under which a segment can give way to a louder stretch, -20 dBFS: over
+/// it a passage holds enough for a count whatever else the file has
+const LOW_POWER: f64 = 1e-2;
+
 /// one stretch of the file the grid is scanned in, filled as its samples are decoded
 pub(super) struct Segment {
   /// the sample frame it starts at
@@ -173,8 +177,11 @@ impl Segments {
           .enumerate()
           .all(|(other, segment)| other == index || !spare.overlaps(segment))
       });
-      let gives_way =
-        |spare: &Segment| self.0[index].is_clipped() || self.0[index].power < QUIETER * spare.power;
+      let gives_way = |spare: &Segment| {
+        let segment = &self.0[index];
+        let low = segment.power < LOW_POWER * 2.0 * SEGMENT as f64;
+        segment.is_clipped() || (low && segment.power < QUIETER * spare.power)
+      };
       if let Some(at) = free.filter(|at| gives_way(&self.1.kept[*at])) {
         self.0[index] = self.1.kept.remove(at);
         replaced += 1;

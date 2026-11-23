@@ -487,8 +487,8 @@ audio cannot be shared. Each lossy file was encoded from a master, decoded, and 
   scan reads stretches that are not clipped where the file has them. A file clipped throughout
   can read as consistent, with a limitation that says the stretches scanned were clipped
 - A quiet passage coded at a high bitrate shows little of a grid. The scan reads the loudest
-  stretch in the place of one over 10 dB quieter, and a file quiet throughout can still read
-  as consistent
+  stretch in the place of one under -20 dBFS and over 10 dB quieter, and a file quiet
+  throughout can still read as consistent
 - The grid thresholds were tuned on LAME's MP3 and ffmpeg's AAC; [Encoders](#encoders) lists
   what the scan finds of others
 - A grid shows that the samples were decoded from MP3, MP2, AAC, Vorbis, WMA, AC-3 or Opus at some
