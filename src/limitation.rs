@@ -3,6 +3,8 @@
 
 use std::fmt;
 
+use crate::grid::SEGMENTS;
+
 /// Something that made a reading less reliable.
 ///
 /// `Display` writes it as the sentence a person is shown.
@@ -216,7 +218,7 @@ impl fmt::Display for Limitation {
       ),
       Self::ClippedStretches { stretches } => write!(
         f,
-        "{stretches} of the 4 stretches scanned for a frame grid are clipped and the file has \
+        "{stretches} of the {SEGMENTS} stretches scanned for a frame grid are clipped and the file has \
          none that is not to scan in their place: clipping after a decode hides its grid"
       ),
       Self::EarlyRollOff => f.write_str(
