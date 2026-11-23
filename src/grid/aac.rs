@@ -73,6 +73,7 @@ fn frames(samples: usize, hop: usize) -> usize {
 
 /// the analysis of a long block, AAC's, Vorbis's or WMA's, or of an AC-3 block: its window and
 /// an orthonormal MDCT, transformed in single precision
+#[derive(Clone)]
 pub(super) struct Aac {
   /// the samples a block advances by, and the lines its transform gives
   hop: usize,
@@ -101,11 +102,13 @@ impl Aac {
     let (left, right) = (channel(&segment.left), channel(&segment.right));
     let hop = window.hop();
     let frames = frames(segment.left.len(), hop);
+    // the window and the transform's tables are made once and copied for each task
+    let aac = Self::new(window);
     (0..hop)
       .into_par_iter()
       .with_min_len(hop / TASKS)
       .map_init(
-        || Self::new(window),
+        || aac.clone(),
         |aac, offset| aac.count(&left, &right, frames, offset),
       )
       .collect()
@@ -124,8 +127,8 @@ impl Aac {
         self.mdct.process(left, start, l_even, l_odd);
         let [r_even, r_odd] = r;
         self.mdct.process(right, start, r_even, r_odd);
-        let [l, r, m, s] = active_stereo([&l[0], &l[1]], [&r[0], &r[1]], t2);
-        (l + r).min(m + s)
+        let [apart, joint] = active_stereo([&l[0], &l[1]], [&r[0], &r[1]], t2);
+        apart.min(joint)
       })
       .sum()
   }

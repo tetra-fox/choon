@@ -461,109 +461,110 @@ fn median(mut values: Vec<f64>) -> f64 {
 const EXPONENT_BITS: u32 = 0x7f80_0000;
 const ONE: u32 = 0x3f80_0000;
 
-/// the products [`active`] keeps side by side, so they can be multiplied in parallel
+/// the products a count keeps side by side, so they can be multiplied in parallel
 const LANES: usize = 16;
 
-/// the active count of `values`: the sum of log10(max(v^2 / t2, 1)), counted in single
-/// precision.
+/// the groups of [`LANES`] pairs a count takes between two logs: a lane's product of as many
+/// mantissas stays under 2^32, and the lanes' under 2^512 in double precision
+const GROUPS: usize = 32;
+
+/// the logs of pairs of values, summed in single precision.
 ///
-/// the log of a product is the sum of the logs, so the values' exponents are summed and their
-/// mantissas, each in [1, 2), multiplied in [`LANES`] products of up to 32 each, which stay
-/// under 2^32. the products are multiplied in double precision, where they stay under 2^512,
-/// with one log for all of them.
-pub(super) fn active(values: &[f32], t2: f32) -> f64 {
-  let mut exponents = [0i32; LANES];
-  let mut products = [1.0f32; LANES];
-  let mut logs = 0.0;
-  for (i, group) in values.chunks(LANES).enumerate() {
-    for ((product, exponent), v) in products.iter_mut().zip(&mut exponents).zip(group) {
-      // t2 is a normal number, so every square at or above it is one too
-      let bits = (v * v).max(t2).to_bits();
-      *exponent += ((bits & EXPONENT_BITS) >> 23) as i32 - 127;
-      *product *= f32::from_bits((bits & !EXPONENT_BITS) | ONE);
-    }
-    if i % 32 == 31 {
-      logs += products
-        .iter()
-        .map(|p| f64::from(*p))
-        .product::<f64>()
-        .log2();
-      products = [1.0; LANES];
-    }
-  }
-  logs += products
-    .iter()
-    .map(|p| f64::from(*p))
-    .product::<f64>()
-    .log2();
-  let exponents: i32 = exponents.iter().sum();
-  (f64::from(exponents) + logs - values.len() as f64 * f64::from(t2).log2())
-    * std::f64::consts::LOG10_2
+/// the log of a product is the sum of the logs, so each pair's squares, no lower than t2, are
+/// multiplied, the products' exponents summed and their mantissas, each in [1, 2), multiplied
+/// in [`LANES`] products with one log for all of them every [`GROUPS`] groups.
+struct Pairs {
+  t2: f32,
+  exponents: [i32; LANES],
+  products: [f32; LANES],
+  /// the groups in `products`, and those of the logs taken
+  held: usize,
+  logged: usize,
+  logs: f64,
 }
 
-/// [`active`] of four sets of lines at once, each to the last bit: left, right, mid and side
-/// of the lines whose halves are `left` and `right`, each an `even` and an `odd` as
-/// [`SplitMdct`](super::mdct::SplitMdct) writes them. line 2k is `even[k]` and line N-1-2k
-/// is `odd[k]` with its sign turned, so a group of [`LANES`] lines in order is eight from the
-/// front of `even` between eight from the back of `odd`.
-pub(super) fn active_stereo(left: [&[f32]; 2], right: [&[f32]; 2], t2: f32) -> [f64; 4] {
-  const HALF: usize = LANES / 2;
-  let frac = std::f32::consts::FRAC_1_SQRT_2;
-  let half = left[0].len();
-  debug_assert!(half.is_multiple_of(HALF));
-  // for each of the four, the lanes of the first half and of the second
-  let mut exponents = [[[0i32; HALF]; 2]; 4];
-  let mut products = [[[1.0f32; HALF]; 2]; 4];
-  // lane 2j is the first half's j, and lane 2j + 1 the second half's HALF - 1 - j
-  let log = |products: &[[f32; HALF]; 2]| {
-    (0..HALF)
-      .flat_map(|j| [products[0][j], products[1][HALF - 1 - j]])
-      .map(f64::from)
-      .product::<f64>()
-      .log2()
-  };
-  let mut logs = [0.0; 4];
+impl Pairs {
+  fn new(t2: f32) -> Self {
+    Self {
+      t2,
+      exponents: [0; LANES],
+      products: [1.0; LANES],
+      held: 0,
+      logged: 0,
+      logs: 0.0,
+    }
+  }
+
   #[inline(always)]
-  fn count(values: &[f32; HALF], product: &mut [f32; HALF], exponent: &mut [i32; HALF], t2: f32) {
-    for j in 0..HALF {
-      // t2 is a normal number, so every square at or above it is one too
-      let bits = (values[j] * values[j]).max(t2).to_bits();
-      exponent[j] += ((bits & EXPONENT_BITS) >> 23) as i32 - 127;
-      product[j] *= f32::from_bits((bits & !EXPONENT_BITS) | ONE);
+  fn take(&mut self, a: &[f32; LANES], b: &[f32; LANES]) {
+    let t2 = self.t2;
+    // a square that is not a number counts as t2
+    let floored = |v: f32| if v * v > t2 { v * v } else { t2 };
+    for j in 0..LANES {
+      // t2 squared is a normal number, so every product is one too, and none is negative
+      let bits = (floored(a[j]) * floored(b[j])).to_bits();
+      self.exponents[j] += (bits >> 23) as i32;
+      self.products[j] *= f32::from_bits((bits & !EXPONENT_BITS) | ONE);
+    }
+    self.held += 1;
+    if self.held == GROUPS {
+      self.log();
     }
   }
-  // a group's lines of the first half, and of the second from its back
-  fn sides(lines: [&[f32]; 2], half: usize) -> impl Iterator<Item = [&[f32; HALF]; 2]> {
-    let (front, back) = (
-      lines[0][..half].as_chunks().0,
-      lines[1][..half].as_rchunks().1,
-    );
-    front.iter().zip(back.iter().rev()).map(<[_; 2]>::from)
+
+  fn log(&mut self) {
+    self.logs += self
+      .products
+      .iter()
+      .map(|p| f64::from(*p))
+      .product::<f64>()
+      .log2();
+    self.products = [1.0; LANES];
+    self.logged += self.held;
+    self.held = 0;
   }
-  for (i, (l, r)) in sides(left, half).zip(sides(right, half)).enumerate() {
-    for (side, (l, r)) in l.into_iter().zip(r).enumerate() {
-      let mid: [f32; HALF] = std::array::from_fn(|j| (l[j] + r[j]) * frac);
-      let diff: [f32; HALF] = std::array::from_fn(|j| (l[j] - r[j]) * frac);
-      let [pl, pr, pm, ps] = &mut products;
-      let [el, er, em, es] = &mut exponents;
-      count(l, &mut pl[side], &mut el[side], t2);
-      count(r, &mut pr[side], &mut er[side], t2);
-      count(&mid, &mut pm[side], &mut em[side], t2);
-      count(&diff, &mut ps[side], &mut es[side], t2);
+
+  /// the active count of the values taken: the sum of log10(max(v^2 / t2, 1))
+  fn active(mut self) -> f64 {
+    if self.held > 0 {
+      self.log();
     }
-    if i % 32 == 31 {
-      for (logs, products) in logs.iter_mut().zip(&mut products) {
-        *logs += log(products);
-        *products = [[1.0; HALF]; 2];
-      }
+    let pairs = (self.logged * LANES) as f64;
+    let exponents: i32 = self.exponents.iter().sum();
+    // a pair under t2 is t2 squared as it rounds
+    let floor = f64::from(self.t2 * self.t2).log2();
+    (f64::from(exponents) - 127.0 * pairs + self.logs - pairs * floor) * std::f64::consts::LOG10_2
+  }
+}
+
+/// the active count of `a` and `b` together, each a multiple of [`LANES`] values
+pub(super) fn active(a: &[f32], b: &[f32], t2: f32) -> f64 {
+  let ((a, a_rest), (b, b_rest)) = (a.as_chunks(), b.as_chunks());
+  debug_assert!(a_rest.is_empty() && b_rest.is_empty() && a.len() == b.len());
+  let mut pairs = Pairs::new(t2);
+  for (a, b) in a.iter().zip(b) {
+    pairs.take(a, b);
+  }
+  pairs.active()
+}
+
+/// the active count of left and right together, and of mid and side together, for the lines
+/// whose halves are `left` and `right`, each an `even` and an `odd` as
+/// [`SplitMdct`](super::mdct::SplitMdct) writes them, a multiple of [`LANES`] lines each
+pub(super) fn active_stereo(left: [&[f32]; 2], right: [&[f32]; 2], t2: f32) -> [f64; 2] {
+  // twice mid and side squared are counted against twice t2, which is the same count
+  let (mut apart, mut joint) = (Pairs::new(t2), Pairs::new(2.0 * t2));
+  for (left, right) in left.into_iter().zip(right) {
+    let ((left, left_rest), (right, right_rest)) = (left.as_chunks(), right.as_chunks());
+    debug_assert!(left_rest.is_empty() && right_rest.is_empty() && left.len() == right.len());
+    for (l, r) in left.iter().zip(right) {
+      let sum: [f32; LANES] = std::array::from_fn(|j| l[j] + r[j]);
+      let difference: [f32; LANES] = std::array::from_fn(|j| l[j] - r[j]);
+      apart.take(l, r);
+      joint.take(&sum, &difference);
     }
   }
-  std::array::from_fn(|which| {
-    let exponents: i32 = exponents[which].iter().flatten().sum();
-    (f64::from(exponents) + logs[which] + log(&products[which])
-      - (2 * half) as f64 * f64::from(t2).log2())
-      * std::f64::consts::LOG10_2
-  })
+  [apart.active(), joint.active()]
 }
 
 #[cfg(test)]
@@ -624,8 +625,15 @@ mod tests {
   }
 
   #[test]
-  fn the_stereo_count_is_the_count_of_the_lines_in_order_to_the_last_bit() {
-    for n in [16usize, 1024, 2048] {
+  fn the_counts_are_the_sum_of_the_logs() {
+    let t2 = 1e-9f32;
+    let direct = |lines: &[f32]| -> f64 {
+      lines
+        .iter()
+        .map(|v| (f64::from(*v).powi(2) / f64::from(t2)).max(1.0).log10())
+        .sum()
+    };
+    for n in [32usize, 1024, 2048] {
       let lines = |seed: f32| -> Vec<f32> {
         (0..n)
           .map(|i| ((i * i) as f32 * seed).sin() * 10f32.powi((i % 9) as i32 - 6))
@@ -643,17 +651,20 @@ mod tests {
         .zip(&right)
         .map(|(l, r)| (l - r) * half)
         .collect();
-      let even = |lines: &[f32]| -> Vec<f32> { (0..n / 2).map(|k| lines[2 * k]).collect() };
-      let odd = |lines: &[f32]| -> Vec<f32> { (0..n / 2).map(|k| -lines[n - 1 - 2 * k]).collect() };
-      let t2 = 1e-9;
-      let counted = active_stereo(
-        [&even(&left), &odd(&left)],
-        [&even(&right), &odd(&right)],
-        t2,
-      );
-      for (counted, lines) in counted.iter().zip([&left, &right, &mid, &side]) {
-        assert_eq!(counted.to_bits(), active(lines, t2).to_bits(), "{n}");
-      }
+      let near = |counted: f64, direct: f64| (counted - direct).abs() < 1e-5 * direct.max(1.0);
+      let apart = direct(&left) + direct(&right);
+      let counted = active(&left, &right, t2);
+      assert!(near(counted, apart), "{n}: {counted} {apart}");
+      let (l, r) = (left.split_at(n / 2), right.split_at(n / 2));
+      let [counted, joint] = active_stereo([l.0, l.1], [r.0, r.1], t2);
+      assert!(near(counted, apart), "{n}: {counted} {apart}");
+      let both = direct(&mid) + direct(&side);
+      assert!(near(joint, both), "{n}: {joint} {both}");
     }
+    let under = active(&[1e-6; 64], &[0.0; 64], t2);
+    assert!(
+      under.abs() < 1e-6,
+      "values under the level count nothing: {under}"
+    );
   }
 }

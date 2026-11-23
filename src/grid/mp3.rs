@@ -213,8 +213,11 @@ impl Mp3<f32> {
     // layer II has no mid and side, so the two channels are counted as they are
     let subband_t2 = (NOISE16 * SUBBAND_NOISE_GAIN).powi(2) as f32;
     let spanned = LINES * granules;
-    let subbands = active(left[..spanned].as_flattened(), subband_t2)
-      + active(right[..spanned].as_flattened(), subband_t2);
+    let subbands = active(
+      left[..spanned].as_flattened(),
+      right[..spanned].as_flattened(),
+      subband_t2,
+    );
     let mut counts = [0.0; LINES];
     for (g, count) in counts.iter_mut().enumerate() {
       *count = (0..granules)
@@ -226,9 +229,7 @@ impl Mp3<f32> {
             *m = (l + r) * half;
             *s = (l - r) * half;
           }
-          let apart = active(&l, t2) + active(&r, t2);
-          let joint = active(&m, t2) + active(&s, t2);
-          apart.min(joint)
+          active(&l, &r, t2).min(active(&m, &s, t2))
         })
         .sum();
     }

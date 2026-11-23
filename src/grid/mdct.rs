@@ -56,6 +56,7 @@ pub(crate) fn fold_windowed<T: Float>(frame: &[T], window: &[T], folded: &mut [T
 
 /// the orthonormal DCT-IV of length N through a complex FFT of length N/2:
 /// X_k = sqrt(2/N) sum_n u_n cos(pi/N (n + 1/2)(k + 1/2))
+#[derive(Clone)]
 pub(crate) struct DctIv<T = f32> {
   fft: Arc<dyn Fft<T>>,
   /// exp(-i pi n / N), for the input
@@ -149,6 +150,7 @@ impl Strided {
 /// [`fold_windowed`] and [`DctIv::process`] and its lines in two halves instead of in order:
 /// `even` holds X_2k and `odd` holds -X_(N-1-2k), for k from 0. every loop runs over
 /// contiguous samples.
+#[derive(Clone)]
 pub(super) struct SplitMdct {
   dct: DctIv,
   /// the window at the samples of each run: the first half's c, d, a and b, then the second
