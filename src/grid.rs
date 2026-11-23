@@ -168,6 +168,16 @@ impl fmt::Display for Codec {
   }
 }
 
+impl Codec {
+  /// the indefinite article its name takes, by how the name is said aloud
+  pub(crate) fn article(self) -> &'static str {
+    match self {
+      Self::Vorbis | Self::Wma => "a",
+      Self::Aac | Self::Ac3 | Self::Mp3 | Self::Mp2 | Self::Opus => "an",
+    }
+  }
+}
+
 /// How far one codec's grid stands out in a file.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

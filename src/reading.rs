@@ -402,6 +402,7 @@ fn weighed(
 ) -> CutoffReading {
   if let Some(grid) = grid {
     let name = grid.codec;
+    let a = name.article();
     let mut limitations = found.limitations;
     // a Vorbis decode's values do not sit on AAC's steps
     let stepped = grid.quantizer.is_some() || matches!(grid.evidence, Evidence::AacSteps { .. });
@@ -414,8 +415,8 @@ fn weighed(
           verdict: Verdict::MixedSources,
           confidence: thresholds.confidence_cap,
           summary: format!(
-            "The samples carry an {name} frame grid at offset {} in {segments} of the {} \
-             stretches scanned (z {:.0}): part of the audio passed through an {name} encoder. {}",
+            "The samples carry {a} {name} frame grid at offset {} in {segments} of the {} \
+             stretches scanned (z {:.0}): part of the audio passed through {a} {name} encoder. {}",
             scan.offset,
             grid::SEGMENTS,
             scan.z,
@@ -426,7 +427,7 @@ fn weighed(
         };
       }
       Evidence::Count(scan) => format!(
-        "The samples carry an {name} frame grid at offset {} (z {:.0}, {} of {} segments \
+        "The samples carry {a} {name} frame grid at offset {} (z {:.0}, {} of {} segments \
          agreeing), as audio decoded from {name} does.",
         scan.offset,
         scan.z,
@@ -434,7 +435,7 @@ fn weighed(
         grid::SEGMENTS,
       ),
       Evidence::CountAt { rate, scan } => format!(
-        "Brought to {} kHz, the samples carry an {name} frame grid at offset {} (z {:.0}, {} of \
+        "Brought to {} kHz, the samples carry {a} {name} frame grid at offset {} (z {:.0}, {} of \
          {} segments agreeing), as audio decoded from {name} at that rate and converted does.",
         f64::from(*rate) / 1000.0,
         scan.offset,
