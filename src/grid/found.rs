@@ -362,9 +362,13 @@ fn aac_stepped<'a>(
 ///   under each window
 /// - MP3 by its quantizer's steps in enough segments, then AAC by its own
 /// - Opus with enough frames on its lattice in the segments or in the windows: at the
-///   decoder's level, at another, as frames under 20 ms, or as the hybrid mode codes them
+///   decoder's level, at another, as frames under 20 ms, with the pitch post-filter taken
+///   off, or as the hybrid mode codes them
 /// - MP3 or AAC at the other rate
-/// - one of the first group in some of the segments alone, each far over its z threshold
+/// - MP3, Vorbis or MP2 by the phase every segment's subband count sits at
+/// - one of the first group in some of the segments alone, each far over its z threshold, or
+///   in fewer at an offset an uncut decode has
+/// - MP3 by its quantizer's steps in fewer segments, as a grid in part of the file
 ///
 /// the codec decoded last leaves the grid that counts, and Opus's energies can show through
 /// an MP3 made from its decode.
@@ -389,7 +393,7 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
       thresholds.mp3_grid_segments_agreeing,
     )
   };
-  fn clearest<'a, const N: usize>(counts: [Option<Counted<'a>>; N]) -> Option<Counted<'a>> {
+  fn clearest<const N: usize>(counts: [Option<Counted<'_>>; N]) -> Option<Counted<'_>> {
     counts
       .into_iter()
       .flatten()
@@ -404,6 +408,9 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
       .count();
     (steps, showing)
   });
+  // an MP3 decode's subband count sits at its grid's phase, so the uncut phase says nothing
+  // of layer II where MP3's steps show
+  let mp3_unstepped = mp3_steps.is_none_or(|(_, showing)| showing == 0);
   let counts = [
     Some(aac(&scan.aac, false)),
     scan.aac_sine.as_ref().map(|scan| aac(scan, true)),
@@ -440,11 +447,9 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
     // layer II quantizes the filterbank's subband samples, which an MP3 decode's count does
     // not show. of 32 phases three segments share one by chance far more often than four
     scan.mp2.as_ref().map(|scan| {
-      // an MP3 decode's subband count sits at its grid's phase, so the uncut phase says
-      // nothing of layer II where MP3's steps show
       let z = if scan.segments_agreeing == super::SEGMENTS {
         thresholds.mp2_all_agreeing_grid_z
-      } else if scan.offset == MP2_UNCUT && mp3_steps.is_none_or(|(_, showing)| showing == 0) {
+      } else if scan.offset == MP2_UNCUT && mp3_unstepped {
         thresholds.mp2_uncut_grid_z
       } else {
         thresholds.mp2_grid_z
@@ -570,8 +575,7 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
       } else {
         Codec::Mp3
       }
-    // an MP3 decode's count can sit at layer II's phase, and its steps tell it
-    } else if enough(&[MP2_UNCUT]) && mp3_steps.is_none_or(|(_, showing)| showing == 0) {
+    } else if enough(&[MP2_UNCUT]) && mp3_unstepped {
       Codec::Mp2
     } else {
       return None;
