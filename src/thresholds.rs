@@ -214,11 +214,11 @@ pub struct ReadingThresholds {
   /// Fewest segments that agree, for a grid in part of the file at an uncut decode's offset.
   ///
   /// An encoder's delay puts the grid of its decode at a fixed offset when the start was not
-  /// cut ([`Family`](crate::grid::Family)), and a libvorbis stream's long blocks sit at one
-  /// place within each 128 samples. Fewer segments than `aac_grid_segments_agreeing`,
-  /// `mp3_grid_segments_agreeing` or `vorbis_grid_segments_agreeing` asks for show a grid in
-  /// part of the file there, with the same z, as the segments of a lossless file rarely
-  /// agree on that one offset.
+  /// cut ([`Family`](crate::grid::Family)), a libvorbis stream's long blocks sit at one place
+  /// within each 128 samples, and an AC-3 stream's first block starts at the first sample.
+  /// Fewer segments than the codec's own threshold asks for (`aac_grid_segments_agreeing` and
+  /// those of MP3, Vorbis and AC-3) show a grid in part of the file there, with the same z, as
+  /// the segments of a lossless file rarely agree on that one offset.
   pub uncut_grid_segments_agreeing: usize,
   /// Robust z over which the MP2 scan finds a frame grid.
   ///
@@ -233,7 +233,8 @@ pub struct ReadingThresholds {
   /// Robust z over which an MP2 count at an uncut decode's phase finds a frame grid.
   ///
   /// An MP2 decode whose start was not cut has its count at one phase of the 32, which the
-  /// segments of a lossless file rarely agree on.
+  /// segments of a lossless file rarely agree on. An MP3 decode's count can sit there too, so
+  /// it applies where MP3's quantizer steps show in no segment.
   pub mp2_uncut_grid_z: f64,
   /// Fewest segments that put their lowest count at the file's phase, for an MP2 grid.
   ///
@@ -358,8 +359,9 @@ pub struct ReadingThresholds {
   /// Fewest frames on Opus's lattice once the pitch post-filter is taken off, in the windows.
   ///
   /// It is compared with [`OpusUnfiltered::frames`](crate::grid::OpusUnfiltered::frames),
-  /// where no other count makes an Opus grid. The search for the filter gives chance more
-  /// frames than `opus_uncut_frames` meets.
+  /// where no count at the decoder's level, at another level or of frames under 20 ms makes
+  /// an Opus grid. The search for the filter gives chance more frames than `opus_uncut_frames`
+  /// meets.
   pub opus_unfiltered_frames: usize,
   /// Fewest frames under 20 ms on Opus's lattice at one offset.
   ///
