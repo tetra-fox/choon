@@ -431,33 +431,35 @@ Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
 
 ## Results
 
-choon at commit `f2303b8` read 79,660 FLAC files made from 844 lossless masters. 238 are public:
+choon at commit `ef4f5b5` read 84,321 FLAC files made from 840 lossless masters. 238 are public:
 94 recordings from the [Live Music Archive](https://archive.org/details/etree) and 144 mixtures
-of [MUSDB18-HQ](https://zenodo.org/records/3338373). 606 are from the author's library, whose
+of [MUSDB18-HQ](https://zenodo.org/records/3338373). 602 are from the author's library, whose
 audio cannot be shared. Each lossy file was encoded from a master, decoded, and written as FLAC.
 
-| Audio                                                         | Public         | Library          |
-| ------------------------------------------------------------- | -------------- | ---------------- |
-| MP3 (LAME), CBR 96 to 320 kbps and V0 to V9                   | 3,808 of 3,808 | 9,696 of 9,696   |
-| AAC (ffmpeg), 96 to 256 kbps                                  | 952 of 952     | 2,424 of 2,424   |
-| Opus (libopus), 64 to 256 kbps                                | 1,190 of 1,190 | 3,028 of 3,030   |
-| Vorbis (libvorbis), q2 to q8                                  | 1,666 of 1,666 | 4,242 of 4,242   |
-| Vorbis (libvorbis), q10                                       | 238 of 238     | 602 of 606       |
-| MP2 (ffmpeg), 128 to 384 kbps                                 | 952 of 952     | 2,424 of 2,424   |
-| WMA (ffmpeg), 64 to 320 kbps                                  | 952 of 952     | 2,424 of 2,424   |
-| MP3, AAC, Opus or Vorbis encoded again as MP3                 | 1,428 of 1,428 | 3,636 of 3,636   |
-| MP3 and AAC with gain, dither or peak normalization applied   | 4,760 of 4,760 | 12,119 of 12,120 |
-| MP3 and AAC resampled between 44.1 and 48 kHz                 | 1,190 of 1,190 | 3,029 of 3,030   |
-| MP3 and AAC decoded by ffmpeg to 16 bits, LAME, mpg123, FAAD2 | 3,808 of 3,808 | 9,696 of 9,696   |
-| Lossless masters and their copies                             | 0 of 1,428     | 0 of 3,960       |
+| Audio                                                         | Public           | Library          |
+| ------------------------------------------------------------- | ---------------- | ---------------- |
+| MP3 (LAME), CBR 96 to 320 kbps and V0 to V9                   | 3,808 of 3,808   | 9,632 of 9,632   |
+| AAC (ffmpeg), 96 to 256 kbps                                  | 952 of 952       | 2,408 of 2,408   |
+| Opus (libopus), 64 to 256 kbps                                | 1,190 of 1,190   | 3,008 of 3,010   |
+| Vorbis (libvorbis), q2 to q8                                  | 1,666 of 1,666   | 4,214 of 4,214   |
+| Vorbis (libvorbis), q10                                       | 238 of 238       | 598 of 602       |
+| MP2 (ffmpeg), 128 to 384 kbps                                 | 952 of 952       | 2,408 of 2,408   |
+| WMA (ffmpeg), 64 to 320 kbps                                  | 952 of 952       | 2,408 of 2,408   |
+| AC-3 (ffmpeg), 192 to 640 kbps                                | 942 of 952       | 2,386 of 2,408   |
+| E-AC-3 (ffmpeg), 192 and 384 kbps                             | 475 of 476       | 1,201 of 1,204   |
+| MP3, AAC, Opus or Vorbis encoded again as MP3                 | 1,428 of 1,428   | 3,612 of 3,612   |
+| MP3 and AAC with gain, dither or peak normalization applied   | 4,760 of 4,760   | 12,039 of 12,040 |
+| MP3 and AAC resampled between 44.1 and 48 kHz                 | 1,190 of 1,190   | 3,009 of 3,010   |
+| MP3 and AAC decoded by ffmpeg to 16 bits, LAME, mpg123, FAAD2 | 3,808 of 3,808   | 9,632 of 9,632   |
+| Lossless masters and their copies                             | 0 of 1,428       | 0 of 3,933       |
 
-- Each cell is the files read as a likely transcode or as mixed sources. 26 of the lossy files
+- Each cell is the files read as a likely transcode or as mixed sources. 40 of the lossy files
   read as mixed sources
 - A master's copies are the master resampled to another rate and back, upsampled to 96 kHz,
   dithered to 16 bits, and lowpassed at 16, 19 and 20 kHz. 275 of them read as possibly lossy
   by their cutoff, all but 3 lowpassed at 16 or 19 kHz
-- The library's 8 misses are decodes of 6 masters
-- 297 more masters are left out, 11 of them public: the author knows them as made from lossy
+- The 44 misses are decodes of 30 masters, 36 of them AC-3 or E-AC-3 at 384 kbps and up
+- 301 more masters are left out, 11 of them public: the author knows them as made from lossy
   sources, or their own files carry a codec's frame grid
 - The thresholds were tuned on these files, so the last row is no false-positive rate
 
