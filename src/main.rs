@@ -569,12 +569,14 @@ fn run(check: &Check) -> Result<u8, Failed> {
     }
   };
   thread::scope(|scope| {
-    let pool = &pool;
+    let (pool, stop) = (&pool, &*stop);
     scope.spawn(move || {
       pool.install(|| match source {
         // the files start in the order given, each thread taking the next when it is free
         Source::Files(files) => files.iter().enumerate().par_bridge().for_each(measure),
+        // a run that is stopped reads no more of the measures file
         Source::Kept(measures, groups) => groups
+          .take_while(|_| !stop.load(Ordering::Relaxed))
           .enumerate()
           .par_bridge()
           .for_each(|group| reread(measures, group)),
