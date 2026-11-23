@@ -668,11 +668,12 @@ pub fn tables(
       &format!("{:.0}", rows.len() as f64 / took.as_secs_f64() * 60.0),
     ]);
   }
-  if let Some(left) = left {
-    totals.add_row(["Interrupted", left]);
-  }
   right_align(&mut totals, 1);
   sections.push(lines(&mut totals, 0));
+  // on a line of its own: among the totals its words would set the width of their numbers
+  if let Some(left) = left {
+    sections.push(format!("Interrupted  {left}\n"));
+  }
 
   sections.retain(|section| !section.trim().is_empty());
   sections.join("\n")
@@ -1172,12 +1173,12 @@ mod tests {
       ]
     );
 
-    // an interrupt is said with the totals
+    // an interrupt is said after the totals, which stay as wide as they were
     let left = Some("5 of 8 files left");
     let cut_short = tables(&rows, plain, took, true, left);
     assert_eq!(
-      cells(cut_short.lines().last().unwrap()),
-      ["Interrupted", "5 of 8 files left"]
+      cut_short,
+      format!("{text}\nInterrupted  5 of 8 files left\n")
     );
 
     // colour changes no column
