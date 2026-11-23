@@ -18,7 +18,7 @@ The masters are only ever read. No audio is kept in the repository.
 
 ## Commands
 
-| Command         | Effect                                                                    |
+| Command         | Description                                                               |
 | --------------- | ------------------------------------------------------------------------- |
 | `prepare`       | lists the lossless files under each folder as masters, writes the encodes |
 | `run`           | makes each file in memory, reads it, stores the reading and the measures  |
@@ -62,7 +62,8 @@ A master gives about 100 files:
 | Encoded twice         | MP3, AAC, Opus or Vorbis decoded and encoded again as MP3                   |
 | Altered decodes       | of MP3 CBR 128, CBR 320, V0 and AAC 128, 256: decoded to 16 bits, by mpg123, LAME and FAAD2, dithered, gained by 3 dB up and down, peak normalized, resampled between 44.1 and 48 kHz |
 
-MP2, WMA, AC-3, E-AC-3 and Vorbis q10 are encoded in memory each run; the rest are kept under `DIR/lossy`.
+MP2, WMA, AC-3, E-AC-3 and Vorbis q10 are encoded in memory each run; the rest are kept under
+`DIR/lossy`.
 
 ## Rereading
 
