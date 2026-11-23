@@ -263,12 +263,12 @@ cargo install choon
 
 ```console
 $ choon check music/
-  Verdict           Grid  Cutoff    Encoder        File
-  ----------------  ----  --------  -------------  -------------
+  Verdict           Cutoff    Encoder        File
+  ----------------  --------  -------------  -------------
 music/
-  possibly lossy          19.4 kHz  MP3 ~224 kbps  cut-19.flac
-  likely transcode  MP3   16.8 kHz  MP3 ~128 kbps  lame-128.flac
-  likely transcode  MP3   20.2 kHz  MP3 ~320 kbps  lame-320.flac
+  possibly lossy    19.4 kHz  MP3 ~224 kbps  cut-19.flac
+  likely transcode  16.8 kHz  MP3 ~128 kbps  lame-128.flac
+  likely transcode  20.2 kHz  MP3 ~320 kbps  lame-320.flac
 
 Verdict            Files
 ------------------ -------
@@ -324,7 +324,8 @@ music/honest.flac: consistent (confidence 0.73)
   `album/  12 of 12 likely transcode (MP3 grid, cutoff 16.5 to 16.9 kHz, MP3 (LAME) ~128 kbps)`
 - The list fits the terminal's width: a name too long for its line has `...` in its middle, and
   a terminal under 60 columns gets the piped lines
-- `--verbose` lists every file with each grid's offset, and every directory file by file
+- `--verbose` lists every file, with a column for each grid and its offset, and every
+  directory file by file
 - A walk skips hidden files and directories; `choon check --help` lists the extensions it reads
 - A file named twice, or named and inside a directory named, is read once
 - With no audio file to read, `choon: no audio files found` goes to stderr and the exit is 0

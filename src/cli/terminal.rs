@@ -746,7 +746,11 @@ fn listing(rows: &[Row<'_>], profiled: bool, verbose: bool, colour: bool, width:
     }
   }
 
-  let mut header = vec!["Verdict", "Grid", "Cutoff", "Encoder"];
+  let mut header = vec!["Verdict"];
+  if verbose {
+    header.push("Grid");
+  }
+  header.extend(["Cutoff", "Encoder"]);
   if profiled {
     header.push("Profile");
   }
@@ -814,7 +818,9 @@ fn heading(directory: &Path) -> String {
 }
 
 /// the lines of a file in the list: one for each of its readings that is flagged, or for
-/// each reading when `verbose`, which also states a grid's offset. none for a file not read
+/// each reading when `verbose`, which also has a cell for the grid with its offset. without
+/// it a grid no encoder is named for has its codec in the encoder's cell. none for a file not
+/// read
 fn cells(
   row: &Row<'_>,
   name: &str,
@@ -830,19 +836,23 @@ fn cells(
     .filter(|read| verbose || flagged(read.reading.verdict))
     .map(|read| {
       let reading = &read.reading;
-      let grid = reading.grid.as_ref().map_or_else(String::new, |found| {
-        if verbose {
+      let grid = reading.grid.as_ref();
+      let mut cells = vec![painted(
+        Some(reading.verdict),
+        label(reading.verdict),
+        colour,
+      )];
+      if verbose {
+        cells.push(grid.map_or_else(String::new, |found| {
           format!("{}, offset {}", found.codec, found.evidence.offset())
-        } else {
-          found.codec.to_string()
-        }
+        }));
+      }
+      cells.push(reading.cutoff_hz.map_or_else(String::new, khz));
+      cells.push(match (encoder(reading), grid) {
+        (Some(encoder), _) => encoder,
+        (None, Some(found)) if !verbose => found.codec.to_string(),
+        (None, _) => String::new(),
       });
-      let mut cells = vec![
-        painted(Some(reading.verdict), label(reading.verdict), colour),
-        grid,
-        reading.cutoff_hz.map_or_else(String::new, khz),
-        encoder(reading).unwrap_or_default(),
-      ];
       if profiled {
         cells.push(read.profile.clone());
       }
@@ -1112,15 +1122,15 @@ mod tests {
       cells.map(|cell| cell.trim().to_string()).collect()
     };
     // the one flagged file under its directory, its name with nothing a terminal would act on
-    assert_eq!(
-      cells(lines[0]),
-      ["Verdict", "Grid", "Cutoff", "Encoder", "File"]
+    assert_eq!(cells(lines[0]), ["Verdict", "Cutoff", "Encoder", "File"]);
+    assert!(
+      lines[1].starts_with("  ----------------  --------  "),
+      "{text}"
     );
-    assert!(lines[1].starts_with("  ----------------  ----  "), "{text}");
     assert_eq!(lines[2], "album/");
     let flagged = cells(lines[3]);
-    assert_eq!(flagged[..2], ["likely transcode", "MP3"]);
-    assert_eq!(flagged[3..], ["MP3 ~128 kbps", "ev\\u{1b}[31mil\\n.flac"]);
+    assert_eq!(flagged[0], "likely transcode");
+    assert_eq!(flagged[2..], ["MP3 ~128 kbps", "ev\\u{1b}[31mil\\n.flac"]);
     assert!(!text.contains('\u{1b}'), "{text}");
     assert_eq!(
       lines[4..8],
@@ -1228,9 +1238,15 @@ mod tests {
       ]
     );
     assert!(
-      lines[2].starts_with("  likely transcode  MP3   "),
+      lines[0].starts_with("  Verdict           Cutoff  "),
       "{lines:?}"
     );
+    // a grid no encoder is named for has its codec where the encoder would be
+    let mut unnamed = fake.clone();
+    let reading = &mut unnamed.readings[0].reading;
+    reading.grid.as_mut().unwrap().codec = Codec::Aac;
+    let lines = listed(&[row("one.flac", None, &unnamed)], false, 100);
+    assert!(lines[2].ends_with(" kHz  AAC      one.flac"), "{lines:?}");
 
     // every file and each grid's offset when verbose, and no directory on one line
     let lines = listed(&rows, true, 100);
