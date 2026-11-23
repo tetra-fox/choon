@@ -288,7 +288,7 @@ fn run(check: &Check) -> Result<u8, Failed> {
     print(&mut io::stdout().lock(), &defaults)?;
     return Ok(CLEAN);
   }
-  let profiles = if check.profile.is_empty() {
+  let mut profiles = if check.profile.is_empty() {
     vec![("default".to_string(), Thresholds::default())]
   } else {
     let profiles: Vec<(String, Thresholds)> = check
@@ -305,16 +305,12 @@ fn run(check: &Check) -> Result<u8, Failed> {
     }
     profiles
   };
-  let profiles: Vec<(String, Thresholds)> = profiles
-    .into_iter()
-    .map(|(name, mut thresholds)| {
-      if check.fast {
-        thresholds.measure.scan_wma = false;
-        thresholds.measure.scan_other_rate = false;
-      }
-      (name, thresholds)
-    })
-    .collect();
+  if check.fast {
+    for (_, thresholds) in &mut profiles {
+      thresholds.measure.scan_wma = false;
+      thresholds.measure.scan_other_rate = false;
+    }
+  }
   let coverage = match (check.max_full_minutes, check.sampled_windows) {
     (Some(minutes), Some(windows)) => Coverage::Sampled {
       over_seconds: minutes * 60.0,
