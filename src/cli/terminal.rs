@@ -204,7 +204,7 @@ impl Bars {
     };
     let mut said = match self.total {
       Some(total) => format!("{} of {total}", self.done),
-      None => format!("{} read", self.done),
+      None => format!("{} done", self.done),
     };
     for (kind, count) in COUNTED.iter().zip(self.counts) {
       let words = match kind {
