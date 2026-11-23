@@ -1,5 +1,7 @@
 //! the AAC analysis: a long block's 2048-point MDCT at a hop of 1024 under either of the
-//! format's two windows, for the count of a grid's offsets and for the quantizer's steps
+//! format's two windows, for the count of a grid's offsets and for the quantizer's steps. the
+//! count runs too under the windows, and at the lengths, of Vorbis's and WMA's long blocks and
+//! of an AC-3 block
 
 use rayon::prelude::*;
 
@@ -13,7 +15,8 @@ use crate::kaiser;
 /// the tasks a job's offsets are split into at most, so that one file's scan can fill the pool
 const TASKS: usize = 32;
 
-/// the window of an AAC long block
+/// the window of a block a grid is counted under: an AAC long block's two, and those of the
+/// other codecs counted with the same transform
 #[derive(Clone, Copy)]
 pub(crate) enum Window {
   /// Kaiser-Bessel derived, with an alpha of 4
@@ -85,11 +88,10 @@ pub(super) struct Aac {
 impl Aac {
   fn new(window: Window) -> Self {
     let hop = window.hop();
-    let lines = || std::array::from_fn(|_| std::array::from_fn(|_| vec![0.0; hop / 2]));
     Self {
       hop,
       mdct: SplitMdct::new(&window.samples()),
-      values: lines(),
+      values: std::array::from_fn(|_| std::array::from_fn(|_| vec![0.0; hop / 2])),
     }
   }
 

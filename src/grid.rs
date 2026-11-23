@@ -33,10 +33,9 @@
 //! A WMA long block is a 4096-point MDCT at a hop of 2048 under a sine window, and the
 //! analysis runs at that length as well. An AC-3 block is a 512-point MDCT at a hop of 256
 //! under a Kaiser-Bessel-derived window of its own, which E-AC-3 shares, and the analysis
-//! runs at that length too.
-//! The MP3 analysis is the layer III hybrid filterbank: the
-//! 512-tap polyphase filterbank, an 18-line MDCT per subband and the alias-reduction
-//! butterflies, at a hop of 576. Short blocks are not analyzed.
+//! runs at that length too. The MP3 analysis is the layer III hybrid filterbank: the 512-tap
+//! polyphase filterbank, an 18-line MDCT per subband and the alias-reduction butterflies, at
+//! a hop of 576. Short blocks are not analyzed.
 //!
 //! MP2 quantizes the subband samples of the same polyphase filterbank, with no MDCT after it.
 //! The scan counts those samples too, at each of the filterbank's 32 phases, and the phase an

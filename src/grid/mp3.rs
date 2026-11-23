@@ -239,6 +239,7 @@ impl Mp3<f32> {
 
 /// the value of a line quantized to 1 at a step of one, with samples from -1 to 1
 const MP3_UNIT: f64 = 9.0;
+
 /// the edges of a long block's scalefactor bands in lines at `rate`, for the rates MPEG-1
 /// layer III codes
 pub(super) fn mp3_bands(rate: u32) -> Option<&'static [usize; 23]> {
