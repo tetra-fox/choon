@@ -923,7 +923,13 @@ fn shown(
     ] if one => terminal::readout(path, checked, look),
     // stderr has said why it could not be opened, or that an interrupt came before it was read
     [] | [_] if one => alone.unwrap_or_default(),
-    _ => terminal::tables(&rows, look, started.elapsed(), left.as_deref()),
+    _ => terminal::tables(
+      &rows,
+      look,
+      started.elapsed(),
+      check.from_measures.is_none(),
+      left.as_deref(),
+    ),
   };
   if !text.is_empty() {
     print(&mut io::stdout().lock(), text.trim_end())?;

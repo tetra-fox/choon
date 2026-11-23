@@ -565,8 +565,16 @@ const GAP: usize = 2;
 /// what a check of many files found: the flagged files, or every file when verbose, by
 /// directory, then the files not read, each flagged file in detail when verbose, and last
 /// the count of each verdict, under each profile when there are several, with the files read
-/// and not read, how long it `took` and what an interrupt `left`
-pub fn tables(rows: &[Row<'_>], look: Look, took: Duration, left: Option<&str>) -> String {
+/// and not read, how long it `took` and what an interrupt `left`. the files a minute are said
+/// of a run that `measured` them: one that read kept measures decoded nothing, and how fast
+/// their lines parse says nothing of a check
+pub fn tables(
+  rows: &[Row<'_>],
+  look: Look,
+  took: Duration,
+  measured: bool,
+  left: Option<&str>,
+) -> String {
   let Look {
     profiled,
     verbose,
@@ -654,10 +662,12 @@ pub fn tables(rows: &[Row<'_>], look: Look, took: Duration, left: Option<&str>) 
   totals.add_row(["Files read", &read.len().to_string()]);
   totals.add_row(["Files not read", &not_read.len().to_string()]);
   totals.add_row(["Wall time", &length(took)]);
-  totals.add_row([
-    "Files per minute",
-    &format!("{:.0}", rows.len() as f64 / took.as_secs_f64() * 60.0),
-  ]);
+  if measured {
+    totals.add_row([
+      "Files per minute",
+      &format!("{:.0}", rows.len() as f64 / took.as_secs_f64() * 60.0),
+    ]);
+  }
   if let Some(left) = left {
     totals.add_row(["Interrupted", left]);
   }
@@ -1097,7 +1107,7 @@ mod tests {
   /// `tables` of `rows` without colour: the lines of the list, which end before the counts
   fn listed(rows: &[Row<'_>], verbose: bool, width: u16) -> Vec<String> {
     let took = Duration::from_secs(30);
-    let text = tables(rows, look(verbose, width), took, None);
+    let text = tables(rows, look(verbose, width), took, true, None);
     let lines = text.lines().take_while(|line| !line.is_empty());
     lines.map(str::to_string).collect()
   }
@@ -1116,7 +1126,7 @@ mod tests {
     ];
     let took = Duration::from_secs(30);
     let plain = look(false, 100);
-    let text = tables(&rows, plain, took, None);
+    let text = tables(&rows, plain, took, true, None);
     let lines: Vec<&str> = text.lines().collect();
     let cells = |line: &str| -> Vec<String> {
       let cells = line.split("  ").filter(|cell| !cell.is_empty());
@@ -1164,7 +1174,7 @@ mod tests {
 
     // an interrupt is said with the totals
     let left = Some("5 of 8 files left");
-    let cut_short = tables(&rows, plain, took, left);
+    let cut_short = tables(&rows, plain, took, true, left);
     assert_eq!(
       cells(cut_short.lines().last().unwrap()),
       ["Interrupted", "5 of 8 files left"]
@@ -1175,7 +1185,7 @@ mod tests {
       colour: true,
       ..plain
     };
-    let coloured = tables(&rows, coloured, took, None);
+    let coloured = tables(&rows, coloured, took, true, None);
     assert!(
       coloured.contains("\u{1b}[31mlikely transcode\u{1b}[0m"),
       "{coloured}"
@@ -1187,8 +1197,13 @@ mod tests {
       row("a/1.flac", None, &honest),
       row("a/2.flac", None, &honest),
     ];
-    let text = tables(&clean, plain, took, None);
+    let text = tables(&clean, plain, took, true, None);
     assert!(text.starts_with("Verdict            Files\n"), "{text}");
+
+    // kept measures read again were not measured in this run, so no rate is said of it
+    let again = tables(&clean, plain, Duration::from_millis(2), false, None);
+    assert_eq!(cells(again.lines().last().unwrap()), ["Wall time", "0.0 s"]);
+    assert!(!again.contains("per minute"), "{again}");
   }
 
   #[test]
