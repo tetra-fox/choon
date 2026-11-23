@@ -323,6 +323,8 @@ music/honest.flac: consistent (confidence 0.73)
 - A FIFO is read as a file is once a writer opens it, and waits for one until then
 - `--jobs` defaults to the number of cores and takes up to 1024; a file's grid scan runs on the
   same threads
+- A line is complete when it is written, and lines come in the order files finish, so a
+  consumer reads them while the run goes on and matches each to its input by `file`
 - A JSON line holds the claimed format, the length, the windows read, the grid scan, an Opus
   file's modes and bandwidths, an HE-AAC file's core rate, a DSD file's one-bit rate, and every
   reading

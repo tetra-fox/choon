@@ -594,6 +594,45 @@ fn a_closed_pipe_ends_the_run_with_the_status_of_the_files_read() {
   );
 }
 
+/// a FIFO in `dir`, which the program waits at until a writer opens it
+#[cfg(unix)]
+fn fifo(dir: &Path, name: &str) -> std::path::PathBuf {
+  let fifo = dir.join(name);
+  let made = Command::new("mkfifo").arg(&fifo).status();
+  assert!(made.is_ok_and(|status| status.success()), "mkfifo ran");
+  fifo
+}
+
+#[cfg(unix)]
+#[test]
+fn a_files_line_is_written_whole_while_other_files_are_under_way() {
+  let dir = tempfile::tempdir().unwrap();
+  let (honest, fake) = honest_and_fake(dir.path());
+  // the last file is a FIFO no writer has opened, so the run cannot end before it is given one
+  let last = fifo(dir.path(), "last.flac");
+  let mut child = Command::new(env!("CARGO_BIN_EXE_choon"))
+    .args(["check", "--json", "--jobs", "2", &honest, &fake])
+    .arg(&last)
+    .stdout(Stdio::piped())
+    .spawn()
+    .unwrap();
+  let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+  let mut next = || -> serde_json::Value {
+    let line = lines.next().expect("a line for each file").unwrap();
+    serde_json::from_str(&line).unwrap()
+  };
+  // in the order they finish, which the two may do either way round
+  let mut read = [next(), next()].map(|line| line["file"].as_str().unwrap().to_string());
+  read.sort();
+  let mut given = [honest, fake];
+  given.sort();
+  assert_eq!(read, given);
+  // FLAC is read without seeking
+  std::fs::write(&last, fixtures::flac(&music(1, 44_100, pink), 16, false)).unwrap();
+  assert_eq!(next()["file"], path(&last));
+  assert_eq!(child.wait().unwrap().code(), Some(1));
+}
+
 #[test]
 fn several_profiles_share_a_line_and_only_a_lossy_verdict_names_an_encoder() {
   let dir = tempfile::tempdir().unwrap();
