@@ -314,6 +314,8 @@ music/honest.flac: consistent (confidence 0.73)
 | `--json`                                   | print each file as one line of JSON                       |
 | `--profile FILE`                           | read with the thresholds in FILE in place of the defaults |
 | `--defaults`                               | print the default thresholds as JSON                      |
+| `--save-measures FILE`                     | write each file's measures to FILE, a line of JSON each   |
+| `--from-measures FILE`                     | read the measures in FILE in place of audio files         |
 | `--fast`                                   | skip the scans for WMA and for a converted sample rate    |
 | `--max-full-minutes M --sampled-windows N` | read files longer than M minutes at N one-second windows  |
 
@@ -347,6 +349,33 @@ music/honest.flac: consistent (confidence 0.73)
 ```sh
 for f in *.flac; do choon check "$f" > /dev/null || mv "$f" flagged/; done
 ```
+
+#### Measures file
+
+Measuring decodes a file and reading does not. `--save-measures` keeps what a check measured,
+and `--from-measures` reads it again under other reading thresholds:
+
+```sh
+choon check --save-measures measures.jsonl music/
+for db in 20 25 30; do
+  echo "{\"reading\": {\"sharpShelfDb\": $db}}" > shelf-$db.json
+  choon check --from-measures measures.jsonl --profile shelf-$db.json
+done
+```
+
+- A line holds one measuring of a file: `file`, with `fileBytes` as the JSON has it, the
+  program's `version`, the `measure` thresholds and `measured`, the library's `Measured`
+  without the spectrogram and waveform data
+- A line is written when its file is read. A file not read has none, and a file read with
+  profiles that measure differently has one for each measuring, one after the other
+- A line takes about 290 bytes for each second of audio read: 68 kB for a 4-minute file
+- `--from-measures` prints each file as the check printed it, lines, JSON or a terminal's
+  tables, with the same exit code. No audio file is opened
+- A reading's `measureSeconds` is 0 there, and `readSeconds` is the time the reading took
+- A profile reads a file only from a measuring made with its own `measure` thresholds. Without
+  one the file is not read and stderr names the profile and the file
+- Measures saved with `--fast` are read again with `--fast`
+- A line that does not parse is a file not read, named `FILE:LINE` when it names no file
 
 ### Library
 

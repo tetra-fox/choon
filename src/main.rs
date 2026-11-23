@@ -4,10 +4,12 @@
 
 mod cli {
   pub mod inputs;
+  pub mod measures;
   pub mod terminal;
 }
 
 use std::borrow::Cow;
+use std::fs::File;
 use std::io::{self, IsTerminal, Write};
 use std::num::NonZeroUsize;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -20,6 +22,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use choon::grid::{Evidence, Family, Scan};
+use choon::picture::Shown;
 use choon::{
   CancelCheck, Claimed, Coverage, Error, Flag, HeAac, MeasureThresholds, Measured, OpusUse,
   Reading, ReadingThresholds, Settings, Verdict,
@@ -29,6 +32,7 @@ use rayon::iter::{ParallelBridge, ParallelIterator};
 use serde::{Deserialize, Serialize};
 
 use crate::cli::inputs::{EXTENSIONS, Inputs};
+use crate::cli::measures::{Group, Groups, Kept};
 use crate::cli::terminal::{self, Bars, Row};
 
 /// every file read is consistent with its format, possibly lossy, or the analyzer cannot tell
@@ -62,7 +66,8 @@ A file the analyzer cannot open as audio is one that could not be read.")]
 struct Check {
   /// Audio files and directories to read, or - for the paths listed on stdin
   #[arg(
-    required_unless_present = "defaults",
+    required_unless_present_any = ["defaults", "from_measures"],
+    conflicts_with = "from_measures",
     value_name = "PATH",
     long_help = paths_help()
   )]
@@ -83,6 +88,28 @@ struct Check {
   /// Print the default thresholds as JSON and exit
   #[arg(long, exclusive = true)]
   defaults: bool,
+
+  /// Write the measures of each file to FILE, one line of JSON per measuring
+  ///
+  /// A line holds the file's path, the program's version, the measure thresholds and the
+  /// measures without the spectrogram and waveform data, and is written when its file is
+  /// read. A file read with profiles that measure differently has a line for each measuring.
+  /// A file not read has none. --from-measures reads the lines again.
+  #[arg(long, value_name = "FILE", conflicts_with = "from_measures")]
+  save_measures: Option<PathBuf>,
+
+  /// Read the measures --save-measures wrote to FILE in place of audio files
+  ///
+  /// Each file is printed as a check of it prints it, under each --profile or the defaults,
+  /// and no audio is opened or decoded. A profile reads a file only from measures taken
+  /// with its own measure thresholds, so --fast is given again for measures taken with it.
+  /// The reading thresholds are free to differ.
+  #[arg(
+    long,
+    value_name = "FILE",
+    conflicts_with_all = ["max_full_minutes", "sampled_windows", "null", "follow"]
+  )]
+  from_measures: Option<PathBuf>,
 
   /// Read files up to MINUTES long in full and sample longer ones
   ///
@@ -240,19 +267,26 @@ enum Failed {
   Stdin(io::Error),
   Threads(rayon::ThreadPoolBuildError),
   Output(io::Error),
+  /// the measures file could not be opened, made or written
+  Measures(PathBuf, io::Error),
 }
 
 /// what the threads reading files tell the one that prints
 enum Event {
-  /// the file at this index is being read, and says here how far each measuring of it is, in
+  /// the file numbered `file` is being read, and says here how far each measuring of it is, in
   /// thousandths
   Started {
     file: usize,
+    name: String,
     progress: Vec<Arc<AtomicU32>>,
   },
+  /// the file numbered `file` is read or could not be, with the lines the measures file gets
+  /// for it
   Done {
     file: usize,
+    path: PathBuf,
     result: Result<Box<Checked>, Unread>,
+    kept: Vec<String>,
   },
 }
 
@@ -260,9 +294,25 @@ enum Event {
 enum Unread {
   /// the file could not be opened
   Open(io::Error),
-  /// it was opened and is not audio the analyzer reads, or its analysis failed, with why in
-  /// words
+  /// it was opened and is not audio the analyzer reads, its analysis failed, or its lines in
+  /// the measures file could not be read, with why in words
   NotRead(String),
+  /// the measures file holds no measuring of it under the measure thresholds of the profile
+  /// named
+  Unmeasured(String),
+}
+
+impl std::fmt::Display for Unread {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      Self::Open(e) => write!(f, "{e}"),
+      Self::NotRead(why) => f.write_str(why),
+      Self::Unmeasured(profile) => write!(
+        f,
+        "profile {profile}: its measure thresholds are not those the file was measured with"
+      ),
+    }
+  }
 }
 
 /// how often a terminal's bars are brought up to date
@@ -275,6 +325,7 @@ impl std::fmt::Display for Failed {
       Self::Stdin(e) => write!(f, "reading the paths on stdin: {e}"),
       Self::Threads(e) => write!(f, "starting the threads: {e}"),
       Self::Output(e) => write!(f, "writing the output: {e}"),
+      Self::Measures(path, e) => write!(f, "{}: {e}", path.display()),
     }
   }
 }
@@ -319,25 +370,45 @@ fn run(check: &Check) -> Result<u8, Failed> {
     // clap lets neither through without the other
     _ => Coverage::Full,
   };
-  let inputs = Inputs::gather(
-    &check.paths,
-    &mut io::stdin().lock(),
-    check.null,
-    check.follow,
-  )
-  .map_err(Failed::Stdin)?;
   let mut code = CLEAN;
-  for problem in &inputs.problems {
-    eprintln!("{}", complaint(&problem.path, &problem.why));
-    if problem.unread {
-      code = FAILED;
+  let source = match &check.from_measures {
+    Some(path) => {
+      let file = File::open(path).map_err(|e| Failed::Measures(path.clone(), e))?;
+      Source::Kept(path, Groups::new(file))
     }
-  }
-  let files = inputs.files;
-  if files.is_empty() {
-    eprintln!("choon: no audio files found");
-    return Ok(code);
-  }
+    None => {
+      let inputs = Inputs::gather(
+        &check.paths,
+        &mut io::stdin().lock(),
+        check.null,
+        check.follow,
+      )
+      .map_err(Failed::Stdin)?;
+      for problem in &inputs.problems {
+        eprintln!("{}", complaint(&problem.path, &problem.why));
+        if problem.unread {
+          code = FAILED;
+        }
+      }
+      if inputs.files.is_empty() {
+        eprintln!("choon: no audio files found");
+        return Ok(code);
+      }
+      Source::Files(inputs.files)
+    }
+  };
+  // a measures file says how many files it holds only once it is read through
+  let total = match &source {
+    Source::Files(files) => Some(files.len()),
+    Source::Kept(..) => None,
+  };
+  let mut keep = match &check.save_measures {
+    Some(path) => Some(Keep {
+      path,
+      file: File::create(path).map_err(|e| Failed::Measures(path.clone(), e))?,
+    }),
+    None => None,
+  };
   let jobs = match check.jobs {
     Some(jobs) => jobs.get(),
     // one job where the system does not say how many cores it has
@@ -365,15 +436,18 @@ fn run(check: &Check) -> Result<u8, Failed> {
     })
     .count();
   let (events, received) = mpsc::sync_channel(jobs);
-  let read = {
-    let (stop, profiles) = (&*stop, &profiles);
+  let measure = {
+    let (stop, profiles, events) = (&*stop, &profiles, events.clone());
+    let save = keep.is_some();
     move |(file, path): (usize, &PathBuf)| {
       if stop.load(Ordering::Relaxed) {
         return;
       }
       let progress: Vec<Arc<AtomicU32>> = (0..measurings).map(|_| Arc::default()).collect();
+      let name = path.file_name().unwrap_or(path.as_os_str());
       let event = Event::Started {
         file,
+        name: terminal::legible(Path::new(name)),
         progress: progress.clone(),
       };
       // nothing receives once the output is closed, which `stop` says to the files not begun
@@ -384,32 +458,116 @@ fn run(check: &Check) -> Result<u8, Failed> {
       // program's own part, is caught here, so that the run goes on to the other files either
       // way. the panic's own message is on stderr by then. nothing the analysis borrows is left
       // half changed, as it only reads what it is given
-      let run = AssertUnwindSafe(|| analyzed(path, profiles, coverage, &progress, &canceled));
-      let result = match catch_unwind(run) {
-        Ok(Ok(checked)) => Ok(Box::new(checked)),
+      let run = AssertUnwindSafe(|| analyzed(path, profiles, coverage, save, &progress, &canceled));
+      let (result, kept) = match catch_unwind(run) {
+        Ok(Ok((checked, kept))) => (Ok(Box::new(checked)), kept),
         Ok(Err(Error::Canceled)) => return,
-        Ok(Err(Error::Open(e))) => Err(Unread::Open(e)),
-        Ok(Err(Error::NotAudio(why) | Error::Unsupported(why))) => Err(Unread::NotRead(why)),
+        Ok(Err(Error::Open(e))) => (Err(Unread::Open(e)), Vec::new()),
+        Ok(Err(Error::NotAudio(why) | Error::Unsupported(why))) => {
+          (Err(Unread::NotRead(why)), Vec::new())
+        }
         Ok(Err(Error::OutOfTime)) => unreachable!("no analysis has a deadline"),
-        Ok(Err(Error::Panicked)) | Err(_) => Err(Unread::NotRead(Error::Panicked.to_string())),
+        Ok(Err(Error::Panicked)) | Err(_) => (
+          Err(Unread::NotRead(Error::Panicked.to_string())),
+          Vec::new(),
+        ),
+      };
+      let done = Event::Done {
+        file,
+        path: path.clone(),
+        result,
+        kept,
       };
       // as above: a closed output has no use for the result
-      let _ = events.send(Event::Done { file, result });
+      let _ = events.send(done);
+    }
+  };
+  let reread = {
+    let (stop, profiles) = (&*stop, &profiles);
+    move |measures: &Path, (file, group): (usize, Group)| {
+      if stop.load(Ordering::Relaxed) {
+        return;
+      }
+      let (path, result) = match group.path {
+        Ok(path) => {
+          // as with a file measured, a panic in a reading is this file's failure alone
+          let run = AssertUnwindSafe(|| read_again(&group.lines, profiles));
+          let read =
+            catch_unwind(run).unwrap_or_else(|_| Err(Unread::NotRead(Error::Panicked.to_string())));
+          (path, read.map(Box::new))
+        }
+        // a line that names no file is named by where it is
+        Err(why) => (
+          PathBuf::from(format!("{}:{}", measures.display(), group.line)),
+          Err(Unread::NotRead(why)),
+        ),
+      };
+      let done = Event::Done {
+        file,
+        path,
+        result,
+        kept: Vec::new(),
+      };
+      // a closed output has no use for the result
+      let _ = events.send(done);
     }
   };
   thread::scope(|scope| {
-    let (pool, files) = (&pool, &files);
-    // the files start in the order given, each thread taking the next when it is free
-    scope.spawn(move || pool.install(|| files.iter().enumerate().par_bridge().for_each(read)));
+    let pool = &pool;
+    scope.spawn(move || {
+      pool.install(|| match source {
+        // the files start in the order given, each thread taking the next when it is free
+        Source::Files(files) => files.iter().enumerate().par_bridge().for_each(measure),
+        Source::Kept(measures, groups) => groups
+          .enumerate()
+          .par_bridge()
+          .for_each(|group| reread(measures, group)),
+      });
+    });
     let code = if !check.json && io::stdout().is_terminal() {
-      shown(received, files, check, profiles.len() > 1, started, code)
+      shown(
+        received,
+        total,
+        check,
+        profiles.len() > 1,
+        started,
+        &mut keep,
+        code,
+      )
     } else {
-      printed(received, files, check.json, code)
+      printed(received, check.json, &mut keep, code)
     };
     // an output that ended early stops the files under way, and the scope waits for them
     stop.store(true, Ordering::Relaxed);
     code
   })
+}
+
+/// what a check reads
+enum Source<'a> {
+  /// audio files, to measure
+  Files(Vec<PathBuf>),
+  /// the measures file at this path, by the groups of its lines
+  Kept(&'a Path, Groups),
+}
+
+/// the measures file a check writes
+struct Keep<'a> {
+  path: &'a Path,
+  file: File,
+}
+
+impl Keep<'_> {
+  /// writes the lines of one file, each of which ends in its newline
+  fn write(&mut self, lines: &[String]) -> Result<(), Failed> {
+    for line in lines {
+      self
+        .file
+        .write_all(line.as_bytes())
+        .map_err(|e| Failed::Measures(self.path.to_path_buf(), e))?;
+    }
+    Ok(())
+  }
 }
 
 /// the exit status `result` asks for
@@ -432,18 +590,27 @@ fn status(result: &Result<Box<Checked>, Unread>) -> u8 {
 /// starts at `code`
 fn printed(
   received: Receiver<Event>,
-  files: &[PathBuf],
   json: bool,
+  keep: &mut Option<Keep<'_>>,
   mut code: u8,
 ) -> Result<u8, Failed> {
   let mut out = io::stdout().lock();
   for event in received {
-    let Event::Done { file, result } = event else {
+    let Event::Done {
+      path: file,
+      result,
+      kept,
+      ..
+    } = event
+    else {
       // only a terminal shows the files under way
       continue;
     };
-    let file = &files[file];
+    let file = &file;
     code = code.max(status(&result));
+    if let Some(keep) = keep {
+      keep.write(&kept)?;
+    }
     let line = match result {
       Ok(checked) => {
         if json {
@@ -467,8 +634,8 @@ fn printed(
           piped(file, &checked)
         }
       }
-      Err(Unread::Open(e)) => {
-        eprintln!("{}", complaint(file, e));
+      Err(unread @ (Unread::Open(_) | Unread::Unmeasured(_))) => {
+        eprintln!("{}", complaint(file, unread));
         continue;
       }
       Err(Unread::NotRead(why)) => {
@@ -496,10 +663,11 @@ fn printed(
 /// in detail or the tables of many, and returns the exit status, which starts at `code`
 fn shown(
   received: Receiver<Event>,
-  files: &[PathBuf],
+  total: Option<usize>,
   check: &Check,
   profiled: bool,
   started: Instant,
+  keep: &mut Option<Keep<'_>>,
   mut code: u8,
 ) -> Result<u8, Failed> {
   let colour = match check.color {
@@ -509,19 +677,27 @@ fn shown(
       anstream::AutoStream::choice(&io::stdout()) != anstream::ColorChoice::Never
     }
   };
-  let one = files.len() == 1;
-  let mut bars = Bars::new(files.len());
-  let mut rows = Vec::with_capacity(files.len());
+  let one = total == Some(1);
+  let mut bars = Bars::new(total.unwrap_or(0));
+  let mut rows = Vec::with_capacity(total.unwrap_or(0));
   loop {
     match received.recv_timeout(TICK) {
-      Ok(Event::Started { file, progress }) => {
-        let name = files[file].file_name().unwrap_or(files[file].as_os_str());
-        bars.started(file, terminal::legible(Path::new(name)), progress);
-      }
-      Ok(Event::Done { file, result }) => {
+      Ok(Event::Started {
+        file,
+        name,
+        progress,
+      }) => bars.started(file, name, progress),
+      Ok(Event::Done {
+        file,
+        path,
+        result,
+        kept,
+      }) => {
         bars.ended(file);
-        let path = &files[file];
         code = code.max(status(&result));
+        if let Some(keep) = keep {
+          keep.write(&kept)?;
+        }
         let outcome = match result {
           Ok(checked) => {
             let flagged = checked
@@ -530,18 +706,18 @@ fn shown(
               .any(|read| flagged(read.reading.verdict));
             if !one && (flagged || check.verbose) {
               bars
-                .say(&listed(path, &checked, colour))
+                .say(&listed(&path, &checked, colour))
                 .map_err(Failed::Output)?;
             }
             Ok(checked)
           }
-          Err(Unread::Open(e)) => {
-            bars.complain(&complaint(path, &e));
-            Err(e.to_string())
+          Err(unread @ (Unread::Open(_) | Unread::Unmeasured(_))) => {
+            bars.complain(&complaint(&path, &unread));
+            Err(unread.to_string())
           }
           Err(Unread::NotRead(why)) => {
             bars
-              .say(&not_read(path, &why, colour))
+              .say(&not_read(&path, &why, colour))
               .map_err(Failed::Output)?;
             Err(why)
           }
@@ -554,7 +730,7 @@ fn shown(
     bars.tick();
   }
   bars.finish();
-  rows.sort_by_key(|row| row.path);
+  rows.sort_by(|a, b| a.path.cmp(&b.path));
   let width = console::Term::stdout().size().1;
   let text = match &rows[..] {
     [
@@ -704,50 +880,131 @@ fn profile(path: &Path) -> Result<(String, Thresholds), Failed> {
   Ok((name, thresholds))
 }
 
-/// what the file at `path` measured, and its readings under each of `profiles`. profiles whose
-/// measure thresholds are the same share one measuring, so the file is decoded once for them.
-/// each measuring says how far it is in the next of `progress`, which holds one for each.
+/// one measuring of a file
+struct Measuring {
+  /// the thresholds it was made with
+  thresholds: MeasureThresholds,
+  measured: Measured,
+  /// how long it took, in seconds; none for one read from a measures file
+  seconds: f64,
+}
+
+/// what the file at `path` measured, with its readings under each of `profiles`, and its lines
+/// for the measures file when `save`. profiles whose measure thresholds are the same share one
+/// measuring, so the file is decoded once for them. each measuring says how far it is in the
+/// next of `progress`, which holds one for each.
 fn analyzed(
   path: &Path,
   profiles: &[(String, Thresholds)],
   coverage: Coverage,
+  save: bool,
   progress: &[Arc<AtomicU32>],
   canceled: &CancelCheck,
-) -> Result<Checked, Error> {
-  let mut measured: Vec<(&MeasureThresholds, Measured, f64)> = Vec::new();
-  let mut readings = Vec::new();
-  for (name, thresholds) in profiles {
-    let at = match measured
+) -> Result<(Checked, Vec<String>), Error> {
+  let mut measurings: Vec<Measuring> = Vec::new();
+  for (_, thresholds) in profiles {
+    if measurings
       .iter()
-      .position(|(alike, ..)| **alike == thresholds.measure)
+      .any(|alike| alike.thresholds == thresholds.measure)
     {
-      Some(at) => at,
-      None => {
-        let settings = Settings {
-          coverage,
-          thresholds: thresholds.measure.clone(),
-          progress: Some(progress[measured.len()].clone()),
-          canceled: Some(canceled.clone()),
-          ..Settings::default()
-        };
-        let started = Instant::now();
-        let done = choon::measure(path, &settings)?;
-        measured.push((&thresholds.measure, done, started.elapsed().as_secs_f64()));
-        measured.len() - 1
-      }
+      continue;
+    }
+    let settings = Settings {
+      coverage,
+      thresholds: thresholds.measure.clone(),
+      progress: Some(progress[measurings.len()].clone()),
+      canceled: Some(canceled.clone()),
+      ..Settings::default()
     };
-    let (_, done, measure_seconds) = &measured[at];
     let started = Instant::now();
-    let reading = done.read(&thresholds.reading);
+    let measured = choon::measure(path, &settings)?;
+    measurings.push(Measuring {
+      thresholds: settings.thresholds,
+      measured,
+      seconds: started.elapsed().as_secs_f64(),
+    });
+  }
+  if save {
+    // a line holds no pictures: no reading is made from them, and they are nearly all of a
+    // window's bytes
+    let windows = measurings
+      .iter_mut()
+      .flat_map(|measuring| &mut measuring.measured.windows);
+    for window in windows {
+      window.shown = Shown {
+        spectrum: Vec::new(),
+        columns: Vec::new(),
+        peaks: Vec::new(),
+      };
+    }
+  }
+  let kept = measurings
+    .iter()
+    .filter(|_| save)
+    .map(|measuring| {
+      let kept = Kept {
+        file: path.to_string_lossy(),
+        file_bytes: raw(path).map(Cow::Borrowed),
+        version: Cow::Borrowed(env!("CARGO_PKG_VERSION")),
+        measure: Cow::Borrowed(&measuring.thresholds),
+        measured: Cow::Borrowed(&measuring.measured),
+      };
+      // the measures are numbers, strings and lists of them, which always serialize
+      let mut line = serde_json::to_string(&kept).expect("measures serialize");
+      line.push('\n');
+      line
+    })
+    .collect();
+  let checked = checked(profiles, measurings)
+    .unwrap_or_else(|profile| unreachable!("the file was measured for profile {profile}"));
+  Ok((checked, kept))
+}
+
+/// a file's readings under each of `profiles` from the lines a measures file holds for it
+fn read_again(lines: &[Vec<u8>], profiles: &[(String, Thresholds)]) -> Result<Checked, Unread> {
+  let measurings = lines
+    .iter()
+    .map(|line| {
+      let kept: Kept<'_> =
+        serde_json::from_slice(line).map_err(|e| Unread::NotRead(e.to_string()))?;
+      Ok(Measuring {
+        thresholds: kept.measure.into_owned(),
+        measured: kept.measured.into_owned(),
+        seconds: 0.0,
+      })
+    })
+    .collect::<Result<_, Unread>>()?;
+  checked(profiles, measurings).map_err(|profile| Unread::Unmeasured(profile.to_string()))
+}
+
+/// what a file measured and its reading under each of `profiles`, each from the measuring made
+/// with the profile's measure thresholds. `Err` names the first profile that has none
+fn checked(
+  profiles: &[(String, Thresholds)],
+  mut measurings: Vec<Measuring>,
+) -> Result<Checked, &str> {
+  let mut readings = Vec::with_capacity(profiles.len());
+  let mut of_first = None;
+  for (name, thresholds) in profiles {
+    let at = measurings
+      .iter()
+      .position(|alike| alike.thresholds == thresholds.measure)
+      .ok_or(name.as_str())?;
+    of_first.get_or_insert(at);
+    let measuring = &measurings[at];
+    let started = Instant::now();
+    let reading = measuring.measured.read(&thresholds.reading);
     readings.push(Read {
       profile: name.clone(),
-      measure_seconds: *measure_seconds,
+      measure_seconds: measuring.seconds,
       read_seconds: started.elapsed().as_secs_f64(),
       reading,
     });
   }
   // every profile reads the same windows of the file; what differs is what is made of them
-  let (_, first, _) = measured.swap_remove(0);
+  let first = measurings
+    .swap_remove(of_first.expect("a check has at least one profile"))
+    .measured;
   Ok(Checked {
     dsd_multiple: first.dsd_multiple(),
     claimed: first.claimed,

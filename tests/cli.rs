@@ -634,6 +634,173 @@ fn a_files_line_is_written_whole_while_other_files_are_under_way() {
 }
 
 #[test]
+fn measures_saved_are_read_again_as_a_check_prints_them() {
+  let dir = tempfile::tempdir().unwrap();
+  let (honest, fake) = honest_and_fake(dir.path());
+  let text = path(&dir.path().join("text.flac"));
+  std::fs::write(&text, "not audio\n").unwrap();
+  let measures = path(&dir.path().join("measures.jsonl"));
+
+  // a file not read has no line in the measures file
+  let output = choon(&[
+    "--json",
+    "--save-measures",
+    &measures,
+    &honest,
+    &fake,
+    &text,
+  ]);
+  assert_eq!(status(&output), 2, "{output:?}");
+  let kept = std::fs::read_to_string(&measures).unwrap();
+  assert_eq!(kept.lines().count(), 2, "{kept}");
+  for line in kept.lines() {
+    let line: serde_json::Value = serde_json::from_str(line).unwrap();
+    assert_eq!(line["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(line["measure"]["scanWma"], true);
+    // every window's measures, without the pictures no reading is made from
+    let windows = line["measured"]["windows"].as_array().unwrap();
+    assert_eq!(windows.len(), fixtures::SECONDS);
+    assert_eq!(windows[0]["shown"]["columns"], serde_json::json!([]));
+  }
+  let checked = sorted_json(&choon(&["--json", &honest, &fake]));
+  let again = choon(&["--json", "--from-measures", &measures]);
+  assert_eq!(status(&again), 1, "{again:?}");
+  assert_eq!(sorted_json(&again), checked);
+  let again = choon(&["--from-measures", &measures]);
+  assert_eq!(status(&again), 1, "{again:?}");
+  assert_eq!(
+    sorted_lines(&again),
+    sorted_lines(&choon(&[&honest, &fake]))
+  );
+
+  // other reading thresholds read the same measures: grid thresholds no scan reaches
+  let blind = path(&dir.path().join("blind.json"));
+  let unreachable = r#"{"reading": {"mp3GridZ": 1e9, "partGridZ": 1e9, "loneGridZ": 1e9,
+    "mp3WholeSteps": 1000000}}"#;
+  std::fs::write(&blind, unreachable).unwrap();
+  let again = choon(&["--json", "--profile", &blind, "--from-measures", &measures]);
+  assert_eq!(status(&again), 0, "{again:?}");
+  let checked = choon(&["--json", "--profile", &blind, &honest, &fake]);
+  assert_eq!(sorted_json(&again), sorted_json(&checked));
+
+  // a profile that measures differently has no measures to read, and says so of each file
+  let deaf = path(&dir.path().join("deaf.json"));
+  std::fs::write(&deaf, r#"{"measure": {"silenceDbfs": -50.0}}"#).unwrap();
+  let again = choon(&["--json", "--profile", &deaf, "--from-measures", &measures]);
+  assert_eq!(status(&again), 2, "{again:?}");
+  assert!(again.stdout.is_empty(), "{again:?}");
+  let errors = String::from_utf8(again.stderr).unwrap();
+  assert_eq!(errors.lines().count(), 2, "{errors}");
+  assert!(
+    errors.contains(&format!("choon: {fake}: profile deaf: ")),
+    "{errors}"
+  );
+  // as do measures taken with --fast under profiles read without it
+  let fast = path(&dir.path().join("fast.jsonl"));
+  let output = choon(&["--fast", "--save-measures", &fast, &fake]);
+  assert_eq!(status(&output), 1, "{output:?}");
+  assert_eq!(status(&choon(&["--from-measures", &fast])), 2);
+  let again = choon(&["--fast", "--from-measures", &fast]);
+  assert_eq!(status(&again), 1, "{again:?}");
+  assert_eq!(again.stdout, output.stdout);
+
+  // measures are read in place of files, so both at once are refused
+  let output = choon(&["--from-measures", &measures, &honest]);
+  assert_eq!(status(&output), 2, "{output:?}");
+  assert!(output.stdout.is_empty(), "{output:?}");
+}
+
+#[test]
+fn profiles_that_measure_differently_keep_a_line_each_and_read_theirs_again() {
+  let dir = tempfile::tempdir().unwrap();
+  let (honest, fake) = honest_and_fake(dir.path());
+  let shipped = path(&dir.path().join("shipped.json"));
+  std::fs::write(&shipped, "{}").unwrap();
+  let deaf = path(&dir.path().join("deaf.json"));
+  std::fs::write(&deaf, r#"{"measure": {"silenceDbfs": -50.0}}"#).unwrap();
+  let measures = path(&dir.path().join("measures.jsonl"));
+  let profiles = ["--profile", &shipped, "--profile", &deaf];
+
+  let mut args = vec!["--json", "--save-measures", &measures, &honest, &fake];
+  args.extend(profiles);
+  let checked = choon(&args);
+  assert_eq!(status(&checked), 1, "{checked:?}");
+  let kept = std::fs::read_to_string(&measures).unwrap();
+  let silences: Vec<f64> = kept
+    .lines()
+    .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+    .map(|line| line["measure"]["silenceDbfs"].as_f64().unwrap())
+    .collect();
+  // a file's lines follow each other, in the order of the profiles
+  assert_eq!(silences, [-70.0, -50.0, -70.0, -50.0]);
+
+  // a file's two lines make its one line again, whichever order the profiles come in
+  let mut args = vec!["--json", "--from-measures", &measures];
+  args.extend(profiles);
+  let again = choon(&args);
+  assert_eq!(status(&again), 1, "{again:?}");
+  assert_eq!(sorted_json(&again), sorted_json(&checked));
+  let turned = ["--json", "--from-measures", &measures, "--profile", &deaf];
+  let again = sorted_json(&choon(&[&turned[..], &["--profile", &shipped]].concat()));
+  assert_eq!(again.len(), 2);
+  for (again, checked) in again.iter().zip(sorted_json(&checked)) {
+    assert_eq!(again["readings"][0], checked["readings"][1]);
+    assert_eq!(again["readings"][1], checked["readings"][0]);
+  }
+  // one of the profiles alone reads its own line of the two
+  let again = choon(&["--json", "--from-measures", &measures, "--profile", &deaf]);
+  assert_eq!(status(&again), 1, "{again:?}");
+  assert_eq!(sorted_json(&again).len(), 2);
+}
+
+#[test]
+fn a_line_of_a_measures_file_that_does_not_parse_is_a_file_not_read() {
+  let dir = tempfile::tempdir().unwrap();
+  let (honest, _) = honest_and_fake(dir.path());
+  let measures = path(&dir.path().join("measures.jsonl"));
+  let output = choon(&["--save-measures", &measures, &honest]);
+  assert_eq!(status(&output), 0, "{output:?}");
+  let kept = std::fs::read_to_string(&measures).unwrap();
+  // a line that is no JSON, a blank one, the file's own, and one that names a file and holds
+  // no measures
+  let lines = format!("not json\n\n{kept}{{\"file\": \"cut.flac\", \"version\": \"0.1.0\"}}\n");
+  std::fs::write(&measures, lines).unwrap();
+
+  let again = choon(&["--from-measures", &measures]);
+  assert_eq!(status(&again), 2, "{again:?}");
+  let lines = sorted_lines(&again);
+  assert_eq!(lines.len(), 3, "{lines:?}");
+  let has = |start: &str| lines.iter().any(|line| line.starts_with(start));
+  assert!(
+    has("cut.flac: not read (missing field `measure`"),
+    "{lines:?}"
+  );
+  assert!(
+    has(String::from_utf8(output.stdout).unwrap().trim_end()),
+    "{lines:?}"
+  );
+  // a line that names no file is named by its place in the measures file
+  assert!(
+    has(&format!("{measures}:1: not read (expected ")),
+    "{lines:?}"
+  );
+
+  let again = choon(&["--json", "--from-measures", &measures]);
+  assert_eq!(status(&again), 2, "{again:?}");
+  let unread: Vec<serde_json::Value> = sorted_lines(&again)
+    .iter()
+    .map(|line| serde_json::from_str(line).unwrap())
+    .filter(|line: &serde_json::Value| line["error"].is_string())
+    .collect();
+  assert_eq!(unread.len(), 2, "{unread:?}");
+
+  let missing = path(&dir.path().join("missing.jsonl"));
+  let output = choon(&["--from-measures", &missing]);
+  assert_eq!(status(&output), 2, "{output:?}");
+  assert!(output.stdout.is_empty(), "{output:?}");
+}
+
+#[test]
 fn several_profiles_share_a_line_and_only_a_lossy_verdict_names_an_encoder() {
   let dir = tempfile::tempdir().unwrap();
   let (_, fake) = honest_and_fake(dir.path());

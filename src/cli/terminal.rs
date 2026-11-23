@@ -2,7 +2,7 @@
 //! file's reading in detail or the tables of many
 
 use std::io::{self, Write as _};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
@@ -26,8 +26,8 @@ const VERDICTS: [Verdict; 5] = [
 ];
 
 /// a file and what came of reading it: what it measured, or why it was not read
-pub struct Row<'a> {
-  pub path: &'a Path,
+pub struct Row {
+  pub path: PathBuf,
   pub outcome: Result<Box<Checked>, String>,
 }
 
@@ -486,7 +486,7 @@ fn grid(checked: &Checked, reading: &Reading) -> String {
 /// `profiled`, the files read and not read and how long it took, then the flagged files and
 /// the files not read, and each flagged file in detail when `verbose`
 pub fn tables(
-  rows: &[Row<'_>],
+  rows: &[Row],
   profiled: bool,
   verbose: bool,
   took: Duration,
@@ -495,11 +495,11 @@ pub fn tables(
 ) -> String {
   let read: Vec<(&Path, &Checked)> = rows
     .iter()
-    .filter_map(|row| Some((row.path, &**row.outcome.as_ref().ok()?)))
+    .filter_map(|row| Some((&*row.path, &**row.outcome.as_ref().ok()?)))
     .collect();
   let not_read: Vec<(&Path, &str)> = rows
     .iter()
-    .filter_map(|row| Some((row.path, row.outcome.as_ref().err()?.as_str())))
+    .filter_map(|row| Some((&*row.path, row.outcome.as_ref().err()?.as_str())))
     .collect();
   let mut text = String::from("\n");
 
@@ -634,7 +634,10 @@ mod tests {
     let profiles = [("default".to_string(), Thresholds::default())];
     let never: CancelCheck = Arc::new(|| false);
     let checked = |path: &Path| {
-      Box::new(analyzed(path, &profiles, Coverage::Full, &[Arc::default()], &never).unwrap())
+      let progress = [Arc::default()];
+      let (checked, _) =
+        analyzed(path, &profiles, Coverage::Full, false, &progress, &never).unwrap();
+      Box::new(checked)
     };
     (checked(&honest), checked(&fake))
   }
@@ -743,15 +746,15 @@ mod tests {
     let (honest, fake) = honest_and_fake();
     let rows = [
       Row {
-        path: Path::new("album/ev\u{1b}[31mil\n.flac"),
+        path: "album/ev\u{1b}[31mil\n.flac".into(),
         outcome: Ok(fake),
       },
       Row {
-        path: Path::new("album/honest.flac"),
+        path: "album/honest.flac".into(),
         outcome: Ok(honest),
       },
       Row {
-        path: Path::new("album/text.flac"),
+        path: "album/text.flac".into(),
         outcome: Err("the container was not recognized".to_string()),
       },
     ];
