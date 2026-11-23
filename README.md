@@ -349,6 +349,13 @@ music/honest.flac: consistent (confidence 0.73)
 | 0         | every file consistent, possibly lossy or inconclusive |
 | 1         | at least one likely transcode or mixed sources        |
 | 2         | a file that could not be read, or a wrong argument    |
+| 130       | an interrupt before every file was read               |
+
+- On an interrupt (Ctrl-C, or SIGTERM on Unix) no further file is started and the files under
+  way are dropped. The files already read keep their lines, in the output and in the measures
+  file, and stderr says `choon: interrupted: N of M files read`
+- A file without a line was not read, so a script that goes on later gives those files again
+- A second interrupt ends the program at once
 
 ```sh
 for f in *.flac; do choon check "$f" > /dev/null || mv "$f" flagged/; done

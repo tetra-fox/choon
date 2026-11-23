@@ -483,13 +483,15 @@ fn grid(checked: &Checked, reading: &Reading) -> String {
 }
 
 /// what a check of many files found: the count of each verdict, under each profile when
-/// `profiled`, the files read and not read and how long it took, then the flagged files and
-/// the files not read, and each flagged file in detail when `verbose`
+/// `profiled`, the files read and not read, how long it took and what an interrupt `left`,
+/// then the flagged files and the files not read, and each flagged file in detail when
+/// `verbose`
 pub fn tables(
   rows: &[Row],
   profiled: bool,
   verbose: bool,
   took: Duration,
+  left: Option<&str>,
   colour: bool,
   width: u16,
 ) -> String {
@@ -544,6 +546,9 @@ pub fn tables(
     "Files per minute",
     &format!("{:.0}", rows.len() as f64 / took.as_secs_f64() * 60.0),
   ]);
+  if let Some(left) = left {
+    totals.add_row(["Interrupted", left]);
+  }
   right_align(&mut totals, 1);
   text += &lines(&mut totals, 0);
 
@@ -766,7 +771,15 @@ mod tests {
         outcome: Err("the container was not recognized".to_string()),
       },
     ];
-    let text = tables(&rows, false, false, Duration::from_secs(30), false, 100);
+    let text = tables(
+      &rows,
+      false,
+      false,
+      Duration::from_secs(30),
+      None,
+      false,
+      100,
+    );
     let lines: Vec<&str> = text.lines().collect();
     let cells = |start: &str| -> Vec<&str> {
       let line = lines.iter().find(|line| line.starts_with(start));
@@ -806,7 +819,15 @@ mod tests {
     );
 
     // colour changes no column
-    let coloured = tables(&rows, false, false, Duration::from_secs(30), true, 100);
+    let coloured = tables(
+      &rows,
+      false,
+      false,
+      Duration::from_secs(30),
+      None,
+      true,
+      100,
+    );
     assert!(
       coloured.contains("\u{1b}[31mlikely transcode\u{1b}[0m"),
       "{coloured}"

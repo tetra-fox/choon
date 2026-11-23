@@ -886,6 +886,56 @@ fn a_file_opened_and_out_of_time_before_a_window_is_not_read() {
   );
 }
 
+#[cfg(unix)]
+#[test]
+fn an_interrupt_ends_the_run_with_the_lines_of_the_files_read() {
+  let dir = tempfile::tempdir().unwrap();
+  let (honest, fake) = honest_and_fake(dir.path());
+  // a FIFO no writer opens is under way for as long as the run lasts
+  let waiting = fifo(dir.path(), "waiting.flac");
+  let measures = dir.path().join("measures.jsonl");
+  let mut child = Command::new(env!("CARGO_BIN_EXE_choon"))
+    // one job reads the files in the order given
+    .args(["check", "--json", "--jobs", "1", "--save-measures"])
+    .arg(&measures)
+    .arg(&fake)
+    .arg(&waiting)
+    .arg(&honest)
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()
+    .unwrap();
+  let mut lines = BufReader::new(child.stdout.take().unwrap());
+  let mut first = String::new();
+  lines.read_line(&mut first).unwrap();
+  let read: serde_json::Value = serde_json::from_str(&first).unwrap();
+  assert_eq!(read["file"], fake);
+  let sent = Command::new("kill")
+    .args(["-INT", &child.id().to_string()])
+    .status();
+  assert!(sent.is_ok_and(|status| status.success()), "kill ran");
+
+  // the file under way prints nothing and the file after it is never started
+  let mut rest = String::new();
+  std::io::Read::read_to_string(&mut lines, &mut rest).unwrap();
+  assert_eq!(rest, "");
+  let output = child.wait_with_output().unwrap();
+  assert_eq!(status(&output), 130, "{output:?}");
+  assert_eq!(
+    String::from_utf8(output.stderr).unwrap(),
+    "choon: interrupted: 1 of 3 files read\n"
+  );
+  // the measures file holds the whole line of the file read and no part of another
+  let kept = std::fs::read_to_string(&measures).unwrap();
+  assert!(kept.ends_with('\n'), "{kept}");
+  let kept: Vec<serde_json::Value> = kept
+    .lines()
+    .map(|line| serde_json::from_str(line).unwrap())
+    .collect();
+  assert_eq!(kept.len(), 1);
+  assert_eq!(kept[0]["file"], fake);
+}
+
 #[test]
 fn several_profiles_share_a_line_and_only_a_lossy_verdict_names_an_encoder() {
   let dir = tempfile::tempdir().unwrap();

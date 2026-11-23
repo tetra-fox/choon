@@ -41,6 +41,9 @@ const CLEAN: u8 = 0;
 const LOSSY: u8 = 1;
 /// a file could not be read or an argument was wrong
 const FAILED: u8 = 2;
+/// an interrupt ended the run before every file was read: 128 and the number of SIGINT, as a
+/// shell reports a program the signal killed
+const INTERRUPTED: u8 = 130;
 
 #[derive(Parser)]
 #[command(version, about)]
@@ -54,11 +57,14 @@ enum Command {
   /// Read each file and print what its audio is
   #[command(after_help = "\
 Exit status:
-  0  every file is consistent with its format, possibly lossy or inconclusive
-  1  at least one file reads as a likely transcode or mixed sources
-  2  a file could not be read, or an argument was wrong
+    0  every file is consistent with its format, possibly lossy or inconclusive
+    1  at least one file reads as a likely transcode or mixed sources
+    2  a file could not be read, or an argument was wrong
+  130  an interrupt ended the run before every file was read
 
-A file the analyzer cannot open as audio is one that could not be read.")]
+A file the analyzer cannot open as audio is one that could not be read. On an interrupt the
+files under way are dropped, the files already read keep their lines, and stderr says how
+many were read. A second interrupt ends the program at once.")]
   Check(Check),
 }
 
@@ -278,6 +284,7 @@ enum Failed {
   Output(io::Error),
   /// the measures file could not be opened, made or written
   Measures(PathBuf, io::Error),
+  Signals(ctrlc::Error),
 }
 
 /// what the threads reading files tell the one that prints
@@ -335,6 +342,7 @@ impl std::fmt::Display for Failed {
       Self::Threads(e) => write!(f, "starting the threads: {e}"),
       Self::Output(e) => write!(f, "writing the output: {e}"),
       Self::Measures(path, e) => write!(f, "{}: {e}", path.display()),
+      Self::Signals(e) => write!(f, "setting the interrupt handler: {e}"),
     }
   }
 }
@@ -434,6 +442,19 @@ fn run(check: &Check) -> Result<u8, Failed> {
     let stop = stop.clone();
     Arc::new(move || stop.load(Ordering::Relaxed))
   };
+  // the first interrupt stops the run as an output that ended early does, and a second ends
+  // the program where it is
+  let interrupted = Arc::new(AtomicBool::new(false));
+  ctrlc::set_handler({
+    let (stop, interrupted) = (stop.clone(), interrupted.clone());
+    move || {
+      if interrupted.swap(true, Ordering::Relaxed) {
+        std::process::exit(INTERRUPTED.into());
+      }
+      stop.store(true, Ordering::Relaxed);
+    }
+  })
+  .map_err(Failed::Signals)?;
   // profiles that measure alike share one measuring of a file
   let measurings = profiles
     .iter()
@@ -548,23 +569,67 @@ fn run(check: &Check) -> Result<u8, Failed> {
           .for_each(|group| reread(measures, group)),
       });
     });
-    let code = if !check.json && io::stdout().is_terminal() {
-      shown(
-        received,
+    let mut tally = Tally {
+      code,
+      finished: 0,
+      read: 0,
+    };
+    let ended = if !check.json && io::stdout().is_terminal() {
+      let run = Run {
         total,
-        check,
-        profiles.len() > 1,
+        profiled: profiles.len() > 1,
         started,
-        &mut keep,
-        code,
-      )
+        interrupted: &interrupted,
+      };
+      shown(received, check, &run, &mut keep, &mut tally)
     } else {
-      printed(received, check.json, &mut keep, code)
+      printed(received, check.json, &mut keep, &mut tally)
     };
     // an output that ended early stops the files under way, and the scope waits for them
     stop.store(true, Ordering::Relaxed);
-    code
+    ended?;
+    if !cut_short(&interrupted, total, tally.finished) {
+      return Ok(tally.code);
+    }
+    match total {
+      Some(total) => eprintln!("choon: interrupted: {} of {total} files read", tally.read),
+      None => eprintln!("choon: interrupted: {} files read", tally.read),
+    }
+    Ok(INTERRUPTED)
   })
+}
+
+/// what the files finished so far come to
+struct Tally {
+  /// the exit status they ask for
+  code: u8,
+  /// how many there are, read or not
+  finished: usize,
+  /// how many of them have a reading
+  read: usize,
+}
+
+impl Tally {
+  fn count(&mut self, result: &Result<Box<Checked>, Unread>) {
+    self.code = self.code.max(status(result));
+    self.finished += 1;
+    self.read += usize::from(result.is_ok());
+  }
+}
+
+/// what a terminal's summary says of the run beside its files
+struct Run<'a> {
+  /// how many files there are to read, where that is known before they are read
+  total: Option<usize>,
+  /// whether the files are read under several profiles
+  profiled: bool,
+  started: Instant,
+  interrupted: &'a AtomicBool,
+}
+
+/// whether an interrupt ended the run early: one came before all of `total` files had finished
+fn cut_short(interrupted: &AtomicBool, total: Option<usize>, finished: usize) -> bool {
+  interrupted.load(Ordering::Relaxed) && total != Some(finished)
 }
 
 /// what a check reads
@@ -618,14 +683,13 @@ fn status(result: &Result<Box<Checked>, Unread>) -> u8 {
   }
 }
 
-/// prints each file as it is done, a line or a JSON object, and returns the exit status, which
-/// starts at `code`
+/// prints each file as it is done, a line or a JSON object, and counts it in `tally`
 fn printed(
   received: Receiver<Event>,
   json: bool,
   keep: &mut Option<Keep<'_>>,
-  mut code: u8,
-) -> Result<u8, Failed> {
+  tally: &mut Tally,
+) -> Result<(), Failed> {
   let mut out = io::stdout().lock();
   for event in received {
     let Event::Done {
@@ -639,7 +703,7 @@ fn printed(
       continue;
     };
     let file = &file;
-    code = code.max(status(&result));
+    tally.count(&result);
     if let Some(keep) = keep {
       keep.write(&kept)?;
     }
@@ -685,23 +749,27 @@ fn printed(
     };
     if !print(&mut out, &line)? {
       // the files printed so far decide the status
-      return Ok(code);
+      return Ok(());
     }
   }
-  Ok(code)
+  Ok(())
 }
 
 /// shows the files under way in a terminal with each finding above them, then one file's reading
-/// in detail or the tables of many, and returns the exit status, which starts at `code`
+/// in detail or the tables of many, and counts each file in `tally`
 fn shown(
   received: Receiver<Event>,
-  total: Option<usize>,
   check: &Check,
-  profiled: bool,
-  started: Instant,
+  run: &Run<'_>,
   keep: &mut Option<Keep<'_>>,
-  mut code: u8,
-) -> Result<u8, Failed> {
+  tally: &mut Tally,
+) -> Result<(), Failed> {
+  let Run {
+    total,
+    profiled,
+    started,
+    interrupted,
+  } = *run;
   let colour = match check.color {
     ColorChoice::Always => true,
     ColorChoice::Never => false,
@@ -726,7 +794,7 @@ fn shown(
         kept,
       }) => {
         bars.ended(file);
-        code = code.max(status(&result));
+        tally.count(&result);
         if let Some(keep) = keep {
           keep.write(&kept)?;
         }
@@ -764,26 +832,31 @@ fn shown(
   bars.finish();
   rows.sort_by(|a, b| a.path.cmp(&b.path));
   let width = console::Term::stdout().size().1;
+  let left = cut_short(interrupted, total, tally.finished).then(|| match total {
+    Some(total) => format!("{} of {total} files left", total - tally.finished),
+    None => "measures left unread".to_string(),
+  });
   let text = match &rows[..] {
     [
       Row {
         path,
         outcome: Ok(checked),
       },
-    ] => terminal::readout(path, checked, profiled, check.verbose, colour, width),
-    // its failure is already on the screen
-    [_] => return Ok(code),
+    ] if one => terminal::readout(path, checked, profiled, check.verbose, colour, width),
+    // its failure is already on the screen, and stderr says of an interrupt
+    [] | [_] if one => return Ok(()),
     _ => terminal::tables(
       &rows,
       profiled,
       check.verbose,
       started.elapsed(),
+      left.as_deref(),
       colour,
       width,
     ),
   };
   print(&mut io::stdout().lock(), text.trim_end())?;
-  Ok(code)
+  Ok(())
 }
 
 /// the bytes of a path that is not Unicode. the JSON's `file` holds such a path with a
