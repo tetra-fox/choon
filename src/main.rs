@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -378,29 +378,7 @@ fn run(check: &Check) -> Result<u8, Failed> {
     print(&mut io::stdout().lock(), &defaults)?;
     return Ok(CLEAN);
   }
-  let mut profiles = if check.profile.is_empty() {
-    vec![("default".to_string(), Thresholds::default())]
-  } else {
-    let profiles: Vec<(String, Thresholds)> = check
-      .profile
-      .iter()
-      .map(|path| profile(path))
-      .collect::<Result<_, _>>()?;
-    // a reading is told from another's by its profile's name, on a line and in the JSON
-    for (at, (name, _)) in profiles.iter().enumerate() {
-      if profiles[..at].iter().any(|(earlier, _)| earlier == name) {
-        let why = format!("another profile is named {name} too");
-        return Err(Failed::Profile(check.profile[at].clone(), why));
-      }
-    }
-    profiles
-  };
-  if check.fast {
-    for (_, thresholds) in &mut profiles {
-      thresholds.measure.scan_wma = false;
-      thresholds.measure.scan_other_rate = false;
-    }
-  }
+  let profiles = profiles(check)?;
   let coverage = match (check.max_full_minutes, check.sampled_windows) {
     (Some(minutes), Some(windows)) => Coverage::Sampled {
       over_seconds: minutes * 60.0,
@@ -463,10 +441,6 @@ fn run(check: &Check) -> Result<u8, Failed> {
     .map_err(Failed::Threads)?;
   let started = Instant::now();
   let stop = Arc::new(AtomicBool::new(false));
-  let canceled: CancelCheck = {
-    let stop = stop.clone();
-    Arc::new(move || stop.load(Ordering::Relaxed))
-  };
   // the first interrupt stops the run as an output that ended early does, and a second ends
   // the program where it is
   let interrupted = Arc::new(AtomicBool::new(false));
@@ -480,123 +454,28 @@ fn run(check: &Check) -> Result<u8, Failed> {
     }
   })
   .map_err(Failed::Signals)?;
-  // profiles that measure alike share one measuring of a file
-  let measurings = profiles
-    .iter()
-    .enumerate()
-    .filter(|(at, (_, thresholds))| {
-      profiles[..*at]
-        .iter()
-        .all(|(_, earlier)| earlier.measure != thresholds.measure)
-    })
-    .count();
+  let plan = Plan::new(&profiles, coverage, check.timeout, keep.is_some(), {
+    let stop = stop.clone();
+    Arc::new(move || stop.load(Ordering::Relaxed))
+  });
   let (events, received) = mpsc::sync_channel(jobs);
-  let measure = {
-    let (stop, profiles, events) = (&*stop, &profiles, events.clone());
-    let (save, timeout) = (keep.is_some(), check.timeout);
-    move |(file, found): (usize, &Found)| {
-      if stop.load(Ordering::Relaxed) {
-        return;
-      }
-      let path = &found.path;
-      let progress: Vec<Arc<AtomicU32>> = (0..measurings).map(|_| Arc::default()).collect();
-      let name = path.file_name().unwrap_or(path.as_os_str());
-      let event = Event::Started {
-        file,
-        name: terminal::legible(Path::new(name)),
-        progress: progress.clone(),
-      };
-      // nothing receives once the output is closed, which `stop` says to the files not begun
-      if events.send(event).is_err() {
-        return;
-      }
-      // the library makes a panic while it measures an error. one in a reading, or in this
-      // program's own part, is caught here, so that the run goes on to the other files either
-      // way. the panic's own message is on stderr by then. nothing the analysis borrows is left
-      // half changed, as it only reads what it is given
-      // a time too far off for the clock to hold never comes
-      let deadline = timeout.and_then(|timeout| Instant::now().checked_add(timeout));
-      let run = AssertUnwindSafe(|| {
-        analyzed(
-          path, profiles, coverage, deadline, save, &progress, &canceled,
-        )
-      });
-      let (result, kept) = match catch_unwind(run) {
-        // the time ran out after the audio was opened and before its first window
-        Ok(Ok((checked, _))) if checked.windows == 0 && out_of_time(&checked) => (
-          Err(Unread::NotRead(
-            "the analysis ran out of time before a window was measured".to_string(),
-          )),
-          Vec::new(),
-        ),
-        Ok(Ok((checked, kept))) => (Ok(Box::new(checked)), kept),
-        Ok(Err(Error::Canceled)) => return,
-        Ok(Err(Error::Open(e))) => (Err(Unread::Open(e)), Vec::new()),
-        Ok(Err(Error::NotAudio(why) | Error::Unsupported(why))) => {
-          (Err(Unread::NotRead(why)), Vec::new())
-        }
-        Ok(Err(failed @ (Error::OutOfTime | Error::Panicked))) => {
-          (Err(Unread::NotRead(failed.to_string())), Vec::new())
-        }
-        Err(_) => (
-          Err(Unread::NotRead(Error::Panicked.to_string())),
-          Vec::new(),
-        ),
-      };
-      let done = Event::Done {
-        file,
-        path: path.clone(),
-        root: found.root,
-        result,
-        kept,
-      };
-      // as above: a closed output has no use for the result
-      let _ = events.send(done);
-    }
-  };
-  let reread = {
-    let (stop, profiles) = (&*stop, &profiles);
-    move |measures: &Path, (file, group): (usize, Group)| {
-      if stop.load(Ordering::Relaxed) {
-        return;
-      }
-      let (path, result) = match group.path {
-        Ok(path) => {
-          // as with a file measured, a panic in a reading is this file's failure alone
-          let run = AssertUnwindSafe(|| read_again(&group.lines, profiles));
-          let read =
-            catch_unwind(run).unwrap_or_else(|_| Err(Unread::NotRead(Error::Panicked.to_string())));
-          (path, read.map(Box::new))
-        }
-        // a line that names no file is named by where it is
-        Err(why) => (
-          PathBuf::from(format!("{}:{}", measures.display(), group.line)),
-          Err(Unread::NotRead(why)),
-        ),
-      };
-      let done = Event::Done {
-        file,
-        path,
-        root: None,
-        result,
-        kept: Vec::new(),
-      };
-      // a closed output has no use for the result
-      let _ = events.send(done);
-    }
-  };
   thread::scope(|scope| {
-    let (pool, stop) = (&pool, &*stop);
+    let (pool, plan, stop) = (&pool, &plan, &*stop);
+    // the sender moves to this thread and is dropped with it, which ends the events
     scope.spawn(move || {
       pool.install(|| match source {
         // the files start in the order given, each thread taking the next when it is free
-        Source::Files(files) => files.iter().enumerate().par_bridge().for_each(measure),
+        Source::Files(files) => files
+          .iter()
+          .enumerate()
+          .par_bridge()
+          .for_each(|(file, found)| check_file(file, found, plan, &events)),
         // a run that is stopped reads no more of the measures file
         Source::Kept(measures, groups) => groups
           .take_while(|_| !stop.load(Ordering::Relaxed))
           .enumerate()
           .par_bridge()
-          .for_each(|group| reread(measures, group)),
+          .for_each(|(file, group)| check_group(measures, file, group, plan, &events)),
       });
     });
     let mut tally = Tally {
@@ -628,6 +507,163 @@ fn run(check: &Check) -> Result<u8, Failed> {
     }
     Ok(INTERRUPTED)
   })
+}
+
+/// the profiles a check reads each file under, with what `--fast` leaves out of every one
+fn profiles(check: &Check) -> Result<Vec<(String, Thresholds)>, Failed> {
+  let mut profiles = if check.profile.is_empty() {
+    vec![("default".to_string(), Thresholds::default())]
+  } else {
+    let profiles: Vec<(String, Thresholds)> = check
+      .profile
+      .iter()
+      .map(|path| profile(path))
+      .collect::<Result<_, _>>()?;
+    // a reading is told from another's by its profile's name, on a line and in the JSON
+    for (at, (name, _)) in profiles.iter().enumerate() {
+      if profiles[..at].iter().any(|(earlier, _)| earlier == name) {
+        let why = format!("another profile is named {name} too");
+        return Err(Failed::Profile(check.profile[at].clone(), why));
+      }
+    }
+    profiles
+  };
+  if check.fast {
+    for (_, thresholds) in &mut profiles {
+      thresholds.measure.scan_wma = false;
+      thresholds.measure.scan_other_rate = false;
+    }
+  }
+  Ok(profiles)
+}
+
+/// how every file of a check is measured and read
+struct Plan<'a> {
+  profiles: &'a [(String, Thresholds)],
+  /// the measure thresholds of the profiles, each once: profiles that measure alike share one
+  /// measuring of a file
+  measures: Vec<&'a MeasureThresholds>,
+  coverage: Coverage,
+  /// how long the measurings of a file may take together
+  timeout: Option<Duration>,
+  /// whether a file's lines for the measures file are made
+  save: bool,
+  /// whether the run is stopped: no file is begun then, and those under way are canceled
+  canceled: CancelCheck,
+}
+
+impl<'a> Plan<'a> {
+  fn new(
+    profiles: &'a [(String, Thresholds)],
+    coverage: Coverage,
+    timeout: Option<Duration>,
+    save: bool,
+    canceled: CancelCheck,
+  ) -> Self {
+    let mut measures = Vec::new();
+    for (_, thresholds) in profiles {
+      if !measures.contains(&&thresholds.measure) {
+        measures.push(&thresholds.measure);
+      }
+    }
+    Self {
+      profiles,
+      measures,
+      coverage,
+      timeout,
+      save,
+      canceled,
+    }
+  }
+}
+
+/// measures and reads the file numbered `file` and tells `events` how it went. a file not
+/// begun or canceled, because the run is stopped, is not told of
+fn check_file(file: usize, found: &Found, plan: &Plan<'_>, events: &SyncSender<Event>) {
+  if (plan.canceled)() {
+    return;
+  }
+  let path = &found.path;
+  let progress: Vec<Arc<AtomicU32>> = plan.measures.iter().map(|_| Arc::default()).collect();
+  let name = path.file_name().unwrap_or(path.as_os_str());
+  let event = Event::Started {
+    file,
+    name: terminal::legible(Path::new(name)),
+    progress: progress.clone(),
+  };
+  // nothing receives once the output is closed, which stops the run for the files not begun
+  if events.send(event).is_err() {
+    return;
+  }
+  // the library makes a panic while it measures an error. one in a reading, or in this
+  // program's own part, is caught here, so that the run goes on to the other files either
+  // way. the panic's own message is on stderr by then. nothing the analysis borrows is left
+  // half changed, as it only reads what it is given
+  let run = AssertUnwindSafe(|| analyzed(path, plan, &progress));
+  let outcome = match catch_unwind(run) {
+    // the time ran out after the audio was opened and before its first window
+    Ok(Ok((checked, _))) if checked.windows == 0 && out_of_time(&checked) => Err(Unread::NotRead(
+      "the analysis ran out of time before a window was measured".to_string(),
+    )),
+    Ok(Ok(read)) => Ok(read),
+    Ok(Err(Error::Canceled)) => return,
+    Ok(Err(Error::Open(e))) => Err(Unread::Open(e)),
+    Ok(Err(Error::NotAudio(why) | Error::Unsupported(why))) => Err(Unread::NotRead(why)),
+    Ok(Err(failed @ (Error::OutOfTime | Error::Panicked))) => {
+      Err(Unread::NotRead(failed.to_string()))
+    }
+    Err(_) => Err(Unread::NotRead(Error::Panicked.to_string())),
+  };
+  let (result, kept) = match outcome {
+    Ok((checked, kept)) => (Ok(Box::new(checked)), kept),
+    Err(unread) => (Err(unread), Vec::new()),
+  };
+  let done = Event::Done {
+    file,
+    path: path.clone(),
+    root: found.root,
+    result,
+    kept,
+  };
+  // as above: a closed output has no use for the result
+  let _ = events.send(done);
+}
+
+/// reads the file numbered `file` again from `group`, its lines of the measures file at
+/// `measures`, and tells `events` how it went, unless the run is stopped
+fn check_group(
+  measures: &Path,
+  file: usize,
+  group: Group,
+  plan: &Plan<'_>,
+  events: &SyncSender<Event>,
+) {
+  if (plan.canceled)() {
+    return;
+  }
+  let (path, result) = match group.path {
+    Ok(path) => {
+      // as with a file measured, a panic in a reading is this file's failure alone
+      let run = AssertUnwindSafe(|| read_again(&group.lines, plan.profiles));
+      let read =
+        catch_unwind(run).unwrap_or_else(|_| Err(Unread::NotRead(Error::Panicked.to_string())));
+      (path, read.map(Box::new))
+    }
+    // a line that names no file is named by where it is
+    Err(why) => (
+      PathBuf::from(format!("{}:{}", measures.display(), group.line)),
+      Err(Unread::NotRead(why)),
+    ),
+  };
+  let done = Event::Done {
+    file,
+    path,
+    root: None,
+    result,
+    kept: Vec::new(),
+  };
+  // a closed output has no use for the result
+  let _ = events.send(done);
 }
 
 /// what the files finished so far come to
@@ -1036,33 +1072,27 @@ struct Measuring {
   seconds: f64,
 }
 
-/// what the file at `path` measured, with its readings under each of `profiles`, and its lines
-/// for the measures file when `save`. profiles whose measure thresholds are the same share one
-/// measuring, so the file is decoded once for them, and every measuring stops at `deadline`.
-/// each measuring says how far it is in the next of `progress`, which holds one for each.
+/// what the file at `path` measured, with its readings under each of the plan's profiles, and
+/// its lines for the measures file when the plan saves them. the file is decoded once for
+/// each of the plan's measure thresholds, and every measuring stops when the file's time is
+/// up. each says how far it is in the next of `progress`, which holds one for each.
 fn analyzed(
   path: &Path,
-  profiles: &[(String, Thresholds)],
-  coverage: Coverage,
-  deadline: Option<Instant>,
-  save: bool,
+  plan: &Plan<'_>,
   progress: &[Arc<AtomicU32>],
-  canceled: &CancelCheck,
 ) -> Result<(Checked, Vec<String>), Error> {
-  let mut measurings: Vec<Measuring> = Vec::new();
-  for (_, thresholds) in profiles {
-    if measurings
-      .iter()
-      .any(|alike| alike.thresholds == thresholds.measure)
-    {
-      continue;
-    }
+  // a time too far off for the clock to hold never comes
+  let deadline = plan
+    .timeout
+    .and_then(|timeout| Instant::now().checked_add(timeout));
+  let mut measurings = Vec::with_capacity(plan.measures.len());
+  for (thresholds, progress) in plan.measures.iter().zip(progress) {
     let settings = Settings {
-      coverage,
+      coverage: plan.coverage,
       deadline,
-      thresholds: thresholds.measure.clone(),
-      progress: Some(progress[measurings.len()].clone()),
-      canceled: Some(canceled.clone()),
+      thresholds: (*thresholds).clone(),
+      progress: Some(progress.clone()),
+      canceled: Some(plan.canceled.clone()),
     };
     let started = Instant::now();
     let measured = choon::measure(path, &settings)?;
@@ -1072,7 +1102,7 @@ fn analyzed(
       seconds: started.elapsed().as_secs_f64(),
     });
   }
-  if save {
+  if plan.save {
     // a line holds no pictures: no reading is made from them, and they are nearly all of a
     // window's bytes
     let windows = measurings
@@ -1088,7 +1118,7 @@ fn analyzed(
   }
   let kept = measurings
     .iter()
-    .filter(|_| save)
+    .filter(|_| plan.save)
     .map(|measuring| {
       let kept = Kept {
         file: path.to_string_lossy(),
@@ -1103,7 +1133,7 @@ fn analyzed(
       line
     })
     .collect();
-  let checked = checked(profiles, measurings)
+  let checked = checked(plan.profiles, measurings)
     .unwrap_or_else(|profile| unreachable!("the file was measured for profile {profile}"));
   Ok((checked, kept))
 }

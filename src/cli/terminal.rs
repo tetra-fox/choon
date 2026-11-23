@@ -949,10 +949,10 @@ mod tests {
 
   use choon::fixtures::{self, Bitrate, music, pink};
   use choon::grid::{Codec, Family};
-  use choon::{CancelCheck, Coverage, Verdict};
+  use choon::{Coverage, Verdict};
 
   use super::{Look, Row, cut, legible, readout, room, tables};
-  use crate::{Checked, Thresholds, analyzed, encoder, khz};
+  use crate::{Checked, Plan, Thresholds, analyzed, encoder, khz};
 
   /// what the shipped thresholds make of an honest FLAC and of one made from a 128 kbps MP3
   fn honest_and_fake() -> (Box<Checked>, Box<Checked>) {
@@ -963,19 +963,9 @@ mod tests {
     let through = fixtures::through_mp3(&music(1, 44_100, pink), Bitrate::Kbps128, dir.path());
     fixtures::write_flac(&through, 16, false, &fake);
     let profiles = [("default".to_string(), Thresholds::default())];
-    let never: CancelCheck = Arc::new(|| false);
+    let plan = Plan::new(&profiles, Coverage::Full, None, false, Arc::new(|| false));
     let checked = |path: &Path| {
-      let progress = [Arc::default()];
-      let (checked, _) = analyzed(
-        path,
-        &profiles,
-        Coverage::Full,
-        None,
-        false,
-        &progress,
-        &never,
-      )
-      .unwrap();
+      let (checked, _) = analyzed(path, &plan, &[Arc::default()]).unwrap();
       Box::new(checked)
     };
     (checked(&honest), checked(&fake))
