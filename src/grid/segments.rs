@@ -13,7 +13,7 @@ const SEGMENT_AT: [f64; SEGMENTS] = [0.2, 0.4, 0.6, 0.8];
 /// decode fills the bands the encoder emptied, and the grid's count with them
 const CLIPPED_SHARE: f64 = 0.05;
 
-/// the mean square under which a stretch is too quiet to stand in for a clipped segment,
+/// the mean square under which a stretch is too quiet to stand in for a segment,
 /// -40 dBFS: a fade or a pause holds too few values over the noise for a count
 const QUIET_POWER: f64 = 1e-4;
 
@@ -100,7 +100,7 @@ impl Segment {
 }
 
 /// the stretches of the stream beside the segments: the one being filled, and the loudest of
-/// those not clipped, for the segments that are
+/// those not clipped, for the segments that give way
 #[derive(Default)]
 struct Spares {
   filling: Option<Segment>,
@@ -114,18 +114,16 @@ impl Spares {
   /// cuts the stream into stretches a segment long. `first` is the frame of the first sample;
   /// a stretch the stream leaves before it is full is dropped
   fn take(&mut self, first: u64, left: &[f32], right: &[f32]) {
-    if self.filling.as_ref().is_none_or(|s| s.next() != first) {
-      self.filling = Some(Segment::starting(first));
-    }
+    let filling = self.filling.take().filter(|s| s.next() == first);
+    let mut filling = filling.unwrap_or_else(|| Segment::starting(first));
     for (l, r) in left.iter().zip(right) {
-      let filling = self.filling.get_or_insert_with(|| Segment::starting(first));
       filling.push(f64::from(*l), f64::from(*r));
       if filling.full() {
-        let next = filling.next();
-        let full = self.filling.replace(Segment::starting(next));
-        self.keep(full.expect("the stretch was just filled"));
+        let next = Segment::starting(filling.next());
+        self.keep(std::mem::replace(&mut filling, next));
       }
     }
+    self.filling = Some(filling);
   }
 
   /// keeps `stretch` among the loudest that are not clipped
