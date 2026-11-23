@@ -316,6 +316,7 @@ music/honest.flac: consistent (confidence 0.73)
 | `--defaults`                               | print the default thresholds as JSON                      |
 | `--save-measures FILE`                     | write each file's measures to FILE, a line of JSON each   |
 | `--from-measures FILE`                     | read the measures in FILE in place of audio files         |
+| `--timeout SECONDS`                        | stop measuring a file after SECONDS                       |
 | `--fast`                                   | skip the scans for WMA and for a converted sample rate    |
 | `--max-full-minutes M --sampled-windows N` | read files longer than M minutes at N one-second windows  |
 
@@ -334,6 +335,9 @@ music/honest.flac: consistent (confidence 0.73)
   numbers. A line holds a path as it is, so a script that matches files to readings reads the
   JSON
 - A file the analyzer fails on is not read and says so, and the other files are still read
+- A file out of time under `--timeout` prints a reading of the part measured, with a limitation
+  that says so, and counts toward the exit code as any reading does. One with no window
+  measured by then is not read
 - A profile is `{"measure": {...}, "reading": {...}}`; keys left out keep their default and
   unknown keys are refused
 - Repeating `--profile` reads each file with several profiles; those with the same `measure`
