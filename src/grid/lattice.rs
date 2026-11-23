@@ -498,6 +498,7 @@ fn all_sit(channels: impl IntoIterator<Item = Option<bool>>) -> bool {
   }
   any
 }
+
 /// whether a channel with `tested` bands, `hits` of them on the lattice, is judged, and whether
 /// it then sits on the lattice
 fn judged((tested, hits): (usize, usize)) -> Option<bool> {
@@ -822,23 +823,19 @@ impl Stretch {
   /// the stretch of `channels` at `rate` whose first sample is frame `first` of the file;
   /// `None` when nothing is left of it at 48 kHz
   fn of(channels: &[&[f64]], first: u64, rate: Rate) -> Option<Self> {
-    let (resampled, start) = match rate {
-      Rate::Native => (None, first),
+    let emphasized = |channel: &[f64]| pre_emphasized(channel.iter().copied());
+    Some(match rate {
+      Rate::Native => Self {
+        channels: channels.iter().map(|c| emphasized(c)).collect(),
+        start: first,
+      },
       Rate::From44100 => {
         let (resampled, start) = Resampler::to_48000().brought(channels, first)?;
-        (Some(resampled), start)
+        Self {
+          channels: resampled.iter().map(|c| emphasized(c)).collect(),
+          start,
+        }
       }
-    };
-    let channels = match &resampled {
-      Some(resampled) => resampled.iter().map(Vec::as_slice).collect(),
-      None => channels.to_vec(),
-    };
-    Some(Self {
-      channels: channels
-        .iter()
-        .map(|c| pre_emphasized(c.iter().copied()))
-        .collect(),
-      start,
     })
   }
 }
