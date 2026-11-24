@@ -7,7 +7,8 @@ test:
     cargo test --doc
 
 # formatting, clippy on the library and program with their tests, on the library alone without
-# the program, with `serde` and with `testing`, and the docs as docs.rs builds them
+# the program, with `serde`, with `testing` and for WebAssembly, and the docs as docs.rs builds
+# them
 lint:
     cargo fmt --all --check
     cargo fmt --manifest-path fuzz/Cargo.toml --all --check
@@ -16,6 +17,7 @@ lint:
     cargo clippy --no-default-features -- -D warnings
     cargo clippy --no-default-features --features serde -- -D warnings
     cargo clippy --no-default-features --features testing -- -D warnings
+    cargo clippy --no-default-features --features serde --target wasm32-unknown-unknown -- -D warnings
     RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --no-default-features --features serde
 
 # the sample files of samples/README.md, written again by the encoders' own programs
