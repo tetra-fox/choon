@@ -76,6 +76,8 @@ pub struct Settings {
   /// Time at which the analysis stops with what it has.
   ///
   /// `None` for an analysis that runs until the file ends.
+  ///
+  /// On `wasm32-unknown-unknown` [`Instant::now`] panics, so no deadline can be made there.
   pub deadline: Option<Instant>,
   /// Where the analysis reports how far it is, in thousandths of its work.
   ///
@@ -267,7 +269,8 @@ pub enum Error {
   /// Analysis that panicked, which is a bug in the analyzer or in a decoder.
   ///
   /// The panic's own message goes where the panic hook writes it. A build with
-  /// `panic = "abort"` aborts instead.
+  /// `panic = "abort"` aborts instead. `wasm32-unknown-unknown` is such a build: a panic there
+  /// is a trap, and this error is never returned.
   Panicked,
 }
 

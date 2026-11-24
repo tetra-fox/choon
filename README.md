@@ -210,6 +210,8 @@ fn main() -> Result<(), choon::Error> {
 - Logs through `tracing`
 - A FIFO waits for its writer when it is opened, no longer than the deadline or the cancel
   check lets the analysis run
+- Builds for `wasm32-unknown-unknown` with default features off. A panic there is a trap, and
+  no deadline can be set
 
 | Setting    | Description                                    |
 | ---------- | ---------------------------------------------- |
