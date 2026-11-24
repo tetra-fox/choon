@@ -6,6 +6,7 @@ mod cli {
   pub mod inputs;
   pub mod measures;
   pub mod terminal;
+  pub mod words;
 }
 
 use std::borrow::Cow;
@@ -21,11 +22,11 @@ use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use choon::grid::{Evidence, Family, Scan};
+use choon::grid::Scan;
 use choon::picture::Shown;
 use choon::{
-  CancelCheck, Claimed, Coverage, Error, Flag, HeAac, Limitation, MeasureThresholds, Measured,
-  OpusUse, Reading, ReadingThresholds, Settings, Verdict,
+  CancelCheck, Claimed, Coverage, Error, HeAac, Limitation, MeasureThresholds, Measured, OpusUse,
+  Reading, ReadingThresholds, Settings, Verdict,
 };
 use clap::{Args, ColorChoice, Parser, Subcommand};
 use rayon::iter::{ParallelBridge, ParallelIterator};
@@ -34,6 +35,7 @@ use serde::{Deserialize, Serialize};
 use crate::cli::inputs::{EXTENSIONS, Found, Inputs};
 use crate::cli::measures::{self, Group, Groups, Kept};
 use crate::cli::terminal::{self, Bars, Counted, Look, Row};
+use crate::cli::words::{self, lossy};
 
 /// every file read is consistent with its format, possibly lossy, or the analyzer cannot tell
 const CLEAN: u8 = 0;
@@ -984,58 +986,6 @@ fn print(out: &mut impl Write, line: &str) -> Result<bool, Failed> {
   }
 }
 
-/// whether `verdict` says a lossless file holds lossy audio
-fn lossy(verdict: Verdict) -> bool {
-  match verdict {
-    Verdict::LikelyTranscode | Verdict::MixedSources => true,
-    Verdict::Consistent | Verdict::PossiblyLossy | Verdict::Inconclusive => false,
-  }
-}
-
-/// whether a terminal lists a file read as `verdict` among its findings
-fn flagged(verdict: Verdict) -> bool {
-  lossy(verdict) || verdict == Verdict::PossiblyLossy
-}
-
-/// `verdict` in words
-fn label(verdict: Verdict) -> &'static str {
-  match verdict {
-    Verdict::Consistent => "consistent",
-    Verdict::LikelyTranscode => "likely transcode",
-    Verdict::MixedSources => "mixed sources",
-    Verdict::PossiblyLossy => "possibly lossy",
-    Verdict::Inconclusive => "inconclusive",
-  }
-}
-
-/// the encoder a reading names: without a grid the setting its cutoff matches, with one the
-/// grid's codec, its encoder family in parentheses and the setting. `None` where a grid has
-/// neither a family nor a setting to name, and beside a verdict that finds no lossy audio,
-/// where a named encoder would read as a finding
-fn encoder(reading: &Reading) -> Option<String> {
-  let profile = reading
-    .encoder_guess
-    .as_ref()
-    .filter(|_| flagged(reading.verdict))
-    .map(|guess| &guess.profile);
-  let Some(grid) = &reading.grid else {
-    return profile.map(ToString::to_string);
-  };
-  let codec = grid.codec;
-  // the shipped profiles are LAME's cutoffs: a setting is named beside LAME or no named
-  // encoder, from a profile of the grid's codec
-  let setting = profile
-    .filter(|_| matches!(grid.family, None | Some(Family::Lame | Family::Untagged)))
-    .filter(|profile| profile.codec == codec.to_string())
-    .map(|profile| profile.setting.as_str());
-  match (grid.family.and_then(family_words), setting) {
-    (None, None) => None,
-    (None, Some(setting)) => Some(format!("{codec} {setting}")),
-    (Some(family), None) => Some(format!("{codec} ({family})")),
-    (Some(family), Some(setting)) => Some(format!("{codec} ({family}) {setting}")),
-  }
-}
-
 /// the most threads `--jobs` starts. reading is work for a core, so threads past the cores only
 /// wait their turn, and each costs memory and time to start: rayon stops at 65,536 of them,
 /// which keep every core busy for minutes before a file is read
@@ -1249,17 +1199,17 @@ const NOT_READ: &str = "not read";
 /// a file's readings, each its verdict and what was found in parentheses, named after their
 /// profile when there are several, with the verdicts coloured when `colour`
 fn said(checked: &Checked, colour: bool) -> String {
-  let kind = kind(checked);
-  let words = |reading: &Reading, kind: Option<String>| {
-    let mut found = found(reading, checked.grid.is_some());
+  let kind = words::kind(&checked.opus, checked.he_aac, checked.dsd_multiple);
+  let said = |reading: &Reading, kind: Option<String>| {
+    let mut found = words::found(reading, checked.grid.is_some());
     found.extend(kind);
     detailed(terminal::worded(reading.verdict, colour), &found)
   };
   match &checked.readings[..] {
-    [read] => words(&read.reading, kind),
+    [read] => said(&read.reading, kind),
     readings => readings
       .iter()
-      .map(|read| format!("[{}] {}", read.profile, words(&read.reading, None)))
+      .map(|read| format!("[{}] {}", read.profile, said(&read.reading, None)))
       .chain(kind)
       .collect::<Vec<_>>()
       .join("; "),
@@ -1272,114 +1222,5 @@ fn detailed(status: String, found: &[String]) -> String {
     status
   } else {
     format!("{status} ({})", found.join(", "))
-  }
-}
-
-/// what a file is beside its codec: what an Opus file's packets state, the profile of an HE-AAC
-/// file, the rate of a DSD file
-fn kind(checked: &Checked) -> Option<String> {
-  match (
-    OpusUse::describe(&checked.opus),
-    checked.he_aac,
-    checked.dsd_multiple,
-  ) {
-    (Some(coding), ..) => Some(format!("Opus {coding}")),
-    (None, Some(he_aac), _) => Some(he_aac.to_string()),
-    (None, None, Some(multiple)) => Some(format!("DSD{multiple}")),
-    (None, None, None) => None,
-  }
-}
-
-/// a frequency as kHz to one decimal
-fn khz(hz: f64) -> String {
-  format!("{:.1} kHz", hz / 1000.0)
-}
-
-/// what a reading found, a few words each: the grid, the cutoff, the encoder, the flags, the
-/// confidence. `scanned` is whether the file's grid scan ran
-fn found(reading: &Reading, scanned: bool) -> Vec<String> {
-  let mut found = Vec::new();
-  let cutoff = reading.cutoff_hz.map_or_else(
-    || "no cutoff".to_string(),
-    |hz| format!("cutoff {}", khz(hz)),
-  );
-  let guess = encoder(reading);
-  if let Some(grid) = &reading.grid {
-    let codec = grid.codec;
-    found.push(match &grid.evidence {
-      Evidence::Count(_)
-      | Evidence::Steps { .. }
-      | Evidence::AacSteps { .. }
-      | Evidence::Lattice(_) => format!("{codec} grid"),
-      Evidence::CountAt { rate, .. } => {
-        format!("{codec} grid at {} kHz", f64::from(*rate) / 1000.0)
-      }
-      Evidence::Part { segments, scan } => format!(
-        "{codec} grid in {segments} of {} stretches",
-        scan.segment_z.len()
-      ),
-      Evidence::Shifted { .. } => format!("{codec} grid at another level"),
-      Evidence::Hybrid { .. } => format!("{codec} hybrid grid"),
-      Evidence::Unfiltered { .. } => format!("{codec} grid under its pitch filter"),
-      Evidence::Short { short } => format!("{codec} grid, {} ms frames", short.milliseconds()),
-    });
-    found.push(cutoff);
-    found.extend(guess);
-    return found;
-  }
-  if reading.verdict == Verdict::PossiblyLossy {
-    if reading.cutoff_verdict == Verdict::MixedSources {
-      found.push("mixed sources by cutoff".to_string());
-    }
-    found.push(cutoff);
-    found.extend(guess);
-    found.push(
-      if scanned {
-        "no grid"
-      } else {
-        "grid not scanned"
-      }
-      .to_string(),
-    );
-    return found;
-  }
-  if reading.cutoff_hz.is_some() {
-    found.push(cutoff);
-  }
-  found.extend(guess);
-  found.extend(
-    reading
-      .flags
-      .iter()
-      .map(|flag| flag_words(*flag).to_string()),
-  );
-  if reading.verdict != Verdict::Inconclusive {
-    found.push(format!("confidence {:.2}", reading.confidence));
-  }
-  found
-}
-
-/// the encoder family of a grid in a word or two; `None` for the family that names no encoder,
-/// and for one this program has no word for
-fn family_words(family: Family) -> Option<&'static str> {
-  match family {
-    Family::Lame => Some("LAME"),
-    Family::Helix => Some("Helix"),
-    Family::Apple => Some("Apple"),
-    Family::Faac => Some("FAAC"),
-    Family::Nero => Some("Nero"),
-    Family::FfmpegOrFdk => Some("ffmpeg or fdk-aac"),
-    Family::Fraunhofer => Some("Fraunhofer"),
-    Family::Libopus => Some("libopus"),
-    // Untagged, and what the library's enum, which is non-exhaustive, may hold besides
-    _ => None,
-  }
-}
-
-fn flag_words(flag: Flag) -> &'static str {
-  match flag {
-    Flag::Upsampled => "upsampled",
-    Flag::BitPadded => "bit padded",
-    Flag::DualMono => "dual mono",
   }
 }

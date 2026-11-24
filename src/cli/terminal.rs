@@ -16,9 +16,8 @@ use comfy_table::{CellAlignment, ContentArrangement, LineStyle, Table, TableStyl
 use console::{Alignment, Term};
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 
-use crate::{
-  Checked, NOT_READ, detailed, encoder, flag_words, flagged, khz, label, piped, piped_unread,
-};
+use crate::cli::words::{self, encoder, flag_words, flagged, khz, label};
+use crate::{Checked, NOT_READ, detailed, piped, piped_unread};
 
 /// the verdicts in the order the summary counts them
 const VERDICTS: [Verdict; 5] = [
@@ -374,21 +373,7 @@ fn length(time: Duration) -> String {
 /// a label and its value, wrapped at the terminal's width, with the reading's summary when
 /// verbose
 pub fn readout(path: &Path, checked: &Checked, look: Look) -> String {
-  let claimed = &checked.claimed;
-  let mut format = vec![claimed.codec.clone(), format!("{} Hz", claimed.sample_rate)];
-  if let Some(bits) = claimed.bit_depth {
-    format.push(format!("{bits} bit"));
-  }
-  format.push(match claimed.channels {
-    1 => "1 channel".to_string(),
-    channels => format!("{channels} channels"),
-  });
-  if let Some(kbps) = checked.bitrate_kbps {
-    format.push(format!("{kbps} kbit/s"));
-  }
-  let seconds = checked.duration.round() as u64;
-  format.push(format!("{}:{:02}", seconds / 60, seconds % 60));
-  let format = format.join(", ");
+  let format = words::format(&checked.claimed, checked.bitrate_kbps, checked.duration);
 
   let mut text = String::new();
   for read in &checked.readings {
@@ -963,7 +948,8 @@ mod tests {
   use choon::{Coverage, Verdict};
 
   use super::{Look, Row, cut, legible, readout, room, tables};
-  use crate::{Checked, Plan, Thresholds, analyzed, encoder, khz};
+  use crate::cli::words::{encoder, khz};
+  use crate::{Checked, Plan, Thresholds, analyzed};
 
   /// what the shipped thresholds make of an honest FLAC and of one made from a 128 kbps MP3
   fn honest_and_fake() -> (Box<Checked>, Box<Checked>) {
