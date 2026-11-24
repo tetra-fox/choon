@@ -417,38 +417,42 @@ pub fn measure(path: impl AsRef<Path>, settings: &Settings) -> Result<Measured, 
 /// opens the file at `path`. opening a FIFO waits for a writer and nothing cuts that wait
 /// short, so under a cancel check or a deadline a FIFO is opened on a thread of its own, which
 /// is left waiting when the analysis stops first and ends once a writer comes
+#[cfg(unix)]
 fn open(path: &Path, settings: &Settings) -> Result<File, Error> {
-  #[cfg(unix)]
-  {
-    use std::os::unix::fs::FileTypeExt;
-    use std::sync::mpsc::{RecvTimeoutError, channel};
-    use std::time::Duration;
+  use std::os::unix::fs::FileTypeExt;
+  use std::sync::mpsc::{RecvTimeoutError, channel};
+  use std::time::Duration;
 
-    let stoppable = settings.canceled.is_some() || settings.deadline.is_some();
-    let fifo = std::fs::metadata(path).is_ok_and(|file| file.file_type().is_fifo());
-    if stoppable && fifo {
-      // one message at most is ever sent
-      let (opened, waiting) = channel();
-      let path = path.to_path_buf();
-      std::thread::spawn(move || {
-        // nothing receives once the analysis has stopped, and the file is closed here
-        let _ = opened.send(File::open(path));
-      });
-      loop {
-        match waiting.recv_timeout(Duration::from_millis(20)) {
-          Ok(file) => return file.map_err(Error::Open),
-          Err(RecvTimeoutError::Timeout) if is_canceled(settings.canceled.as_ref()) => {
-            return Err(Error::Canceled);
-          }
-          Err(RecvTimeoutError::Timeout) if is_past(settings.deadline) => {
-            return Err(Error::OutOfTime);
-          }
-          Err(RecvTimeoutError::Timeout) => {}
-          Err(RecvTimeoutError::Disconnected) => return Err(Error::Panicked),
+  let stoppable = settings.canceled.is_some() || settings.deadline.is_some();
+  let fifo = std::fs::metadata(path).is_ok_and(|file| file.file_type().is_fifo());
+  if stoppable && fifo {
+    // one message at most is ever sent
+    let (opened, waiting) = channel();
+    let path = path.to_path_buf();
+    std::thread::spawn(move || {
+      // nothing receives once the analysis has stopped, and the file is closed here
+      let _ = opened.send(File::open(path));
+    });
+    loop {
+      match waiting.recv_timeout(Duration::from_millis(20)) {
+        Ok(file) => return file.map_err(Error::Open),
+        Err(RecvTimeoutError::Timeout) if is_canceled(settings.canceled.as_ref()) => {
+          return Err(Error::Canceled);
         }
+        Err(RecvTimeoutError::Timeout) if is_past(settings.deadline) => {
+          return Err(Error::OutOfTime);
+        }
+        Err(RecvTimeoutError::Timeout) => {}
+        Err(RecvTimeoutError::Disconnected) => return Err(Error::Panicked),
       }
     }
   }
+  File::open(path).map_err(Error::Open)
+}
+
+/// the settings bound the wait of a FIFO, which only Unix has
+#[cfg(not(unix))]
+fn open(path: &Path, _: &Settings) -> Result<File, Error> {
   File::open(path).map_err(Error::Open)
 }
 
