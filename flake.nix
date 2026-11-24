@@ -117,16 +117,20 @@
           };
 
           # what `just web` and `just web-test` run: binaryen for wasm-opt, node to run the
-          # wasm, and CMake for the encoders the test's fixtures build
+          # wasm, CMake for the encoders the test's fixtures build, and Chromium to open the
+          # page in. nixpkgs builds Chromium for Linux alone: elsewhere CHROMIUM names one
           web = pkgs.mkShell {
-            packages = with pkgs; [
-              (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
-              wasmBindgen
-              binaryen
-              nodejs
-              cmake
-              just
-            ];
+            packages =
+              (with pkgs; [
+                (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
+                wasmBindgen
+                binaryen
+                nodejs
+                cmake
+                just
+                git
+              ])
+              ++ lib.optional pkgs.stdenv.hostPlatform.isLinux pkgs.chromium;
           };
         }
       );
