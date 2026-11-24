@@ -266,6 +266,59 @@ fn the_wasm_reads_each_format_as_the_native_library_does() {
   assert_eq!(natives[2]["reading"]["grid"]["codec"], "opus");
 }
 
+/// the program in the main crate's release build, which `just web-test` builds
+fn program() -> std::path::PathBuf {
+  let program = Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/release/choon");
+  assert!(program.exists(), "`just web-test` has built the program");
+  program
+}
+
+#[test]
+fn the_words_are_the_ones_the_program_prints() {
+  let dir = tempfile::tempdir().unwrap();
+  let files = files(dir.path());
+  let paths: Vec<_> = files
+    .iter()
+    .map(|(name, bytes)| {
+      let path = dir.path().join(name);
+      std::fs::write(&path, bytes).unwrap();
+      path
+    })
+    .collect();
+  // its status says whether a file was flagged, which the lines say too
+  let printed = Command::new(program())
+    .arg("check")
+    .args(&paths)
+    .output()
+    .expect("the program runs");
+  let printed = String::from_utf8(printed.stdout).unwrap();
+  let mut lines: Vec<&str> = printed.lines().collect();
+  lines.sort_unstable();
+
+  let mut worded: Vec<String> = files
+    .iter()
+    .zip(&paths)
+    .map(|((name, bytes), path)| {
+      let json = choon_web::read(bytes.clone(), "").unwrap_or_else(|e| panic!("{name}: {e}"));
+      let words = &serde_json::from_str::<Value>(&json).unwrap()["words"];
+      let found: Vec<&str> = words["found"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|found| found.as_str().unwrap())
+        .collect();
+      let verdict = words["verdict"].as_str().unwrap();
+      if found.is_empty() {
+        format!("{}: {verdict}", path.display())
+      } else {
+        format!("{}: {verdict} ({})", path.display(), found.join(", "))
+      }
+    })
+    .collect();
+  worded.sort_unstable();
+  assert_eq!(lines, worded);
+}
+
 #[test]
 fn an_error_comes_back_as_the_message_the_library_gives() {
   let dir = tempfile::tempdir().unwrap();
