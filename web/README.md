@@ -70,11 +70,12 @@ else.
 
 `index.html` states its policy in a `meta` tag: scripts, styles and the icon from the page's
 own origin, WebAssembly, a worker from a `blob:` URL whose modules are the origin's, and no
-connection of any kind
-(`connect-src 'none'`).
+connection of any kind (`connect-src 'none'`).
 
 - The worker is made from a `blob:` URL so that the page's policy holds it too. A worker made
   from its own URL is held to the policy of that response, and a static host sends none
+- Chromium and Firefox, in the versions the flake's nixpkgs has, both refuse a connection from
+  that worker under the `meta` policy alone, which the test shows. Safari was not tried
 - The worker cannot fetch the wasm under this policy, so it imports it as base64 from
   `choon_web_wasm.js`
 - A host that sends the same policy as a response header changes nothing the page needs
@@ -146,8 +147,8 @@ const { measured, reading } = JSON.parse(check(bytes, ""));
 
 - Every key is always there; one without a value is `null`, or `[]` for `opus`
 - The windows and the grid scan of `Measured` are left out, which leaves a few kB
-- The program's wording is in `src/main.rs`, which the library does not export, so
-  `src/lib.rs` holds it a second time and a test compares the two
+- The wording is the program's module `src/cli/words.rs`, which this crate includes as a
+  file, as the library does not export it
 - `version` goes up with any change to this shape, a change of the library's to `reading`,
   `claimed`, `opus` or `heAac` included. The library is 0.x and can change those with any
   minor version
@@ -158,16 +159,18 @@ const { measured, reading } = JSON.parse(check(bytes, ""));
 nix develop .#web -c just web-test
 ```
 
-`just ci` does not run it. The test needs a Chromium: the `web` shell has one on Linux, and
-`CHROMIUM` names another.
+`just ci` does not run it. The page is opened in Chromium and in Firefox: the `web` shell has
+both on Linux, and `CHROMIUM` and `FIREFOX` name others. Without a Firefox the test of it
+passes without opening the page.
 
 `tests/node.rs` writes generated audio to a temporary directory, has node read each file with
 the wasm in `web/dist` (`tests/run.mjs`), and compares the JSON with what the same function
 returns natively. It also compares `words` with the lines the program prints for the same
 files.
 
-`tests/page.rs` opens the page in a headless Chromium (`tests/page.mjs`, over the DevTools
-protocol) from a local server and gives it generated files:
+`tests/page.rs` opens the page from a local server in a headless Chromium, over the DevTools
+protocol, and in a headless Firefox, over WebDriver BiDi (`tests/page.mjs`), and gives it
+generated files:
 
 - Four files given at once are read one after another: a FLAC decoded from an MP3 reads as
   `likely transcode` with an MP3 grid, the MP3 as `consistent`, bytes that are not audio as
@@ -178,9 +181,12 @@ protocol) from a local server and gives it generated files:
 - With `localStorage` refusing writes, a file is read and shown as not kept
 - No request goes to another origin, from the page or the worker, and the browser logs no
   error and no policy violation
-- A fetch made inside the worker is refused, and the page reads a file when the server sends
-  the policy as a header too
-- `SHOTS=dir` writes screenshots of the page there, at desktop and phone width, light and dark
+- A request the worker makes to its own origin as it starts reaches the server when the
+  policy is loosened to allow it, and does not under the page's policy, with no header from
+  the server
+- The page reads a file when the server sends the policy as a header too
+- `SHOTS=dir` writes Chromium's screenshots of the page there, at desktop and phone width,
+  light and dark
 
 - Files compared: FLAC, FLAC decoded from MP3 and from Opus, MP3, Opus in Ogg, WebM and MP4,
   FLAC in Ogg, WAV, RF64, AIFF, CAF, WavPack, Monkey's Audio, DSF, DSDIFF, ALAC, HE-AAC in MP4
