@@ -1,0 +1,40 @@
+[package]
+name = "choon-web"
+description = "The choon analyzer as WebAssembly for a web page"
+version = "0.0.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+publish = false
+
+[lib]
+# the rlib is for the tests, which call the same function natively
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+choon = { path = "..", default-features = false, features = ["serde"] }
+serde = { version = "1.0.229", features = ["derive"] }
+# a float written and read back is the same float, to its last digit
+serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
+# pinned: the wasm-bindgen program that writes the JavaScript must be this version, and the
+# flake's `web` shell takes its version from this line
+wasm-bindgen = "=0.2.130"
+
+[dev-dependencies]
+# the generated audio the tests read
+choon = { path = "..", default-features = false, features = ["testing"] }
+tempfile = "3.27.0"
+
+# its own workspace: a build for another target beside the main crate's, with nothing of the
+# program
+[workspace]
+members = ["."]
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
