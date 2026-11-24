@@ -13,6 +13,7 @@ lint:
     cargo fmt --all --check
     cargo fmt --manifest-path fuzz/Cargo.toml --all --check
     cargo fmt --manifest-path corpus/reader/Cargo.toml --all --check
+    cargo fmt --manifest-path web/Cargo.toml --all --check
     cargo clippy --all-targets -- -D warnings
     cargo clippy --no-default-features -- -D warnings
     cargo clippy --no-default-features --features serde -- -D warnings
@@ -42,7 +43,7 @@ corpus *ARGS:
 
 # copy the sample files into fuzz/corpus/<target>, each in full and sampled, with the measures
 # and thresholds the example makes, and the torture set's seeds where `just torture` wrote them
-fuzz-seed: fuzz-lock
+fuzz-seed: (lock "fuzz")
     #!/usr/bin/env bash
     set -euo pipefail
     cd fuzz
@@ -67,11 +68,11 @@ fuzz-seed: fuzz-lock
     head -c 16384 ../src/fixtures/clip.pcm > corpus/samples/clip
     cargo run --quiet --example seeds -- corpus
 
-# the fuzz crate is a workspace of its own, so its lockfile starts as a copy of the main one: the
-# targets build against the versions the crate ships with, and cargo adds only the fuzz crates
+# the crate in DIR is a workspace of its own, so its lockfile starts as a copy of the main one:
+# it builds against the versions the crate ships with, and cargo adds only its own crates
 [private]
-fuzz-lock:
-    cp Cargo.lock fuzz/Cargo.lock
+lock DIR:
+    cp Cargo.lock {{ DIR }}/Cargo.lock
 
 # run one fuzz target, indefinitely unless SECONDS is given. an input that takes a minute is a hang
 fuzz TARGET SECONDS="": fuzz-seed
@@ -85,6 +86,20 @@ fuzz TARGET SECONDS="": fuzz-seed
     case {{ TARGET }} in samples | thresholds_json) build=(--sanitizer none --no-trace-compares) ;; esac
     cargo fuzz run "${build[@]}" {{ TARGET }} -- -timeout=60 -max_len=65536 "${dict[@]}" \
       {{ if SECONDS == "" { "" } else { "-max_total_time=" + SECONDS } }}
+
+# the web recipes need wasm-bindgen's program, wasm-opt and node: run them inside
+# `nix develop .#web`
+
+# the analyzer as WebAssembly with SIMD, and the JavaScript wasm-bindgen writes for it, in
+# web/dist: web/README.md. wasm-opt makes the file about a quarter smaller and no faster
+web: (lock "web")
+    RUSTFLAGS="-C target-feature=+simd128" cargo build --manifest-path web/Cargo.toml --lib --release --target wasm32-unknown-unknown
+    wasm-bindgen --target web --out-dir web/dist web/target/wasm32-unknown-unknown/release/choon_web.wasm
+    wasm-opt -O2 web/dist/choon_web_bg.wasm -o web/dist/choon_web_bg.wasm
+
+# node runs web/dist over generated audio, and each reading is compared with the native one
+web-test: web
+    cargo test --manifest-path web/Cargo.toml --release -- --nocapture
 
 # the library alone and the program on the manifest's rust-version
 msrv:

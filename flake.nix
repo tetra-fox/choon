@@ -45,6 +45,13 @@
           nightly = pkgs.rust-bin.selectLatestNightlyWith (
             toolchain: toolchain.minimal.override { extensions = [ "rust-src" ]; }
           );
+          # wasm-bindgen's program writes JavaScript for the wasm-bindgen crate of its own version
+          # alone, so it is the one web/Cargo.toml pins
+          wasmBindgen =
+            pkgs."wasm-bindgen-cli_${
+              lib.replaceStrings [ "=" "." ] [ "" "_" ]
+                (lib.importTOML ./web/Cargo.toml).dependencies.wasm-bindgen
+            }";
           encoders = with pkgs; [
             ffmpeg
             lame
@@ -106,6 +113,19 @@
               nightly
               pkgs.cargo-fuzz
               pkgs.just
+            ];
+          };
+
+          # what `just web` and `just web-test` run: binaryen for wasm-opt, node to run the
+          # wasm, and CMake for the encoders the test's fixtures build
+          web = pkgs.mkShell {
+            packages = with pkgs; [
+              (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
+              wasmBindgen
+              binaryen
+              nodejs
+              cmake
+              just
             ];
           };
         }
