@@ -87,7 +87,7 @@ fuzz TARGET SECONDS="": fuzz-seed
     cargo fuzz run "${build[@]}" {{ TARGET }} -- -timeout=60 -max_len=65536 "${dict[@]}" \
       {{ if SECONDS == "" { "" } else { "-max_total_time=" + SECONDS } }}
 
-# the web recipes need wasm-bindgen's program, wasm-opt, node and Chromium: run them inside
+# the web recipes need wasm-bindgen's program, wasm-opt, node, Chromium and Firefox: run them inside
 # `nix develop .#web`
 
 # the analyzer as WebAssembly with SIMD, the JavaScript wasm-bindgen writes for it and the page
@@ -112,7 +112,8 @@ web: (lock "web")
       web/page/index.html > web/dist/index.html
 
 # node runs web/dist over generated audio, and each reading is compared with the native one
-# and worded as the program words it; then a headless Chromium reads files on the page
+# and worded as the program words it; then a headless Chromium and a headless Firefox read
+# files on the page
 web-test: web
     cargo build --release
     cargo test --manifest-path web/Cargo.toml --release -- --nocapture

@@ -117,8 +117,9 @@
           };
 
           # what `just web` and `just web-test` run: binaryen for wasm-opt, node to run the
-          # wasm, CMake for the encoders the test's fixtures build, and Chromium to open the
-          # page in. nixpkgs builds Chromium for Linux alone: elsewhere CHROMIUM names one
+          # wasm, CMake for the encoders the test's fixtures build, and Chromium and Firefox to
+          # open the page in. nixpkgs builds the two for Linux alone: elsewhere CHROMIUM and
+          # FIREFOX name them
           web = pkgs.mkShell {
             packages =
               (with pkgs; [
@@ -130,7 +131,10 @@
                 just
                 git
               ])
-              ++ lib.optional pkgs.stdenv.hostPlatform.isLinux pkgs.chromium;
+              ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+                pkgs.chromium
+                pkgs.firefox
+              ];
           };
         }
       );
