@@ -1,7 +1,7 @@
-// reads the files of a directory on the page of web/dist in a headless Chromium, over its
-// DevTools protocol, and ends with status 1 at the first thing that is not as it should be.
-// `tests/page.rs` writes the files and runs this. with SHOTS set to a directory, screenshots
-// of the page are written there
+// reads the files of a directory on the page of web/dist in a headless browser, `chromium`
+// over its DevTools protocol or `firefox` over WebDriver BiDi, and ends with status 1 at the
+// first thing that is not as it should be. `tests/page.rs` writes the files and runs this.
+// with SHOTS set to a directory, Chromium's screenshots of the page are written there
 import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
 
 const dist = new URL("../dist/", import.meta.url);
-const [files] = process.argv.slice(2);
+const [files, engine] = process.argv.slice(2);
 const shots = process.env.SHOTS;
 
 const TYPES = {
@@ -25,18 +25,33 @@ const policy = readFileSync(new URL("index.html", dist), "utf8").match(
   /Content-Security-Policy"\s+content="([^"]+)"/,
 )[1];
 
-// a server of web/dist's files on a port of its own, with the policy as a header when
-// `header`, which binds the worker in a browser that takes a worker's policy from its response
+// a server of web/dist's files on a port of its own, as `{ origin, probed }`. with `header`
+// it sends the policy as a header too, which binds a worker in a browser that takes a
+// worker's policy from its response. with `probe` its worker asks for `/probe` as it starts,
+// and `probed()` says whether that request came. with `loose` the page's policy allows
+// connections to its origin
 const servers = [];
-function serve(header) {
+function serve({ header = false, probe = false, loose = false } = {}) {
+  let probed = false;
   const server = createServer((request, response) => {
     const name = request.url === "/" ? "index.html" : request.url.slice(1);
+    if (name === "probe") {
+      probed = true;
+      response.writeHead(204).end();
+      return;
+    }
     let body;
     try {
       body = readFileSync(new URL(name, dist));
     } catch {
       response.writeHead(404).end();
       return;
+    }
+    if (probe && name === "worker.js") {
+      body += '\nfetch(new URL("probe", import.meta.url)).catch(() => {});\n';
+    }
+    if (loose && name === "index.html") {
+      body = String(body).replace("connect-src 'none'", "connect-src 'self'");
     }
     const headers = { "content-type": TYPES[extname(name)] };
     if (header) headers["content-security-policy"] = policy;
@@ -45,7 +60,7 @@ function serve(header) {
   return new Promise((resolve) => {
     servers.push(server);
     server.listen(0, "127.0.0.1", () => {
-      resolve(`http://127.0.0.1:${server.address().port}`);
+      resolve({ origin: `http://127.0.0.1:${server.address().port}`, probed: () => probed });
     });
   });
 }
@@ -55,84 +70,176 @@ function check(holds, what) {
 }
 
 const profile = mkdtempSync(join(tmpdir(), "choon-page-"));
-const browser = spawn(
-  process.env.CHROMIUM ?? "chromium",
-  ["--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank"],
-  { stdio: ["ignore", "ignore", "pipe"] },
-);
-const endpoint = await new Promise((resolve, reject) => {
-  let said = "";
-  browser.stderr.on("data", (chunk) => {
-    said += chunk;
-    const found = said.match(/DevTools listening on (ws:\S+)/);
-    if (found) resolve(found[1]);
-  });
-  browser.on("error", reject);
-  browser.on("exit", () => reject(new Error(`chromium ended: ${said}`)));
-});
-
-const socket = new WebSocket(endpoint);
-await new Promise((resolve) => socket.addEventListener("open", resolve));
-let sent = 0;
-const waiting = new Map();
-// every request any target makes, every violation of the policy and every error logged
+// every request the page or its worker makes, and every error, exception and policy
+// violation the browser reports
 const requests = [];
 const faults = [];
-socket.addEventListener("message", ({ data }) => {
-  const message = JSON.parse(data);
-  if (message.id !== undefined) {
+
+// the browser started with `args`, and the WebSocket address it says on stderr after `said`
+async function launch(program, args, said) {
+  const browser = spawn(program, args, { stdio: ["ignore", "ignore", "pipe"] });
+  const address = await new Promise((resolve, reject) => {
+    let heard = "";
+    browser.stderr.on("data", (chunk) => {
+      heard += chunk;
+      const found = heard.match(said);
+      if (found) resolve(found[1]);
+    });
+    browser.on("error", reject);
+    browser.on("exit", () => reject(new Error(`${program} ended: ${heard}`)));
+  });
+  return { browser, address };
+}
+
+// a WebSocket to `address` as `call(method, params, extra)`, which sends a command with
+// `extra` beside its id and gives its result, with every other message passed to `event`
+async function connect(address, event) {
+  const socket = new WebSocket(address);
+  await new Promise((resolve, reject) => {
+    socket.addEventListener("open", resolve);
+    socket.addEventListener("error", () => reject(new Error(`no connection to ${address}`)));
+  });
+  let sent = 0;
+  const waiting = new Map();
+  socket.addEventListener("message", ({ data }) => {
+    const message = JSON.parse(data);
+    if (message.id === undefined || message.id === null) {
+      event(message);
+      return;
+    }
     const { resolve, reject } = waiting.get(message.id);
     waiting.delete(message.id);
-    if (message.error) reject(new Error(message.error.message));
+    if (message.error) reject(new Error(message.error.message ?? message.message));
     else resolve(message.result);
-    return;
-  }
-  const { method, params } = message;
-  if (method === "Target.attachedToTarget") {
-    // a worker: its requests are counted with the page's
-    worker = params.sessionId;
-    void call("Network.enable", {}, worker);
-  } else if (method === "Network.requestWillBeSent") {
-    requests.push(params.request.url);
-  } else if (method === "Log.entryAdded" && params.entry.level === "error") {
-    faults.push(params.entry.text);
-  } else if (method === "Runtime.exceptionThrown") {
-    faults.push(params.exceptionDetails.exception?.description ?? params.exceptionDetails.text);
-  } else if (method === "Audits.issueAdded") {
-    faults.push(JSON.stringify(params.issue));
-  }
-});
-
-function call(method, params = {}, sessionId = page) {
-  const id = ++sent;
-  socket.send(JSON.stringify({ id, method, params, sessionId }));
-  return new Promise((resolve, reject) => waiting.set(id, { resolve, reject }));
-}
-
-let page;
-// the worker started last
-let worker;
-const { targetId } = await call("Target.createTarget", { url: "about:blank" });
-page = (await call("Target.attachToTarget", { targetId, flatten: true })).sessionId;
-for (const domain of ["Page", "Network", "Log", "Runtime", "Audits"]) await call(`${domain}.enable`);
-await call("Target.setAutoAttach", {
-  autoAttach: true,
-  waitForDebuggerOnStart: false,
-  flatten: true,
-});
-
-async function evaluate(expression) {
-  const { result, exceptionDetails } = await call("Runtime.evaluate", {
-    expression,
-    returnByValue: true,
-    awaitPromise: true,
   });
-  check(!exceptionDetails, `${expression}: ${exceptionDetails?.text}`);
-  return result.value;
+  const call = (method, params = {}, extra = {}) => {
+    const id = ++sent;
+    socket.send(JSON.stringify({ id, method, params, ...extra }));
+    return new Promise((resolve, reject) => waiting.set(id, { resolve, reject }));
+  };
+  return { socket, call };
 }
+
+// what the test does to a browser: `navigate(url)`, `evaluate(expression)` for its value,
+// `give(paths)` to the file picker, `shot(name, look)`
+async function chromium() {
+  const { browser, address } = await launch(
+    process.env.CHROMIUM ?? "chromium",
+    ["--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank"],
+    /DevTools listening on (ws:\S+)/,
+  );
+  const { socket, call } = await connect(address, ({ method, params }) => {
+    if (method === "Target.attachedToTarget") {
+      // a worker: its requests are counted with the page's
+      void call("Network.enable", {}, { sessionId: params.sessionId });
+    } else if (method === "Network.requestWillBeSent") {
+      requests.push(params.request.url);
+    } else if (method === "Log.entryAdded" && params.entry.level === "error") {
+      faults.push(params.entry.text);
+    } else if (method === "Runtime.exceptionThrown") {
+      faults.push(params.exceptionDetails.exception?.description ?? params.exceptionDetails.text);
+    } else if (method === "Audits.issueAdded") {
+      faults.push(JSON.stringify(params.issue));
+    }
+  });
+  const { targetId } = await call("Target.createTarget", { url: "about:blank" });
+  const page = (await call("Target.attachToTarget", { targetId, flatten: true })).sessionId;
+  const on = (method, params) => call(method, params, { sessionId: page });
+  for (const domain of ["Page", "Network", "Log", "Runtime", "Audits"]) await on(`${domain}.enable`);
+  await on("Target.setAutoAttach", {
+    autoAttach: true,
+    waitForDebuggerOnStart: false,
+    flatten: true,
+  });
+  return {
+    browser,
+    socket,
+    navigate: (url) => on("Page.navigate", { url }),
+    async evaluate(expression) {
+      const { result, exceptionDetails } = await on("Runtime.evaluate", {
+        expression,
+        returnByValue: true,
+        awaitPromise: true,
+      });
+      check(!exceptionDetails, `${expression}: ${exceptionDetails?.text}`);
+      return result.value;
+    },
+    async give(paths) {
+      const { result } = await on("Runtime.evaluate", {
+        expression: "document.querySelector('#files')",
+      });
+      await on("DOM.setFileInputFiles", { objectId: result.objectId, files: paths });
+    },
+    async shot(name, { width, height, dark }) {
+      await on("Emulation.setDeviceMetricsOverride", {
+        width,
+        height,
+        deviceScaleFactor: 2,
+        mobile: width < 500,
+      });
+      await on("Emulation.setEmulatedMedia", {
+        features: [{ name: "prefers-color-scheme", value: dark ? "dark" : "light" }],
+      });
+      const { cssContentSize } = await on("Page.getLayoutMetrics");
+      const { data } = await on("Page.captureScreenshot", {
+        captureBeyondViewport: true,
+        clip: { x: 0, y: 0, width, height: Math.max(height, cssContentSize.height), scale: 1 },
+      });
+      writeFileSync(join(shots, `${name}.png`), Buffer.from(data, "base64"));
+    },
+  };
+}
+
+async function firefox() {
+  const { browser, address } = await launch(
+    process.env.FIREFOX ?? "firefox",
+    ["--headless", "--no-remote", "--remote-debugging-port", "0", "--profile", profile],
+    /WebDriver BiDi listening on (ws:\S+)/,
+  );
+  const { socket, call } = await connect(`${address}/session`, ({ method, params }) => {
+    if (method === "network.beforeRequestSent") {
+      requests.push(params.request.url);
+    } else if (method === "log.entryAdded" && params.level === "error") {
+      faults.push(params.text);
+    }
+  });
+  await call("session.new", { capabilities: {} });
+  await call("session.subscribe", { events: ["log.entryAdded", "network.beforeRequestSent"] });
+  const { contexts } = await call("browsingContext.getTree");
+  const context = contexts[0].context;
+  const run = async (expression) => {
+    const outcome = await call("script.evaluate", {
+      expression,
+      target: { context },
+      awaitPromise: true,
+    });
+    check(outcome.type === "success", `${expression}: ${outcome.exceptionDetails?.text}`);
+    return outcome.result;
+  };
+  return {
+    browser,
+    socket,
+    navigate: (url) => call("browsingContext.navigate", { context, url }),
+    async evaluate(expression) {
+      // a value comes back as JSON, as the protocol's own form of one is not a plain value
+      const { value } = await run(`(async () => JSON.stringify(await (${expression})))()`);
+      return value === undefined ? undefined : JSON.parse(value);
+    },
+    async give(paths) {
+      const { sharedId } = await run("document.querySelector('#files')");
+      await call("input.setFiles", { context, element: { sharedId }, files: paths });
+    },
+    // the look of the page is checked in Chromium's screenshots
+    async shot() {},
+  };
+}
+
+check(engine === "chromium" || engine === "firefox", `no browser named ${engine}`);
+const driver = await (engine === "chromium" ? chromium() : firefox());
+const { browser, socket, evaluate } = driver;
 
 async function open(url) {
-  await call("Page.navigate", { url });
+  await driver.navigate(url);
   await until(() => evaluate("document.readyState === 'complete'"), `${url} loads`);
 }
 
@@ -159,44 +266,23 @@ async function row(name) {
   return (await rows()).find((row) => row.name === name);
 }
 
-async function give(...names) {
-  const { result } = await call("Runtime.evaluate", {
-    expression: "document.querySelector('#files')",
-  });
-  await call("DOM.setFileInputFiles", {
-    objectId: result.objectId,
-    files: names.map((name) => join(files, name)),
-  });
+function give(...names) {
+  return driver.give(names.map((name) => join(files, name)));
 }
 
 function click(selector) {
   return evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
 }
 
-async function shot(name, { width, height, dark }) {
-  if (!shots) return;
-  await call("Emulation.setDeviceMetricsOverride", {
-    width,
-    height,
-    deviceScaleFactor: 2,
-    mobile: width < 500,
-  });
-  await call("Emulation.setEmulatedMedia", {
-    features: [{ name: "prefers-color-scheme", value: dark ? "dark" : "light" }],
-  });
-  const { cssContentSize } = await call("Page.getLayoutMetrics");
-  const { data } = await call("Page.captureScreenshot", {
-    captureBeyondViewport: true,
-    clip: { x: 0, y: 0, width, height: Math.max(height, cssContentSize.height), scale: 1 },
-  });
-  writeFileSync(join(shots, `${name}.png`), Buffer.from(data, "base64"));
+async function shot(name, look) {
+  if (shots) await driver.shot(name, look);
 }
 
 const DESKTOP = { width: 1280, height: 800 };
 const PHONE = { width: 390, height: 844 };
 
 async function run() {
-  const plain = await serve(false);
+  const { origin: plain } = await serve();
   await open(plain);
   check(await evaluate("document.querySelector('#read').hidden"), "no readings are listed at first");
   check(!(await evaluate("document.querySelector('#choose').disabled")), "SIMD was found");
@@ -254,11 +340,11 @@ async function run() {
   );
 
   // a reading kept under another version of the export is dropped
-  await evaluate(`{
+  await evaluate(`(() => {
     const kept = JSON.parse(localStorage.getItem("choon.readings"));
     kept[0].result.version = 0;
     localStorage.setItem("choon.readings", JSON.stringify(kept));
-  }`);
+  })()`);
   await open(plain);
   await until(async () => (await rows()).length === 1, "the reading of another version is dropped");
   check(
@@ -279,27 +365,29 @@ async function run() {
   await until(async () => (await rows())[0]?.status === "consistent", "a file is read without storage");
   check((await rows())[0].text.includes("Keptno, "), "the reading says it was not kept");
 
-  // the page's policy holds the worker too, with no header from the server
-  const outcome = await call(
-    "Runtime.evaluate",
-    {
-      expression: `fetch(${JSON.stringify(`${plain}/page.css`)}).then(() => "fetched", () => "refused")`,
-      awaitPromise: true,
-      returnByValue: true,
-    },
-    worker,
-  );
-  check(outcome.result.value === "refused", `a fetch in the worker is ${outcome.result.value}`);
-  check(faults.length > 0, "the refused fetch is among the faults");
+  check(faults.length === 0, `errors or policy violations: ${faults.join("; ")}`);
+
+  // a worker that asks its origin for something as it starts is heard by the server where
+  // the policy allows connections, and is not under the page's policy as it is, with no
+  // header from the server
+  const allowed = await serve({ probe: true, loose: true });
+  await open(allowed.origin);
+  await until(allowed.probed, "the worker's request comes where the policy allows it");
+  const held = await serve({ probe: true });
+  await open(held.origin);
+  await give("source.mp3");
+  await until(async () => (await rows())[0]?.status === "consistent", "a file is read by the worker");
+  check(!held.probed(), "the worker's request was not refused");
+  // the refusal is logged as the violation it is
   faults.length = 0;
 
   // under the policy as a header, which binds the worker too, the page reads a file all the same
-  const strict = await serve(true);
+  const { origin: strict } = await serve({ header: true });
   await open(strict);
   await give("source.mp3");
   await until(async () => (await rows())[0]?.status === "consistent", "a file is read under the header");
 
-  const origins = [plain, strict];
+  const origins = [plain, strict, allowed.origin, held.origin];
   // the worker's blob is the page's own, and is no request to a server
   const elsewhere = requests.filter(
     (url) =>
