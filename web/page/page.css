@@ -1,0 +1,268 @@
+:root {
+  --bg: #f3f5f7;
+  --surface: #ffffff;
+  --ink: #171b20;
+  --muted: #57616c;
+  --line: #d6dbe1;
+  --accent: #23508f;
+  --good: #17703f;
+  --doubt: #875400;
+  --bad: #b3261e;
+  --sans: system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121418;
+    --surface: #1a1d22;
+    --ink: #e5e8ec;
+    --muted: #9ca5b0;
+    --line: #2d323a;
+    --accent: #94b9f2;
+    --good: #62cf92;
+    --doubt: #e6b655;
+    --bad: #ff8d7e;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0 1.25rem;
+  background: var(--bg);
+  color: var(--ink);
+  font: 1rem/1.55 var(--sans);
+}
+
+main,
+footer {
+  max-width: 44rem;
+  margin: 0 auto;
+}
+
+header {
+  padding: 3.5rem 0 2rem;
+}
+
+h1 {
+  margin: 0;
+  font: 700 3.25rem/1 var(--mono);
+  letter-spacing: -0.04em;
+}
+
+h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  line-height: 1.3;
+}
+
+p {
+  margin: 0.75rem 0 0;
+  max-width: 38rem;
+}
+
+.lead {
+  margin-top: 1rem;
+  font-size: 1.375rem;
+  line-height: 1.35;
+}
+
+a {
+  color: var(--accent);
+  text-underline-offset: 0.15em;
+}
+
+button {
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--ink);
+  border-radius: 0.375rem;
+  background: var(--ink);
+  color: var(--bg);
+  font: 600 1rem/1.25 var(--sans);
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+#clear,
+#readings button {
+  padding: 0.25rem 0.75rem;
+  border-color: var(--line);
+  background: none;
+  color: var(--ink);
+  font-weight: 400;
+  font-size: 0.875rem;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+#drop {
+  padding: 1.75rem 1.5rem 1.5rem;
+  border: 1.5px dashed var(--muted);
+  border-radius: 0.5rem;
+  background: var(--surface);
+}
+
+#drop.over {
+  border-style: solid;
+  border-color: var(--accent);
+  outline: 2px solid var(--accent);
+}
+
+#drop button {
+  margin-top: 1rem;
+}
+
+#notice {
+  color: var(--bad);
+  font-weight: 600;
+}
+
+#read {
+  margin-top: 3rem;
+}
+
+.heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+#read > .hint {
+  margin-top: 0.25rem;
+}
+
+#readings {
+  margin: 1.25rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* a row is laid out as the program's line: the verdict in a column of its own, then the file */
+#readings li {
+  display: grid;
+  grid-template-columns: 17ch minmax(0, 1fr);
+  gap: 0 1rem;
+  padding: 1rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.status {
+  margin: 0;
+  font: 600 0.9375rem/1.6 var(--mono);
+  color: var(--muted);
+}
+
+[data-verdict="consistent"] .status {
+  color: var(--good);
+}
+
+[data-verdict="possibly_lossy"] .status {
+  color: var(--doubt);
+}
+
+[data-verdict="likely_transcode"] .status,
+[data-verdict="mixed_sources"] .status {
+  color: var(--bad);
+}
+
+.name {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.found {
+  margin-top: 0.125rem;
+  font: 0.875rem/1.6 var(--mono);
+}
+
+.found:has(button) {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.375rem;
+}
+
+.found button {
+  font-family: var(--sans);
+}
+
+.summary {
+  margin-top: 0.5rem;
+  font-size: 0.9375rem;
+}
+
+dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.125rem 1rem;
+  margin: 0.5rem 0 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+dd {
+  grid-column: 2;
+  margin: 0;
+}
+
+footer {
+  margin-top: 3.5rem;
+  padding: 1.25rem 0 3rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+code {
+  font-family: var(--mono);
+}
+
+.unseen {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (max-width: 34rem) {
+  header {
+    padding-top: 2.25rem;
+  }
+
+  h1 {
+    font-size: 2.5rem;
+  }
+
+  .lead {
+    font-size: 1.1875rem;
+  }
+
+  #drop {
+    padding: 1.25rem 1rem 1rem;
+  }
+
+  #readings li {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
