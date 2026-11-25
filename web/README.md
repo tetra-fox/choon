@@ -11,22 +11,50 @@ on.
 nix develop .#web -c just web
 ```
 
-`web/dist` then holds the page and what it loads:
+`web/dist` then holds the page and what it loads, as static files:
 
-| File                                 | Description                                         |
-| ------------------------------------ | --------------------------------------------------- |
-| `index.html`, `page.css`, `icon.svg` | the page, from `web/page`                           |
-| `page.js`                            | the list of files, their readings and what is kept  |
-| `worker.js`                          | the Web Worker that runs the analyzer               |
-| `choon_web.js`                       | the module wasm-bindgen writes (`--target web`)     |
-| `choon_web_wasm.js`                  | the wasm as base64 in a module, which the page uses |
-| `choon_web_bg.wasm`                  | the wasm as a file, for other callers               |
+| File                       | Description                                                    |
+| -------------------------- | -------------------------------------------------------------- |
+| `index.html`, `icon.svg`   | the page                                                       |
+| `_astro/index.*.css`       | its stylesheet                                                 |
+| `_astro/index.astro_*.js`  | the list of files, their readings and what is kept             |
+| `_astro/index-client.*.js` | the part of Svelte that script runs on                         |
+| `_astro/worker-*.js`       | the Web Worker that runs the analyzer, with the wasm as base64 |
+| `_astro/client.*.js`       | written by Astro's Svelte integration, and loaded by nothing   |
+| `choon_web.js`             | the module wasm-bindgen writes (`--target web`)                |
+| `choon_web_bg.wasm`        | the wasm as a file                                             |
 
 - The wasm uses SIMD (`+simd128`) and goes through `wasm-opt -O2`
 - The `wasm-bindgen` crate is pinned in `Cargo.toml`, and the flake takes the version of
   wasm-bindgen's program from that line
+- A file under `_astro` has a hash of its contents in its name
+- `choon_web.js` and `choon_web_bg.wasm` are for other callers. The page loads neither: its
+  worker has both in its own file
 - `index.html` names the commit `web/dist` was built from and links the source at that commit,
   under the `repository` of the main `Cargo.toml`. A build from a checkout with changes says so
+- The links in `index.html` are relative, so `web/dist` is served from any path of a host
+
+### Sources
+
+The page is an [Astro](https://astro.build) project in `web/page`, built to static files with
+no server part. `just web` installs its npm packages as `package-lock.json` states them, when
+they are missing or older than it.
+
+| File                    | Description                                                       |
+| ----------------------- | ----------------------------------------------------------------- |
+| `src/pages/index.astro` | the page's HTML, with its policy and the commit                   |
+| `src/Reader.svelte`     | the one Svelte component: the files taken and their readings      |
+| `src/page.ts`           | starts that component in the browser                              |
+| `src/worker.ts`         | the Web Worker                                                    |
+| `src/page.css`          | the stylesheet                                                    |
+| `public/`               | copied to `web/dist` as it is: the icon, and wasm-bindgen's files |
+| `wasm/`                 | the wasm as base64 in a module, which the worker imports          |
+| `astro.config.ts`       | what the build is told                                            |
+
+- Astro renders the component into `index.html` when it builds, and `page.ts` starts it there
+- `just web` writes wasm-bindgen's files and `wasm/`, and git ignores them
+- `just web-check` checks the types of the Astro, Svelte and TypeScript files (`astro check`
+  and `svelte-check`), under TypeScript's strictest settings as Astro names them
 
 ## Page
 
@@ -38,11 +66,11 @@ python3 -m http.server --directory web/dist 8000
 
 The page takes files dropped on it or chosen in a file picker and reads them one after
 another in one Web Worker. Each file is shown with its verdict, what the program prints in
-parentheses after one, the reading's summary, the format, the flags and the limitations. No
-framework, bundler or npm package is involved, and nothing is loaded from another origin.
+parentheses after one, the reading's summary, the format, the flags and the limitations.
+Nothing is loaded from another origin.
 
 - A file is measured in full under the default thresholds
-- A file over 256 MiB (`MAX_FILE_BYTES` in `page.js`) is shown as `not read` without being
+- A file over 256 MiB (`MAX_FILE_BYTES` in `Reader.svelte`) is shown as `not read` without being
   opened. The worker holds a file's bytes twice while it copies them into the analyzer's
   memory, the analysis adds to that, and a tab on a phone can be ended at a few hundred MiB.
   The number is an estimate: no phone was measured for it
@@ -76,8 +104,10 @@ connection of any kind (`connect-src 'none'`).
   from its own URL is held to the policy of that response, and a static host sends none
 - Chromium and Firefox, in the versions the flake's nixpkgs has, both refuse a connection from
   that worker under the `meta` policy alone, which the test shows. Safari was not tried
-- The worker cannot fetch the wasm under this policy, so it imports it as base64 from
-  `choon_web_wasm.js`
+- The worker cannot fetch the wasm under this policy, so it has it as base64 in its own file
+- The policy names no hash and no nonce, as `index.html` has no script or style written into
+  it. Astro would write both: a stylesheet small enough, which `astro.config.ts` turns off, and
+  the script that starts a component given a `client:` directive, which `page.ts` stands in for
 - A host that sends the same policy as a response header changes nothing the page needs
 
 ## Usage
@@ -132,18 +162,18 @@ const { measured, reading } = JSON.parse(check(bytes, ""));
 }
 ```
 
-| Key                    | Description                                                     |
-| ---------------------- | --------------------------------------------------------------- |
-| `version`              | version of this JSON's shape                                    |
-| `measured`             | fields of the library's `Measured`, under the names it writes   |
-| `measured.dsdMultiple` | `Measured::dsd_multiple`, 64 for DSD64                          |
-| `measured.windowCount` | number of windows measured                                      |
-| `measured.gridScanned` | whether the grid scan ran                                       |
-| `words.verdict`        | the verdict as the program prints it                            |
-| `words.found`          | what the program prints in parentheses after the verdict        |
-| `words.format`         | the `Format` line of the program's readout                      |
-| `words.flags`          | the reading's flags as the program prints them                  |
-| `reading`              | the library's `Reading`, as its `serde` feature writes it       |
+| Key                    | Description                                                   |
+| ---------------------- | ------------------------------------------------------------- |
+| `version`              | version of this JSON's shape                                  |
+| `measured`             | fields of the library's `Measured`, under the names it writes |
+| `measured.dsdMultiple` | `Measured::dsd_multiple`, 64 for DSD64                        |
+| `measured.windowCount` | number of windows measured                                    |
+| `measured.gridScanned` | whether the grid scan ran                                     |
+| `words.verdict`        | the verdict as the program prints it                          |
+| `words.found`          | what the program prints in parentheses after the verdict      |
+| `words.format`         | the `Format` line of the program's readout                    |
+| `words.flags`          | the reading's flags as the program prints them                |
+| `reading`              | the library's `Reading`, as its `serde` feature writes it     |
 
 - Every key is always there; one without a value is `null`, or `[]` for `opus`
 - The windows and the grid scan of `Measured` are left out, which leaves a few kB
@@ -159,9 +189,9 @@ const { measured, reading } = JSON.parse(check(bytes, ""));
 nix develop .#web -c just web-test
 ```
 
-`just ci` does not run it. The page is opened in Chromium and in Firefox: the `web` shell has
-both on Linux, and `CHROMIUM` and `FIREFOX` name others. Without a Firefox the test of it
-passes without opening the page.
+`just ci` does not run it. It builds the page and checks its types first. The page is opened
+in Chromium and in Firefox: the `web` shell has both on Linux, and `CHROMIUM` and `FIREFOX`
+name others. Without a Firefox the test of it passes without opening the page.
 
 `tests/node.rs` writes generated audio to a temporary directory, has node read each file with
 the wasm in `web/dist` (`tests/run.mjs`), and compares the JSON with what the same function
