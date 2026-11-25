@@ -30,25 +30,18 @@ pub fn label(verdict: Verdict) -> &'static str {
 }
 
 /// the encoder a reading names: without a grid the setting its cutoff matches, with one the
-/// grid's codec, its encoder family in parentheses and the setting. `None` where a grid has
-/// neither a family nor a setting to name, and beside a verdict that finds no lossy audio,
-/// where a named encoder would read as a finding
+/// grid's codec, its encoder family in parentheses and the setting the reading names beside
+/// it. `None` where a grid has neither a family nor a setting to name, and beside a verdict
+/// that finds no lossy audio, where a named encoder would read as a finding
 pub fn encoder(reading: &Reading) -> Option<String> {
-  let profile = reading
-    .encoder_guess
-    .as_ref()
-    .filter(|_| flagged(reading.verdict))
-    .map(|guess| &guess.profile);
   let Some(grid) = &reading.grid else {
-    return profile.map(ToString::to_string);
+    let guess = reading.encoder_guess.as_ref();
+    return guess
+      .filter(|_| flagged(reading.verdict))
+      .map(|guess| guess.profile.to_string());
   };
   let codec = grid.codec;
-  // the shipped profiles are LAME's cutoffs: a setting is named beside LAME or no named
-  // encoder, from a profile of the grid's codec
-  let setting = profile
-    .filter(|_| matches!(grid.family, None | Some(Family::Lame | Family::Untagged)))
-    .filter(|profile| profile.codec == codec.to_string())
-    .map(|profile| profile.setting.as_str());
+  let setting = grid.setting.as_deref().filter(|_| flagged(reading.verdict));
   match (grid.family.and_then(family_words), setting) {
     (None, None) => None,
     (None, Some(setting)) => Some(format!("{codec} {setting}")),

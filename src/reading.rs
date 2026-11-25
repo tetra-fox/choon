@@ -108,6 +108,8 @@ struct CutoffReading {
   summary: String,
   limitations: Vec<Limitation>,
   cutoff_hz: Option<f64>,
+  /// the cutoff most of the windows stop at with a sharp shelf, where they do
+  shelf_hz: Option<f64>,
 }
 
 /// writes limitations as the sentences a person is shown
@@ -324,6 +326,7 @@ impl Measured {
         ),
         limitations: Vec::new(),
         cutoff_hz: Some(edge),
+        shelf_hz: found.shelf_hz,
       };
     }
     if found.verdict != Verdict::Consistent
@@ -339,10 +342,13 @@ impl Measured {
       });
     }
     let cutoff_verdict = found.verdict;
-    let grid = self
+    let mut grid = self
       .grid
       .as_ref()
       .and_then(|scan| grid::found(scan, thresholds));
+    if let Some(grid) = &mut grid {
+      grid.setting = setting(grid, &found, thresholds);
+    }
     if grid_looked_for(claimed, self.dsd_rate) {
       found = weighed(found, grid.as_ref(), self.grid.is_some(), thresholds);
     }
@@ -388,6 +394,27 @@ impl Measured {
       cutoff_hz: found.cutoff_hz,
     }
   }
+}
+
+/// the setting to name beside the encoder of `grid`, by the cutoff `found` reads: the one of
+/// the family's own profiles nearest the shelf, or the matched profile's for LAME, whose
+/// cutoffs the profiles are, and for a grid of the profile's codec with no encoder named
+fn setting(grid: &Found, found: &CutoffReading, thresholds: &ReadingThresholds) -> Option<String> {
+  let own = found.shelf_hz.and_then(|shelf| {
+    let profiles = thresholds.family_profiles.iter();
+    profiles
+      .filter(|profile| Some(profile.family) == grid.family)
+      .filter(|profile| (profile.hz - shelf).abs() <= thresholds.cluster_hz)
+      .min_by(|a, b| (a.hz - shelf).abs().total_cmp(&(b.hz - shelf).abs()))
+  });
+  let matched = || {
+    let guess = found.encoder_guess.as_ref();
+    guess
+      .filter(|_| matches!(grid.family, None | Some(Family::Lame | Family::Untagged)))
+      .filter(|guess| guess.profile.codec == grid.codec.to_string())
+      .map(|guess| guess.profile.setting.clone())
+  };
+  own.map(|profile| profile.setting.clone()).or_else(matched)
 }
 
 /// the cutoff reading `found` of a file a grid is looked for in, weighed with the `grid` its
@@ -564,6 +591,7 @@ fn verdict(
     summary: String::new(),
     limitations: Vec::new(),
     cutoff_hz: median.filter(|m| *m < t.full_band * heard.top),
+    shelf_hz: None,
   };
   let Some(median) = median.filter(|_| count >= t.min_windows && seconds >= t.min_seconds) else {
     reading.confidence = 0.2;
@@ -581,6 +609,7 @@ fn verdict(
         .cutoff_hz
         .is_some_and(|c| (c - median).abs() <= t.cluster_hz)
   }) / clustered.max(f64::EPSILON);
+  reading.shelf_hz = (clustered >= t.transcode_share && sharp_share >= 0.5).then_some(median);
   // a lossy file's own encoder cuts off too: only a cutoff well below its bitrate's counts
   let below_claim = |profile: &EncoderProfile| {
     lossless || bitrate.is_some_and(|kbps| below_bitrate(profile.kbps, kbps))
@@ -897,6 +926,80 @@ mod tests {
 
   fn spread(cuts: &[(f64, usize)]) -> Vec<f64> {
     cuts.iter().flat_map(|(c, n)| [*c].repeat(*n)).collect()
+  }
+
+  #[test]
+  fn the_setting_beside_a_grid_is_its_familys_own_or_lames() {
+    let thresholds = ReadingThresholds::default();
+    let count = grid::CodecScan {
+      offset: 0,
+      z: 50.0,
+      segments_agreeing: 4,
+      segment_z: [12.0; grid::SEGMENTS],
+      segment_offset: [0; grid::SEGMENTS],
+    };
+    let grid = |codec, family| Found {
+      codec,
+      family,
+      named_by: None,
+      setting: None,
+      evidence: Evidence::Count(count.clone()),
+      quantizer: None,
+    };
+    // most of the windows stop with a sharp shelf at `shelf`, where a profile was matched
+    let read = |shelf: Option<f64>| CutoffReading {
+      verdict: Verdict::LikelyTranscode,
+      confidence: 0.9,
+      encoder_guess: shelf
+        .and_then(|hz| thresholds.profile_at(hz))
+        .map(|profile| EncoderGuess {
+          profile: profile.clone(),
+          confidence: 0.9,
+        }),
+      summary: String::new(),
+      limitations: Vec::new(),
+      cutoff_hz: shelf,
+      shelf_hz: shelf,
+    };
+    let named =
+      |codec, family, shelf: f64| setting(&grid(codec, family), &read(Some(shelf)), &thresholds);
+    let mp3 = |family, shelf| named(Codec::Mp3, family, shelf);
+    // the profiles are LAME's cutoffs: they name the setting beside LAME and no named encoder
+    for family in [None, Some(Family::Lame), Some(Family::Untagged)] {
+      assert_eq!(mp3(family, 16_500.0).as_deref(), Some("~128 kbps"));
+    }
+    // LAME's versions cut two bitrates at 15.1 kHz, which its own profile says
+    assert_eq!(
+      mp3(Some(Family::Lame), 15_200.0).as_deref(),
+      Some("~96-128 kbps")
+    );
+    assert_eq!(mp3(None, 15_200.0).as_deref(), Some("~96 kbps"));
+    // Helix cuts at 16 kHz at every bitrate, and its cutoffs are not listed
+    assert_eq!(mp3(Some(Family::Helix), 16_000.0), None);
+    // each AAC encoder's own cutoffs name its setting, also where no profile sits
+    let aac = |family, shelf| named(Codec::Aac, Some(family), shelf);
+    assert_eq!(aac(Family::Ffmpeg, 17_300.0).as_deref(), Some("~128 kbps"));
+    assert_eq!(
+      aac(Family::FdkAac, 16_050.0).as_deref(),
+      Some("~128-160 kbps")
+    );
+    assert_eq!(aac(Family::FdkAac, 14_300.0).as_deref(), Some("~96 kbps"));
+    assert_eq!(
+      aac(Family::FdkAac, 15_000.0),
+      None,
+      "between two of its cutoffs"
+    );
+    assert_eq!(aac(Family::FfmpegOrFdk, 16_000.0), None);
+    assert_eq!(aac(Family::Apple, 16_000.0), None);
+    // an AAC grid no encoder is named for takes no setting from LAME's profiles
+    assert_eq!(named(Codec::Aac, None, 16_000.0), None);
+    // without a shelf most windows stop at, nothing is named
+    let unsure = setting(
+      &grid(Codec::Aac, Some(Family::Ffmpeg)),
+      &read(None),
+      &thresholds,
+    );
+    assert_eq!(unsure, None);
   }
 
   #[test]

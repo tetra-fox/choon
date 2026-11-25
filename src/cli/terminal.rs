@@ -991,33 +991,39 @@ mod tests {
   }
 
   #[test]
-  fn an_encoder_is_the_grids_codec_its_family_and_the_cutoffs_setting() {
+  fn an_encoder_is_the_grids_codec_its_family_and_the_setting_beside_it() {
     let (_, fake) = honest_and_fake();
     let reading = &fake.readings[0].reading;
-    let named = |codec, family| {
+    let named = |codec, family, setting: Option<&str>| {
       let mut reading = reading.clone();
       let grid = reading.grid.as_mut().expect("the fake carries a grid");
       (grid.codec, grid.family) = (codec, family);
+      grid.setting = setting.map(str::to_string);
       encoder(&reading)
     };
-    let mp3 = |family| named(Codec::Mp3, family);
-    assert_eq!(mp3(None).as_deref(), Some("MP3 ~128 kbps"));
+    let at_128 = Some("~128 kbps");
     assert_eq!(
-      mp3(Some(Family::Untagged)).as_deref(),
+      named(Codec::Mp3, None, at_128).as_deref(),
+      Some("MP3 ~128 kbps")
+    );
+    // the family that names no encoder has no word
+    assert_eq!(
+      named(Codec::Mp3, Some(Family::Untagged), at_128).as_deref(),
       Some("MP3 ~128 kbps")
     );
     assert_eq!(
-      mp3(Some(Family::Lame)).as_deref(),
+      named(Codec::Mp3, Some(Family::Lame), at_128).as_deref(),
       Some("MP3 (LAME) ~128 kbps")
     );
-    // the profiles are LAME's cutoffs, so another encoder is named without a setting
-    assert_eq!(mp3(Some(Family::Helix)).as_deref(), Some("MP3 (Helix)"));
-    // a profile named for another codec than the grid's names no setting
     assert_eq!(
-      named(Codec::Aac, Some(Family::Apple)).as_deref(),
-      Some("AAC (Apple)")
+      named(Codec::Mp3, Some(Family::Helix), None).as_deref(),
+      Some("MP3 (Helix)")
     );
-    assert_eq!(named(Codec::Aac, None), None);
+    assert_eq!(
+      named(Codec::Aac, Some(Family::FdkAac), Some("VBR 5")).as_deref(),
+      Some("AAC (fdk-aac) VBR 5")
+    );
+    assert_eq!(named(Codec::Aac, None, None), None);
     // a cutoff two codecs share names the other one only where no grid says which it was
     let shared = |grid: bool| {
       let mut reading = reading.clone();
@@ -1027,8 +1033,9 @@ mod tests {
         .expect("the fake has a guess");
       guess.profile.setting = "~320 kbps".to_string();
       guess.profile.also = Some("AAC".to_string());
-      if !grid {
-        reading.grid = None;
+      match reading.grid.as_mut().filter(|_| grid) {
+        Some(grid) => grid.setting = Some(guess.profile.setting.clone()),
+        None => reading.grid = None,
       }
       encoder(&reading)
     };
@@ -1251,7 +1258,8 @@ mod tests {
     // a grid no encoder is named for has its codec where the encoder would be
     let mut unnamed = fake.clone();
     let reading = &mut unnamed.readings[0].reading;
-    reading.grid.as_mut().unwrap().codec = Codec::Aac;
+    let grid = reading.grid.as_mut().unwrap();
+    (grid.codec, grid.setting) = (Codec::Aac, None);
     let lines = listed(&[row("one.flac", None, &unnamed)], false, 100);
     assert!(lines[2].ends_with(" kHz  AAC      one.flac"), "{lines:?}");
 

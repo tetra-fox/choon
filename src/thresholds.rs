@@ -187,6 +187,12 @@ pub struct ReadingThresholds {
   pub high_bitrate_kbps: u32,
   /// Cutoffs of common lossy encoder settings, lowest first.
   pub profiles: Vec<EncoderProfile>,
+  /// Cutoffs of the settings of encoder families a grid names.
+  ///
+  /// They name the setting beside a grid's family ([`Found::setting`](crate::grid::Found::setting)),
+  /// and no verdict reads them. `profiles` holds LAME's cutoffs, so LAME is listed here only
+  /// where a cutoff names more settings than its profile says.
+  pub family_profiles: Vec<FamilyProfile>,
   /// Robust z over which the AAC scan finds a frame grid.
   ///
   /// It is compared with [`CodecScan::z`](crate::grid::CodecScan::z). A lower value finds more
@@ -666,6 +672,19 @@ impl EncoderProfile {
   }
 }
 
+/// Setting of one encoder family known by where it cuts off.
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
+pub struct FamilyProfile {
+  /// Family whose encoder cuts here.
+  pub family: Family,
+  /// Cutoff at 44.1 and 48 kHz, in Hz.
+  pub hz: f64,
+  /// Setting that cuts here, in words.
+  pub setting: String,
+}
+
 /// Writes the profile's name: the codec, its setting, then the other codec after "or".
 impl fmt::Display for EncoderProfile {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -730,6 +749,27 @@ impl Default for ReadingThresholds {
         },
         EncoderProfile::mp3(20_500.0, "~320 kbps", 320),
       ],
+      // the median cutoffs of two-minute excerpts of 60 recordings through each encoder.
+      // LAME 3.90.3 and 3.93.1 cut 128 kbit/s where later versions cut 96, and fdk-aac's
+      // third VBR mode cuts where its 128 and 160 kbit/s do
+      family_profiles: [
+        (Family::Lame, 15_100.0, "~96-128 kbps"),
+        (Family::Ffmpeg, 16_000.0, "~96 kbps"),
+        (Family::Ffmpeg, 17_250.0, "~128 kbps"),
+        (Family::Ffmpeg, 17_960.0, "~160 kbps"),
+        (Family::Ffmpeg, 19_270.0, "~192 kbps"),
+        (Family::FdkAac, 14_310.0, "~96 kbps"),
+        (Family::FdkAac, 16_000.0, "~128-160 kbps"),
+        (Family::FdkAac, 16_530.0, "VBR 4"),
+        (Family::FdkAac, 17_020.0, "~192-256 kbps"),
+        (Family::FdkAac, 19_190.0, "VBR 5"),
+      ]
+      .map(|(family, hz, setting)| FamilyProfile {
+        family,
+        hz,
+        setting: setting.to_string(),
+      })
+      .to_vec(),
       // of 409 lossless files of the tuning, AAC reaches z 5.2 and its decodes start at 14.9
       // with three segments agreeing. an MP3 decode's AAC count passes that in one segment, and
       // a lossless file's MP3 count with an MP3 section in two
@@ -848,6 +888,7 @@ mod tests {
       "{json}"
     );
     assert!(json.contains(r#"{"share":{"sameIn":3},"min":null,"max":0.297}"#));
+    assert!(json.contains(r#"{"family":"fdk_aac","hz":16000.0,"setting":"~128-160 kbps"}"#));
     let read: ReadingThresholds = serde_json::from_str(&json).unwrap();
     assert_eq!(read, defaults);
     // a bound names its share and either end
@@ -860,6 +901,7 @@ mod tests {
       (StepShare::FarIn(2), None, Some(0.1))
     );
     refused::<ReadingThresholds>(r#"{"mp3FamilySteps": {"minPairs": 1}}"#);
+    refused::<ReadingThresholds>(r#"{"familyProfiles": [{"family": "lame", "hz": 1.0}]}"#);
   }
 
   fn refused<T: serde::de::DeserializeOwned>(json: &str) {

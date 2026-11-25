@@ -217,6 +217,15 @@ pub struct Found {
   pub family: Option<Family>,
   /// What names the family, where it is named.
   pub named_by: Option<NamedBy>,
+  /// Setting of the encoder that the file's cutoff matches, in words.
+  ///
+  /// A reading fills it where most of the file stops at one cutoff with a sharp shelf: from
+  /// [`ReadingThresholds::family_profiles`] for a family listed there, and from
+  /// [`ReadingThresholds::profiles`], which are LAME's, for LAME and for a grid of their codec
+  /// that no encoder is named for. `None` beside any other family, whose cutoffs are not
+  /// known. [`Family::Untagged`] takes LAME's setting too, though GOGO, one of that group,
+  /// cuts elsewhere.
+  pub setting: Option<String>,
   /// What shows the grid.
   #[cfg_attr(feature = "serde", serde(flatten))]
   pub evidence: Evidence,
@@ -301,6 +310,7 @@ pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found
     codec,
     family,
     named_by,
+    setting: None,
     evidence,
     quantizer,
   })
