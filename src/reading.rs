@@ -5,7 +5,7 @@ use crate::aggregate::{Measures, measures, middle, percentile, upsample_ratio};
 use crate::decode::opus::OpusUse;
 use crate::engine::{Measured, grid_looked_for};
 use crate::flags::{Flag, findings};
-use crate::grid::{self, Codec, Evidence, Family, Found};
+use crate::grid::{self, Codec, Evidence, Family, Found, NamedBy};
 use crate::limitation::{Limitation, khz};
 use crate::thresholds::{EncoderProfile, ReadingThresholds};
 use crate::window::{Step, Window};
@@ -495,13 +495,20 @@ fn weighed(
         )
       }
     };
-    let family = grid.family.map_or_else(String::new, |family| match family {
-      Family::Fraunhofer => format!(
-        " The offset is the one an encoder that states no delay leaves in a decode whose start \
-         was not cut, and the quantizer's steps move from band to band as {family} moves them."
+    let steps = |family: Family| {
+      format!("The quantizer's steps move from band to band as {family} moves them")
+    };
+    let family = match grid.family.zip(grid.named_by) {
+      None => String::new(),
+      Some((family, NamedBy::Steps)) => format!(" {}.", steps(family)),
+      Some((family, NamedBy::Offset)) => {
+        format!(" The offset is the one {family} leaves in a decode whose start was not cut.")
+      }
+      Some((family, NamedBy::Both)) => format!(
+        " {}, and the offset is the one it leaves in a decode whose start was not cut.",
+        steps(family)
       ),
-      _ => format!(" The offset is the one {family} leaves in a decode whose start was not cut."),
-    });
+    };
     let quantizer = grid.quantizer.as_ref().map_or_else(String::new, |steps| {
       format!(
         " The values of {} scalefactor bands sit on whole steps of AAC's quantizer.",

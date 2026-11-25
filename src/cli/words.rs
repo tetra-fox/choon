@@ -166,7 +166,10 @@ fn family_words(family: Family) -> Option<&'static str> {
     Family::Faac => Some("FAAC"),
     Family::Nero => Some("Nero"),
     Family::FfmpegOrFdk => Some("ffmpeg or fdk-aac"),
+    Family::Ffmpeg => Some("ffmpeg"),
+    Family::FdkAac => Some("fdk-aac"),
     Family::Fraunhofer => Some("Fraunhofer"),
+    Family::Shine => Some("Shine"),
     Family::Libopus => Some("libopus"),
     // Untagged, and what the library's enum, which is non-exhaustive, may hold besides
     _ => None,

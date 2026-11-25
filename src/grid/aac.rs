@@ -9,7 +9,7 @@ use super::mdct::{DctIv, SplitMdct, Strided, fold_windowed};
 use super::scan::active_stereo;
 use super::segments::Segment;
 use super::steps::{BandScratch, WHOLE_STEP, band_step};
-use super::{AAC_HOP, NOISE16, in_stretch};
+use super::{AAC_HOP, AacNeighbours, NOISE16, in_stretch};
 use crate::kaiser;
 
 /// the tasks a job's offsets are split into at most, so that one file's scan can fill the pool
@@ -136,9 +136,20 @@ impl Aac {
   }
 }
 
+/// the scalefactor bands of a long block at 44.1 and 48 kHz
+const BANDS: usize = 49;
+
+/// the bands of one segment's long frames under one window: how many were tested, sit on one
+/// step, and on a whole one, and how the whole steps of neighbouring bands compare
+#[derive(Clone, Default)]
+pub(super) struct SegmentSteps {
+  pub(super) counts: [usize; 3],
+  pub(super) neighbours: AacNeighbours,
+}
+
 /// the edges of a long block's scalefactor bands in lines at `rate`, for the rates the steps
 /// are read at
-pub(crate) fn aac_bands(rate: u32) -> Option<&'static [usize; 50]> {
+pub(crate) fn aac_bands(rate: u32) -> Option<&'static [usize; BANDS + 1]> {
   matches!(rate, 44_100 | 48_000).then_some(&[
     0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 80, 88, 96, 108, 120, 132, 144, 160,
     176, 196, 216, 240, 264, 292, 320, 352, 384, 416, 448, 480, 512, 544, 576, 608, 640, 672, 704,
@@ -164,8 +175,9 @@ impl AacStepper {
   }
 
   /// the bands of `segment`'s long frames on the grid at `offset` from the file's first
-  /// sample: how many were tested, sit on one step, and on a whole one. each band is taken as
-  /// left and right or as mid and side, whichever has more whole steps.
+  /// sample: how many were tested, sit on one step, and on a whole one, and how the whole
+  /// steps of neighbouring bands compare. each band is taken as left and right or as mid and
+  /// side, whichever has more whole steps.
   ///
   /// in this transform's scale a step is a whole power of the fourth root of two as it is
   /// coded, and a mid or side value is the coded one times the square root of two, two such
@@ -174,10 +186,10 @@ impl AacStepper {
     &mut self,
     segment: &Segment,
     offset: usize,
-    bands: &[usize; 50],
-  ) -> [usize; 3] {
+    bands: &[usize; BANDS + 1],
+  ) -> SegmentSteps {
     let half = std::f64::consts::FRAC_1_SQRT_2;
-    let mut counts = [0; 3];
+    let mut read = SegmentSteps::default();
     let mut lines = [const { Vec::new() }; 4];
     let mut scratch = BandScratch::default();
     let offset = in_stretch(offset, segment.start, AAC_HOP);
@@ -191,28 +203,51 @@ impl AacStepper {
       m.extend(l.iter().zip(r.iter()).map(|(l, r)| (l + r) * half));
       s.clear();
       s.extend(l.iter().zip(r.iter()).map(|(l, r)| (l - r) * half));
-      for band in bands.windows(2) {
-        // tested, stepped and whole, over the two channels of a pair
-        let mut count = |pair: [&Vec<f64>; 2]| {
-          pair.iter().fold([0; 3], |[tested, stepped, whole], lines| {
-            let step = band_step(&lines[band[0]..band[1]], NOISE16, &mut scratch);
-            let fourths = step.step().map(|step| 4.0 * step.log2());
-            [
-              tested + usize::from(step.tested()),
-              stepped + usize::from(fourths.is_some()),
-              whole + usize::from(fourths.is_some_and(|f| (f - f.round()).abs() < WHOLE_STEP)),
-            ]
-          })
+      // each channel's whole steps as they are coded, and the bands whose largest value is one
+      let mut steps = [[None; BANDS]; 2];
+      let mut ones = [[false; BANDS]; 2];
+      for (at, band) in bands.windows(2).enumerate() {
+        // tested, stepped and whole over the two channels of a pair, and each one's whole
+        // step with its largest value; `over` is the quarter powers a value is over the coded
+        let mut count = |pair: [&Vec<f64>; 2], over: i32| {
+          let mut counts = [0; 3];
+          let whole = pair.map(|lines| {
+            let lines = &lines[band[0]..band[1]];
+            let step = band_step(lines, NOISE16, &mut scratch);
+            counts[0] += usize::from(step.tested());
+            let step = step.step()?;
+            counts[1] += 1;
+            let fourths = 4.0 * step.log2();
+            ((fourths - fourths.round()).abs() < WHOLE_STEP).then(|| {
+              counts[2] += 1;
+              let top = lines.iter().fold(0.0f64, |top, line| top.max(line.abs()));
+              // a step within 2^-100 and 2^100, so its quarter powers fit
+              let fourths = fourths.round() as i32 - over;
+              (fourths, (top / step).powf(0.75).round() <= 1.0)
+            })
+          });
+          (counts, whole)
         };
         let [l, r, m, s] = &lines;
-        let (apart, joint) = (count([l, r]), count([m, s]));
-        let more = if joint[2] > apart[2] { joint } else { apart };
-        for (count, more) in counts.iter_mut().zip(more) {
-          *count += more;
+        let (apart, joint) = (count([l, r], 0), count([m, s], 2));
+        let (counts, whole) = if joint.0[2] > apart.0[2] {
+          joint
+        } else {
+          apart
+        };
+        for (sum, count) in read.counts.iter_mut().zip(counts) {
+          *sum += count;
+        }
+        for (channel, whole) in whole.into_iter().enumerate() {
+          steps[channel][at] = whole.map(|(fourths, _)| fourths);
+          ones[channel][at] = whole.is_some_and(|(_, one)| one);
         }
       }
+      for (steps, ones) in steps.iter().zip(&ones) {
+        read.neighbours.take_channel(steps, ones);
+      }
     }
-    counts
+    read
   }
 
   /// the orthonormal MDCT of `input`, 2048 samples, windowed, into `lines`

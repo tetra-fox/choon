@@ -95,15 +95,20 @@ impl Evidence {
   }
 }
 
-/// Encoder family whose delay and window a grid is consistent with.
+/// Encoder family a grid is consistent with, by its quantizer's steps or by its offset.
 ///
-/// An encoder delays its input by a fixed number of samples, which puts the grid of its decode
-/// at a fixed offset, and an AAC encoder keeps to one of the two windows for its long blocks.
-/// The guess holds for a decode whose start was not cut, made by a decoder that cuts the delay
-/// the file states, as ffmpeg does. A cut start or another decoder moves the offset, and
-/// encoders that share a delay and a window read alike.
+/// An encoder moves the quantizer's step from one scalefactor band to the next in a way of
+/// its own, which the steps of its decode show wherever the grid sits
+/// ([`ReadingThresholds::mp3_family_steps`], [`ReadingThresholds::aac_family_steps`]).
+///
+/// An encoder also delays its input by a fixed number of samples, which puts the grid of its
+/// decode at a fixed offset, and an AAC encoder keeps to one of the two windows for its long
+/// blocks. A family the steps do not name is named by these. That guess holds for a decode
+/// whose start was not cut, made by a decoder that cuts the delay the file states, as ffmpeg
+/// does. A cut start or another decoder moves the offset, and encoders that share a delay and
+/// a window read alike.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 #[non_exhaustive]
 pub enum Family {
@@ -111,11 +116,10 @@ pub enum Family {
   Lame,
   /// Helix, with a delay of 1680 samples.
   Helix,
-  /// MP3 encoder that states no delay for a decoder to cut: Shine, BladeEnc, GOGO, Apple's.
+  /// MP3 encoder that states no delay for a decoder to cut: BladeEnc, GOGO, Apple's.
   ///
-  /// A decode of Fraunhofer's encoder reads so too where its steps do not show it.
-  ///
-  /// A LAME file reads the same from a decoder that cuts no delay.
+  /// A decode of Fraunhofer's encoder or of Shine reads so too where its steps do not name
+  /// it, and so does a LAME file from a decoder that cuts no delay.
   Untagged,
   /// Apple's AAC encoder: the sine window and a delay of 2112 samples.
   Apple,
@@ -127,12 +131,22 @@ pub enum Family {
   /// decode's AAC count sits at this offset about one time in thirteen, and shows none.
   Nero,
   /// ffmpeg's AAC encoder or fdk-aac: the Kaiser-Bessel-derived window, their delay cut whole.
-  FfmpegOrFdk,
-  /// Fraunhofer's MP3 encoder: no delay stated, and its way of moving a band's step.
   ///
-  /// It is told from the others that state no delay by
-  /// [`ReadingThresholds::fraunhofer_steps`], fitted on the codec Windows ships.
+  /// The two share window and delay, and read so where the steps name neither.
+  FfmpegOrFdk,
+  /// ffmpeg's AAC encoder, by its quantizer's steps.
+  Ffmpeg,
+  /// fdk-aac, by its quantizer's steps.
+  FdkAac,
+  /// Fraunhofer's MP3 encoder, by its quantizer's steps.
+  ///
+  /// The rule was fitted on the codec Windows ships.
   Fraunhofer,
+  /// Shine, by its quantizer's steps: one step for every band of a granule.
+  ///
+  /// Other encoders leave the steps alone at the highest bitrates, so Shine is named under
+  /// them.
+  Shine,
   /// libopus, every version of which delays by 312 samples.
   Libopus,
 }
@@ -170,20 +184,39 @@ impl fmt::Display for Family {
       Self::Faac => "FAAC",
       Self::Nero => "Nero's AAC encoder",
       Self::FfmpegOrFdk => "ffmpeg's AAC encoder or fdk-aac",
+      Self::Ffmpeg => "ffmpeg's AAC encoder",
+      Self::FdkAac => "fdk-aac",
       Self::Fraunhofer => "Fraunhofer's MP3 encoder",
+      Self::Shine => "Shine",
       Self::Libopus => "libopus",
     })
   }
 }
 
+/// What names a grid's encoder family.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
+pub enum NamedBy {
+  /// How the quantizer's steps move from band to band, which holds wherever the grid sits.
+  Steps,
+  /// Offset of the grid, with the window for AAC, which a cut start moves.
+  Offset,
+  /// The steps and the offset, which name the same family.
+  Both,
+}
+
 /// Frame grid a reading finds.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct Found {
   /// Codec whose grid it is.
   pub codec: Codec,
-  /// Encoder family the grid's offset is consistent with, where it is one's.
+  /// Encoder family the grid is consistent with, where it is one's.
   pub family: Option<Family>,
+  /// What names the family, where it is named.
+  pub named_by: Option<NamedBy>,
   /// What shows the grid.
   #[cfg_attr(feature = "serde", serde(flatten))]
   pub evidence: Evidence,
@@ -194,7 +227,7 @@ pub struct Found {
   pub quantizer: Option<AacSteps>,
 }
 
-/// the grid `scan` shows under `thresholds`, with the encoder family its offset fits
+/// the grid `scan` shows under `thresholds`, with the encoder family its steps or offset fit
 pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found> {
   let (codec, evidence, sine) = shown(scan, thresholds)?;
   // AAC's steps, which are read at the file's own rate
@@ -202,45 +235,64 @@ pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found
   let stepped = (codec == Codec::Aac && own_rate)
     .then(|| aac_stepped(scan, thresholds))
     .flatten();
-  let family = match (&evidence, codec) {
-    // a section's start is not the stream's, so its offset names no encoder
-    (Evidence::Part { .. }, _) => None,
-    // the steps show under the encoder's window alone, so they name it where they show. a
-    // Vorbis decode's count sits at Nero's offset too often for the count alone to name Nero
-    (Evidence::Count(count) | Evidence::CountAt { scan: count, .. }, Codec::Aac) => {
-      match &stepped {
-        Some((window, _)) => Family::of_aac(window.offset, window.sine),
-        None => Family::of_aac(count.offset, sine).filter(|family| *family != Family::Nero),
-      }
+  // the family the quantizer's steps name, and the one the grid's offset fits
+  let (by_steps, by_offset) = match (&evidence, codec) {
+    // a section's start is not the stream's, so its offset names no encoder, and the steps
+    // are counted over stretches the section may not reach
+    (Evidence::Part { .. }, _) => (None, None),
+    (_, Codec::Aac) => {
+      // the steps show under the encoder's window alone, so they name it where they show. a
+      // Vorbis decode's count sits at Nero's offset too often for the count alone to name Nero
+      let by_offset = match (&stepped, &evidence) {
+        (Some((window, _)), _) => Family::of_aac(window.offset, window.sine),
+        (None, Evidence::Count(count) | Evidence::CountAt { scan: count, .. }) => {
+          Family::of_aac(count.offset, sine).filter(|family| *family != Family::Nero)
+        }
+        (None, _) => None,
+      };
+      // the rules are of encoders that use the Kaiser-Bessel-derived window, two of which
+      // share an offset. an offset that is one encoder's alone stands before them
+      let shared = matches!(by_offset, None | Some(Family::FfmpegOrFdk));
+      let by_steps = stepped
+        .as_ref()
+        .filter(|(window, _)| !window.sine)
+        .and_then(|(_, steps)| steps.neighbours.as_ref())
+        .and_then(|neighbours| neighbours.family(&thresholds.aac_family_steps))
+        .filter(|family| shared || Some(*family) == by_offset);
+      (by_steps, by_offset)
     }
-    (_, Codec::Aac) => stepped
-      .as_ref()
-      .and_then(|(window, _)| Family::of_aac(window.offset, window.sine)),
     // the steps were read on the grid of the file's own rate
-    (Evidence::CountAt { .. }, Codec::Mp3) => Family::of_mp3(evidence.offset()),
+    (Evidence::CountAt { .. }, Codec::Mp3) => (None, Family::of_mp3(evidence.offset())),
+    // a cut start lands on an encoder's offset by chance, and the steps are the encoder's
+    // own, so they stand before the offset
     (_, Codec::Mp3) => {
-      let weighed = scan
+      let neighbours = scan
         .mp3_steps
         .as_ref()
-        .and_then(|steps| steps.neighbours.as_ref())
-        .and_then(|neighbours| neighbours.weighed(&thresholds.fraunhofer_steps));
-      match Family::of_mp3(evidence.offset()) {
-        Some(Family::Untagged)
-          if weighed.is_some_and(|sum| sum > thresholds.fraunhofer_steps.over) =>
-        {
-          Some(Family::Fraunhofer)
-        }
-        family => family,
-      }
+        .and_then(|steps| steps.neighbours.as_ref());
+      let by_steps =
+        neighbours.and_then(|neighbours| neighbours.family(&thresholds.mp3_family_steps));
+      (by_steps, Family::of_mp3(evidence.offset()))
     }
-    (Evidence::Short { short }, Codec::Opus) => lattice::SHORT
-      .iter()
-      .filter(|length| length.length == short.length)
-      .any(|length| length.uncut_offsets().contains(&short.most().0))
-      .then_some(Family::Libopus),
-    (_, Codec::Opus) => (evidence.offset() == OPUS_UNCUT_OFFSET).then_some(Family::Libopus),
-    // no encoder of Vorbis, WMA, AC-3 or layer II is told from another by its offset
-    (_, Codec::Vorbis | Codec::Wma | Codec::Mp2 | Codec::Ac3) => None,
+    (Evidence::Short { short }, Codec::Opus) => {
+      let uncut = lattice::SHORT
+        .iter()
+        .filter(|length| length.length == short.length)
+        .any(|length| length.uncut_offsets().contains(&short.most().0));
+      (None, uncut.then_some(Family::Libopus))
+    }
+    (_, Codec::Opus) => {
+      let uncut = evidence.offset() == OPUS_UNCUT_OFFSET;
+      (None, uncut.then_some(Family::Libopus))
+    }
+    // no encoder of Vorbis, WMA, AC-3 or layer II is told from another
+    (_, Codec::Vorbis | Codec::Wma | Codec::Mp2 | Codec::Ac3) => (None, None),
+  };
+  let (family, named_by) = match (by_steps, by_offset) {
+    (Some(steps), Some(offset)) if steps == offset => (Some(steps), Some(NamedBy::Both)),
+    (Some(steps), _) => (Some(steps), Some(NamedBy::Steps)),
+    (None, Some(offset)) => (Some(offset), Some(NamedBy::Offset)),
+    (None, None) => (None, None),
   };
   let quantizer = stepped
     .filter(|_| matches!(evidence, Evidence::Count(_)))
@@ -248,6 +300,7 @@ pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found
   Some(Found {
     codec,
     family,
+    named_by,
     evidence,
     quantizer,
   })
@@ -653,7 +706,8 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::grid::{Mp3Neighbours, OtherRate, SEGMENTS};
+  use crate::grid::{AacNeighbours, Mp3Neighbours, OtherRate, SEGMENTS};
+  use crate::thresholds::{FamilySteps, StepBound, StepRule, StepShare};
 
   #[test]
   fn aacs_steps_name_the_window_and_show_a_grid_no_count_does() {
@@ -670,6 +724,7 @@ mod tests {
       stepped: 4 * whole,
       whole: 4 * whole,
       segment_whole: [whole; SEGMENTS],
+      neighbours: None,
     };
     let scan = |kbd: f64, sine: f64, kbd_steps: usize, sine_steps: usize| Scan {
       aac: count(448, kbd),
@@ -864,75 +919,6 @@ mod tests {
     let last = found(&after, &thresholds).expect("the lattice is over");
     assert_eq!(last.evidence, Evidence::Lattice(opus));
     assert_eq!(last.family, Some(Family::Libopus));
-    // an MP3 grid at offset 1 whose steps weigh over the threshold is Fraunhofer's; the sums
-    // are the tuning's for two decodes of its codec
-    let fraunhofer =
-      |pairs, same, finer, twos: (usize, usize), low: (usize, f64), high: (usize, f64)| {
-        Mp3Neighbours {
-          pairs,
-          same,
-          finer,
-          two_finer: twos.0,
-          two_coarser: twos.1,
-          low_bands: low.0,
-          low_log: low.1,
-          high_bands: high.0,
-          high_log: high.1,
-        }
-      };
-    let at_128 = fraunhofer(
-      [725, 775, 1032],
-      [216, 427, 631],
-      [216, 231, 379],
-      (488, 174),
-      (838, 2179.864),
-      (1492, 2424.526),
-    );
-    let at_320 = fraunhofer(
-      [1118, 1058, 1078],
-      [447, 623, 609],
-      [313, 338, 377],
-      (750, 246),
-      (1108, 3340.91),
-      (1510, 4099.994),
-    );
-    let rule = &thresholds.fraunhofer_steps;
-    for (neighbours, sum) in [(&at_128, 28.7451), (&at_320, 28.6805)] {
-      let weighed = neighbours.weighed(rule).expect("pairs enough");
-      assert!((weighed - sum).abs() < 1e-3, "{weighed}");
-    }
-    // an encoder that never moves the step, and one with too few pairs to tell
-    let flat = fraunhofer(
-      [900; 3],
-      [900; 3],
-      [0; 3],
-      (0, 0),
-      (800, 2400.0),
-      (1500, 2500.0),
-    );
-    assert!(flat.weighed(rule).expect("pairs enough") < rule.over);
-    let few = fraunhofer([10; 3], [5; 3], [3; 3], (9, 2), (20, 60.0), (30, 50.0));
-    assert_eq!(few.weighed(rule), None);
-    let stepped = |neighbours: &Mp3Neighbours| Scan {
-      mp3: codec_scan(50.0, 4),
-      mp3_steps: Some(Mp3Steps {
-        tested: 9000,
-        stepped: 3400,
-        whole: 3300,
-        segment_whole: [800; SEGMENTS],
-        neighbours: Some(neighbours.clone()),
-      }),
-      ..scan((2.0, 0), (2.0, 0))
-    };
-    let family = |mut scan: Scan, offset: usize| {
-      scan.mp3.offset = offset;
-      found(&scan, &thresholds).and_then(|found| found.family)
-    };
-    assert_eq!(family(stepped(&at_128), 1), Some(Family::Fraunhofer));
-    assert_eq!(family(stepped(&flat), 1), Some(Family::Untagged));
-    assert_eq!(family(stepped(&few), 1), Some(Family::Untagged));
-    // LAME's offset names LAME whatever the steps weigh
-    assert_eq!(family(stepped(&at_128), 48), Some(Family::Lame));
     // frames under 20 ms make a grid where no count of 20 ms frames does, the length with
     // the most frames
     let short = |length: usize, frames: usize, uncut_frames: usize| OpusShort {
@@ -975,6 +961,322 @@ mod tests {
     assert_eq!(shown.codec, Codec::Aac);
     assert_eq!(shown.evidence, Evidence::Count(codec_scan(40.0, 4)));
     assert_eq!(shown.family, Some(Family::Faac));
+  }
+
+  #[test]
+  fn the_steps_name_an_mp3_encoder_wherever_the_grid_sits() {
+    let thresholds = ReadingThresholds::default();
+    // the tuning's counts for decodes whose starts were cut: LAME -V 2, Helix at 128 kbit/s,
+    // Fraunhofer at 192, Shine at 128 and at 320, GOGO at 192
+    let counts = |pairs, same, finer, far, twos: (usize, usize)| Mp3Neighbours {
+      pairs,
+      same,
+      finer,
+      far,
+      two_finer: twos.0,
+      two_coarser: twos.1,
+      ..Mp3Neighbours::default()
+    };
+    let lame = Mp3Neighbours {
+      low_bands: 1116,
+      low_log: 4798.956,
+      mid_bands: 1981,
+      high_bands: 3006,
+      high_log: 6203.828,
+      ones: [1, 10, 252],
+      ranked: 6098,
+      coarsest: 1303,
+      granules: 268,
+      joint: 41,
+      ..counts(
+        [1115, 1932, 2224],
+        [320, 641, 649],
+        [422, 649, 1171],
+        [299, 311, 261],
+        (1087, 694),
+      )
+    };
+    let helix = Mp3Neighbours {
+      low_bands: 936,
+      low_log: 2749.754,
+      mid_bands: 1462,
+      high_bands: 2022,
+      high_log: 2931.149,
+      ones: [16, 138, 946],
+      ranked: 4369,
+      coarsest: 558,
+      granules: 268,
+      joint: 48,
+      ..counts(
+        [917, 1379, 1415],
+        [312, 521, 538],
+        [401, 515, 577],
+        [40, 38, 42],
+        (1011, 658),
+      )
+    };
+    let fraunhofer = Mp3Neighbours {
+      low_bands: 1360,
+      low_log: 4457.271,
+      mid_bands: 2047,
+      high_bands: 3304,
+      high_log: 6723.253,
+      ones: [8, 181, 395],
+      ranked: 6700,
+      coarsest: 1090,
+      granules: 268,
+      joint: 0,
+      ..counts(
+        [1299, 1966, 2497],
+        [650, 1130, 1574],
+        [436, 677, 855],
+        [25, 9, 20],
+        (1510, 354),
+      )
+    };
+    let flat = |pairs: [usize; 3], bands: [usize; 3], logs: (f64, f64), ones| Mp3Neighbours {
+      low_bands: bands[0],
+      low_log: logs.0,
+      mid_bands: bands[1],
+      high_bands: bands[2],
+      high_log: logs.1,
+      ones,
+      ranked: bands.iter().sum(),
+      coarsest: bands.iter().sum(),
+      granules: 268,
+      joint: 0,
+      ..counts(pairs, pairs, [0; 3], [0; 3], (0, 0))
+    };
+    let shine = flat(
+      [1067, 1598, 1735],
+      [1100, 1750, 2431],
+      (3873.998, 3661.633),
+      [2, 163, 1013],
+    );
+    // at 320 kbit/s other encoders leave the steps alone too, so its large values name none
+    let shine_320 = flat(
+      [435, 1671, 2370],
+      [472, 1653, 3078],
+      (2388.523, 9371.035),
+      [0, 1, 139],
+    );
+    let gogo = Mp3Neighbours {
+      low_bands: 965,
+      low_log: 3738.925,
+      mid_bands: 1667,
+      high_bands: 2687,
+      high_log: 5206.948,
+      ones: [2, 84, 280],
+      ranked: 5312,
+      coarsest: 4541,
+      granules: 268,
+      joint: 1,
+      ..counts(
+        [916, 1633, 2032],
+        [904, 1564, 1333],
+        [7, 38, 641],
+        [2, 5, 156],
+        (320, 69),
+      )
+    };
+    let family = |neighbours: &Mp3Neighbours, offset: usize| {
+      let count = CodecScan {
+        offset,
+        z: 50.0,
+        segments_agreeing: 4,
+        segment_z: [12.0; SEGMENTS],
+        segment_offset: [offset; SEGMENTS],
+      };
+      let quiet = CodecScan {
+        z: 2.0,
+        segments_agreeing: 0,
+        ..count.clone()
+      };
+      let scan = Scan {
+        aac: quiet,
+        aac_sine: None,
+        vorbis: None,
+        wma: None,
+        ac3: None,
+        mp3: count,
+        mp2: None,
+        opus: None,
+        other_rate: None,
+        mp3_steps: Some(Mp3Steps {
+          tested: 9000,
+          stepped: 3400,
+          whole: 3300,
+          segment_whole: [800; SEGMENTS],
+          neighbours: Some(neighbours.clone()),
+        }),
+        aac_steps: None,
+        aac_sine_steps: None,
+      };
+      found(&scan, &thresholds).and_then(|found| found.family)
+    };
+    // an offset no encoder leaves, as after a cut
+    for (neighbours, named) in [
+      (&lame, Some(Family::Lame)),
+      (&helix, Some(Family::Helix)),
+      (&fraunhofer, Some(Family::Fraunhofer)),
+      (&shine, Some(Family::Shine)),
+      (&shine_320, None),
+      (&gogo, None),
+    ] {
+      assert_eq!(family(neighbours, 300), named, "{neighbours:?}");
+    }
+    // the steps stand before an offset a cut can land on, and the offset names what they do not
+    assert_eq!(family(&lame, 96), Some(Family::Lame));
+    assert_eq!(family(&helix, 48), Some(Family::Helix));
+    assert_eq!(family(&gogo, 48), Some(Family::Lame));
+    assert_eq!(family(&gogo, 1), Some(Family::Untagged));
+    assert_eq!(family(&fraunhofer, 1), Some(Family::Fraunhofer));
+    // too few pairs to tell
+    let few = Mp3Neighbours {
+      pairs: [20, 60, 150],
+      same: [20, 60, 150],
+      ..shine.clone()
+    };
+    assert_eq!(family(&few, 1), Some(Family::Untagged));
+    // counts kept before the far pairs and the ranked bands were counted name none, though
+    // no far pair is within Helix's bounds
+    for counted in [&fraunhofer, &helix, &lame] {
+      let kept = Mp3Neighbours {
+        far: [0; 3],
+        mid_bands: 0,
+        ones: [0; 3],
+        ranked: 0,
+        coarsest: 0,
+        granules: 0,
+        joint: 0,
+        ..counted.clone()
+      };
+      assert_eq!(family(&kept, 1), Some(Family::Untagged));
+    }
+    // a decode inside the rules of two families is named neither's
+    let both = ReadingThresholds {
+      mp3_family_steps: FamilySteps {
+        rules: vec![
+          StepRule {
+            family: Family::Shine,
+            bounds: Vec::new(),
+          },
+          StepRule {
+            family: Family::Helix,
+            bounds: Vec::new(),
+          },
+        ],
+        ..thresholds.mp3_family_steps.clone()
+      },
+      ..thresholds.clone()
+    };
+    assert_eq!(helix.family(&both.mp3_family_steps), None);
+    // a region the codec does not have meets no bound
+    let beyond = StepBound {
+      share: StepShare::SameIn(3),
+      min: Some(0.0),
+      max: None,
+    };
+    let rules = FamilySteps {
+      rules: vec![StepRule {
+        family: Family::Helix,
+        bounds: vec![beyond],
+      }],
+      ..thresholds.mp3_family_steps.clone()
+    };
+    assert_eq!(helix.family(&rules), None);
+  }
+
+  #[test]
+  fn the_steps_tell_ffmpegs_aac_from_fdk_aac_and_leave_nero_to_its_offset() {
+    let thresholds = ReadingThresholds::default();
+    // the tuning's counts for decodes at 128 kbit/s whose starts were cut
+    let ffmpeg = AacNeighbours {
+      pairs: [1880, 2439, 2334, 1216],
+      same: [218, 406, 397, 184],
+      finer: [889, 1134, 1119, 808],
+      one: [464, 691, 756, 334],
+      far: [585, 484, 360, 246],
+      bands: [2285, 2658, 2551, 1546],
+      ones: [214, 1269, 1434, 1094],
+      ranked: [2284, 2658, 2550, 1541],
+      coarsest: [289, 29, 0, 0],
+    };
+    let fdk = AacNeighbours {
+      pairs: [1936, 2208, 1718, 489],
+      same: [1209, 1281, 1071, 228],
+      finer: [426, 597, 434, 190],
+      one: [398, 517, 372, 111],
+      far: [53, 57, 54, 73],
+      bands: [2182, 2362, 1850, 737],
+      ones: [9, 397, 797, 454],
+      ranked: [2177, 2358, 1844, 728],
+      coarsest: [483, 188, 33, 7],
+    };
+    let nero = AacNeighbours {
+      pairs: [1350, 1321, 1340, 508],
+      same: [579, 601, 507, 219],
+      finer: [440, 368, 506, 233],
+      one: [299, 295, 324, 137],
+      far: [191, 139, 146, 28],
+      bands: [1513, 1422, 1415, 657],
+      ones: [23, 179, 647, 638],
+      ranked: [1506, 1422, 1415, 656],
+      coarsest: [200, 46, 52, 3],
+    };
+    let family = |neighbours: Option<&AacNeighbours>, offset: usize, sine: bool| {
+      let count = CodecScan {
+        offset,
+        z: 50.0,
+        segments_agreeing: 4,
+        segment_z: [12.0; SEGMENTS],
+        segment_offset: [offset; SEGMENTS],
+      };
+      let quiet = CodecScan {
+        z: 2.0,
+        segments_agreeing: 0,
+        ..count.clone()
+      };
+      let steps = |whole: usize| AacSteps {
+        tested: 12_000,
+        stepped: 4 * whole,
+        whole: 4 * whole,
+        segment_whole: [whole; SEGMENTS],
+        neighbours: neighbours.cloned(),
+      };
+      let (kbd, other) = if sine { (20, 2_000) } else { (2_000, 20) };
+      let scan = Scan {
+        aac: if sine { quiet.clone() } else { count.clone() },
+        aac_sine: Some(if sine { count } else { quiet.clone() }),
+        vorbis: None,
+        wma: None,
+        ac3: None,
+        mp3: quiet,
+        mp2: None,
+        opus: None,
+        other_rate: None,
+        mp3_steps: None,
+        aac_steps: Some(steps(kbd)),
+        aac_sine_steps: Some(steps(other)),
+      };
+      found(&scan, &thresholds).and_then(|found| found.family)
+    };
+    // the two share the offset of an uncut decode, and are told apart there and after a cut
+    for offset in [0, 531] {
+      assert_eq!(family(Some(&ffmpeg), offset, false), Some(Family::Ffmpeg));
+      assert_eq!(family(Some(&fdk), offset, false), Some(Family::FdkAac));
+    }
+    // Nero's steps lie beside fdk-aac's, and no rule names them
+    assert_eq!(family(Some(&nero), 761, false), None);
+    assert_eq!(family(Some(&nero), 448, false), Some(Family::Nero));
+    // steps kept without their neighbours leave the offset's name
+    assert_eq!(family(None, 0, false), Some(Family::FfmpegOrFdk));
+    assert_eq!(family(None, 531, false), None);
+    // an offset that is one encoder's alone names it whatever the steps are like
+    assert_eq!(family(Some(&fdk), 448, false), Some(Family::Nero));
+    // the rules are of encoders that use the Kaiser-Bessel-derived window
+    assert_eq!(family(Some(&fdk), 531, true), None);
+    assert_eq!(family(Some(&fdk), 960, true), Some(Family::Apple));
   }
 
   #[test]

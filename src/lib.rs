@@ -91,6 +91,7 @@ pub use flags::Flag;
 pub use limitation::Limitation;
 pub use reading::{EncoderGuess, Reading, Verdict};
 pub use thresholds::{
-  EncoderProfile, FraunhoferSteps, MeasureThresholds, RateEdge, ReadingThresholds,
+  EncoderProfile, FamilySteps, MeasureThresholds, RateEdge, ReadingThresholds, StepBound, StepRule,
+  StepShare,
 };
 pub use window::{Step, Window};

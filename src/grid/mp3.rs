@@ -240,9 +240,12 @@ impl Mp3<f32> {
 /// the value of a line quantized to 1 at a step of one, with samples from -1 to 1
 const MP3_UNIT: f64 = 9.0;
 
+/// the scalefactor bands of a long block
+const BANDS: usize = 22;
+
 /// the edges of a long block's scalefactor bands in lines at `rate`, for the rates MPEG-1
 /// layer III codes
-pub(super) fn mp3_bands(rate: u32) -> Option<&'static [usize; 23]> {
+pub(super) fn mp3_bands(rate: u32) -> Option<&'static [usize; BANDS + 1]> {
   match rate {
     44_100 => Some(&[
       0, 4, 8, 12, 16, 20, 24, 30, 36, 44, 52, 62, 74, 90, 110, 134, 162, 196, 238, 288, 342, 418,
@@ -277,7 +280,7 @@ impl Mp3<f64> {
     &self,
     segment: &Segment,
     offset: usize,
-    bands: &[usize; 23],
+    bands: &[usize; BANDS + 1],
   ) -> Vec<GranuleSteps> {
     let mut scratch = BandScratch::default();
     let granules = granules(segment.left.len());
@@ -300,13 +303,13 @@ impl Mp3<f64> {
         let (mut tested, mut stepped, mut whole) = (0, 0, 0);
         let mut neighbours = Mp3Neighbours::default();
         for lines in pair {
-          // the whole step of the band under the one looked at
-          let mut under = None;
+          // each band's whole step, where it shows one
+          let mut steps = [None; BANDS];
           for (at, band) in bands.windows(2).enumerate() {
             let lines = &lines[band[0]..band[1]];
             let step = band_step(lines, NOISE16 * MP3_NOISE_GAIN, &mut scratch);
             tested += usize::from(step.tested());
-            let fourths = step.step().and_then(|step| {
+            steps[at] = step.step().and_then(|step| {
               stepped += 1;
               let fourths = 4.0 * (step / MP3_UNIT).log2();
               ((fourths - fourths.round()).abs() < WHOLE_STEP).then(|| {
@@ -314,13 +317,14 @@ impl Mp3<f64> {
                 let largest = (top / step).powf(0.75).round();
                 // a step within 2^-100 and 2^100, so its quarter powers fit
                 let fourths = fourths.round() as i32;
+                let under = at.checked_sub(1).and_then(|under| steps[under]);
                 neighbours.take(at, fourths, largest, under);
                 fourths
               })
             });
-            whole += usize::from(fourths.is_some());
-            under = fourths;
+            whole += usize::from(steps[at].is_some());
           }
+          neighbours.take_channel(&steps);
         }
         GranuleSteps {
           tested,
@@ -330,11 +334,11 @@ impl Mp3<f64> {
         }
       };
       let (apart, joint) = (count([&l, &r]), count([&m, &s]));
-      read.push(if joint.whole > apart.whole {
-        joint
-      } else {
-        apart
-      });
+      let as_joint = joint.whole > apart.whole;
+      let mut more = if as_joint { joint } else { apart };
+      more.neighbours.granules = 1;
+      more.neighbours.joint = usize::from(as_joint);
+      read.push(more);
     }
     read
   }

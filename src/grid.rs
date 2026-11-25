@@ -50,6 +50,10 @@
 //! window ([`AacSteps`]). They show under the window the encoder used and not under the other,
 //! and a Vorbis decode, whose grid the count finds too, does not show them.
 //!
+//! Encoders differ in how they move the step from one band to the next. The whole steps of
+//! neighbouring bands are compared ([`Mp3Neighbours`], [`AacNeighbours`]), and a reading
+//! names the encoder family whose decodes compare alike ([`Family`]).
+//!
 //! # Opus
 //!
 //! Opus's CELT layer codes the energy of each of its 21 bands, in each frame, as a step from a
@@ -96,7 +100,7 @@
 
 use std::fmt;
 
-use crate::thresholds::FraunhoferSteps;
+use crate::thresholds::{FamilySteps, StepShare};
 
 pub(crate) mod aac;
 mod found;
@@ -109,7 +113,7 @@ pub(crate) mod segments;
 mod steps;
 
 pub(crate) use found::found;
-pub use found::{Evidence, Family, Found};
+pub use found::{Evidence, Family, Found, NamedBy};
 pub(crate) use scan::{Opus, jobs, scan};
 
 /// AAC's hop, the length of its long frames' new samples
@@ -531,6 +535,10 @@ pub struct Mp3Steps {
 /// bands of one channel of one granule that both show a whole step; its region is where the
 /// lower band sits: bands 0 to 6, 7 to 12, and 13 up. A step is counted in quarter powers of
 /// two.
+///
+/// The counts are read as shares by [`StepShare`], which
+/// [`ReadingThresholds::mp3_family_steps`](crate::ReadingThresholds::mp3_family_steps) puts
+/// bounds on to name an encoder family.
 #[derive(Clone, Debug, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
@@ -541,6 +549,12 @@ pub struct Mp3Neighbours {
   pub same: [usize; 3],
   /// Number of pairs whose higher band has the finer step, by region.
   pub finer: [usize; 3],
+  /// Number of pairs whose steps are six quarter powers or more apart, by region.
+  ///
+  /// All zero in measures kept by a version of the analyzer that did not count them, as
+  /// `coarsest`, `ranked`, `mid_bands`, `ones`, `joint` and `granules` are.
+  #[cfg_attr(feature = "serde", serde(default))]
+  pub far: [usize; 3],
   /// Number of pairs whose higher band's step is two quarter powers finer.
   pub two_finer: usize,
   /// Number of pairs whose higher band's step is two quarter powers coarser.
@@ -549,13 +563,53 @@ pub struct Mp3Neighbours {
   pub low_bands: usize,
   /// Sum over those bands of log2 of one more than the largest quantized value.
   pub low_log: f64,
+  /// Number of bands 6 to 11 with a whole step.
+  #[cfg_attr(feature = "serde", serde(default))]
+  pub mid_bands: usize,
   /// Number of bands 12 up with a whole step.
   pub high_bands: usize,
   /// The same sum over those bands.
   pub high_log: f64,
+  /// Number of bands whose largest quantized value is one: bands 0 to 5, 6 to 11, 12 up.
+  #[cfg_attr(feature = "serde", serde(default))]
+  pub ones: [usize; 3],
+  /// Number of bands with a whole step in a channel of a granule that shows four or more.
+  #[cfg_attr(feature = "serde", serde(default))]
+  pub ranked: usize,
+  /// Number of those bands whose step is the coarsest of their channel in their granule.
+  ///
+  /// A band whose scalefactor is zero has the coarsest step, so an encoder that sets few
+  /// scalefactors leaves most bands there.
+  #[cfg_attr(feature = "serde", serde(default))]
+  pub coarsest: usize,
+  /// Number of granules read.
+  #[cfg_attr(feature = "serde", serde(default))]
+  pub granules: usize,
+  /// Number of those that put more bands on whole steps as mid and side.
+  #[cfg_attr(feature = "serde", serde(default))]
+  pub joint: usize,
+}
+
+/// the whole steps a channel shows before its bands are ranked against its coarsest
+const RANKED_BANDS: usize = 4;
+
+/// the coarsest of `steps`, each band's whole step where it shows one, where enough bands
+/// show one to be ranked against it
+fn coarsest(steps: &[Option<i32>]) -> Option<i32> {
+  let whole = steps.iter().flatten();
+  let coarsest = whole.clone().max()?;
+  (whole.count() >= RANKED_BANDS).then_some(*coarsest)
+}
+
+/// `count` as a share of `all`, `None` of nothing
+fn share(count: usize, all: usize) -> Option<f64> {
+  (all > 0).then(|| count as f64 / all as f64)
 }
 
 impl Mp3Neighbours {
+  /// the quarter powers between two steps from which a pair is far apart
+  const FAR: u32 = 6;
+
   /// the region of the pair whose lower band is `band`
   fn region(band: usize) -> usize {
     match band {
@@ -574,47 +628,87 @@ impl Mp3Neighbours {
       self.pairs[region] += 1;
       self.same[region] += usize::from(moved == 0);
       self.finer[region] += usize::from(moved < 0);
+      self.far[region] += usize::from(moved.unsigned_abs() >= Self::FAR);
       self.two_finer += usize::from(moved == -2);
       self.two_coarser += usize::from(moved == 2);
     }
     let log = (largest + 1.0).log2();
-    if band < 6 {
-      self.low_bands += 1;
-      self.low_log += log;
-    } else if band >= 12 {
-      self.high_bands += 1;
-      self.high_log += log;
+    let third = match band {
+      0..6 => {
+        self.low_bands += 1;
+        self.low_log += log;
+        0
+      }
+      6..12 => {
+        self.mid_bands += 1;
+        1
+      }
+      _ => {
+        self.high_bands += 1;
+        self.high_log += log;
+        2
+      }
+    };
+    self.ones[third] += usize::from(largest <= 1.0);
+  }
+
+  /// takes the whole steps of one channel of a granule, band by band
+  fn take_channel(&mut self, steps: &[Option<i32>]) {
+    if let Some(coarsest) = coarsest(steps) {
+      let whole = steps.iter().flatten();
+      self.ranked += whole.clone().count();
+      self.coarsest += whole.filter(|step| **step == coarsest).count();
     }
   }
 
-  /// the sum of `rule`'s weights over the shares of these counts; `None` with fewer pairs
-  /// than the rule asks for, or no band at one end
-  fn weighed(&self, rule: &FraunhoferSteps) -> Option<f64> {
+  /// whether the pairs are as many as `rule` asks for, with a band at each end. counts kept
+  /// before the granules were counted lack what the rules read, and are never enough
+  fn enough(&self, rule: &FamilySteps) -> bool {
     let total: usize = self.pairs.iter().sum();
-    let few = total < rule.min_pairs.max(1)
-      || self
+    self.granules > 0
+      && total >= rule.min_pairs.max(1)
+      && self
         .pairs
         .iter()
-        .any(|pairs| *pairs < rule.min_region_pairs.max(1));
-    if few || self.low_bands == 0 || self.high_bands == 0 {
-      return None;
+        .all(|pairs| *pairs >= rule.min_region_pairs.max(1))
+      && self.low_bands > 0
+      && self.high_bands > 0
+  }
+
+  /// the encoder family `rules` name from these counts
+  fn family(&self, rules: &FamilySteps) -> Option<Family> {
+    self
+      .enough(rules)
+      .then(|| named(rules, |of| self.share(of)))
+      .flatten()
+  }
+
+  /// the counts read as `of`; `None` of nothing, and for a share MP3's counts do not hold
+  fn share(&self, of: StepShare) -> Option<f64> {
+    let total: usize = self.pairs.iter().sum();
+    let same: usize = self.same.iter().sum();
+    let within = |counts: &[usize; 3], all: &[usize; 3], region: usize| {
+      share(*counts.get(region)?, *all.get(region)?)
+    };
+    let moved_in = |region: usize| Some(self.pairs.get(region)? - self.same.get(region)?);
+    match of {
+      StepShare::Moved => share(total - same, total),
+      StepShare::SameIn(region) => within(&self.same, &self.pairs, region),
+      StepShare::FinerIn(region) => within(&self.finer, &self.pairs, region),
+      StepShare::Far => share(self.far.iter().sum(), total - same),
+      StepShare::FarIn(region) => share(*self.far.get(region)?, moved_in(region)?),
+      StepShare::TwoFiner => share(self.two_finer, total),
+      StepShare::TwoCoarser => share(self.two_coarser, total),
+      StepShare::Coarsest => share(self.coarsest, self.ranked),
+      StepShare::OnesIn(third) => {
+        let bands = [self.low_bands, self.mid_bands, self.high_bands];
+        within(&self.ones, &bands, third)
+      }
+      StepShare::Joint => share(self.joint, self.granules),
+      StepShare::LowLog => (self.low_bands > 0).then(|| self.low_log / self.low_bands as f64),
+      StepShare::HighLog => (self.high_bands > 0).then(|| self.high_log / self.high_bands as f64),
+      StepShare::OneIn(_) | StepShare::CoarsestIn(_) => None,
     }
-    let of = |count: usize, all: usize| count as f64 / all as f64;
-    let regions: f64 = (0..3)
-      .map(|region| {
-        rule.same[region] * of(self.same[region], self.pairs[region])
-          + rule.finer[region] * of(self.finer[region], self.pairs[region])
-      })
-      .sum();
-    Some(
-      regions
-        + rule.two_finer * of(self.two_finer, total)
-        + rule.two_coarser * of(self.two_coarser, total)
-        + rule.low_log * self.low_log / self.low_bands as f64
-        + rule.high_log * self.high_log / self.high_bands as f64
-        + rule.low_share * of(self.pairs[0], total)
-        + rule.high_share * of(self.pairs[2], total),
-    )
   }
 
   fn add(&mut self, other: &Self) {
@@ -622,13 +716,20 @@ impl Mp3Neighbours {
       self.pairs[region] += other.pairs[region];
       self.same[region] += other.same[region];
       self.finer[region] += other.finer[region];
+      self.far[region] += other.far[region];
+      self.ones[region] += other.ones[region];
     }
     self.two_finer += other.two_finer;
     self.two_coarser += other.two_coarser;
     self.low_bands += other.low_bands;
     self.low_log += other.low_log;
+    self.mid_bands += other.mid_bands;
     self.high_bands += other.high_bands;
     self.high_log += other.high_log;
+    self.ranked += other.ranked;
+    self.coarsest += other.coarsest;
+    self.granules += other.granules;
+    self.joint += other.joint;
   }
 }
 
@@ -657,6 +758,167 @@ pub struct AacSteps {
   pub whole: usize,
   /// Each segment's share of `whole`, in file order.
   pub segment_whole: [usize; SEGMENTS],
+  /// How the whole steps of neighbouring bands compare.
+  ///
+  /// `None` in measures kept by a version of the analyzer that did not compare them.
+  #[cfg_attr(feature = "serde", serde(default))]
+  pub neighbours: Option<AacNeighbours>,
+}
+
+/// How the whole steps of neighbouring scalefactor bands of AAC compare, over the segments.
+///
+/// It counts what [`Mp3Neighbours`] counts, on the bands of a long block. A pair is two
+/// neighbouring bands of one channel of one frame that both show a whole step, each read as
+/// its band was, as left and right or as mid and side. Counts are by region: bands 0 to 11,
+/// 12 to 23, 24 to 35, and 36 up, a pair where its lower band sits. A step is counted in
+/// quarter powers of two.
+///
+/// The counts are read as shares by [`StepShare`], which
+/// [`ReadingThresholds::aac_family_steps`](crate::ReadingThresholds::aac_family_steps) puts
+/// bounds on to name an encoder family.
+#[derive(Clone, Debug, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct AacNeighbours {
+  /// Number of pairs, by region.
+  pub pairs: [usize; 4],
+  /// Number of pairs whose two steps are the same, by region.
+  pub same: [usize; 4],
+  /// Number of pairs whose higher band has the finer step, by region.
+  pub finer: [usize; 4],
+  /// Number of pairs whose steps are one quarter power apart, by region.
+  pub one: [usize; 4],
+  /// Number of pairs whose steps are four quarter powers or more apart, by region.
+  pub far: [usize; 4],
+  /// Number of bands with a whole step, by region.
+  pub bands: [usize; 4],
+  /// Number of those whose largest quantized value is one, by region.
+  pub ones: [usize; 4],
+  /// Number of bands in a channel of a frame that shows four or more whole steps, by region.
+  pub ranked: [usize; 4],
+  /// Number of those whose step is the coarsest of their channel in their frame, by region.
+  pub coarsest: [usize; 4],
+}
+
+impl AacNeighbours {
+  /// the quarter powers between two steps from which a pair is far apart
+  const FAR: u32 = 4;
+  /// the bands of a region
+  const REGION: usize = 12;
+
+  /// the region of `band`, and of the pair whose lower band it is
+  fn region(band: usize) -> usize {
+    (band / Self::REGION).min(3)
+  }
+
+  /// takes one channel of a frame: each band's whole step in quarter powers, where it shows
+  /// one, with whether its largest quantized value is one
+  fn take_channel(&mut self, steps: &[Option<i32>], ones: &[bool]) {
+    let coarsest = coarsest(steps);
+    let mut under = None;
+    for (band, (step, one)) in steps.iter().zip(ones).enumerate() {
+      let region = Self::region(band);
+      if let Some(step) = *step {
+        self.bands[region] += 1;
+        self.ones[region] += usize::from(*one);
+        if let Some(coarsest) = coarsest {
+          self.ranked[region] += 1;
+          self.coarsest[region] += usize::from(step == coarsest);
+        }
+        if let Some(under) = under {
+          let region = Self::region(band - 1);
+          let moved: i32 = step - under;
+          self.pairs[region] += 1;
+          self.same[region] += usize::from(moved == 0);
+          self.finer[region] += usize::from(moved < 0);
+          self.one[region] += usize::from(moved.unsigned_abs() == 1);
+          self.far[region] += usize::from(moved.unsigned_abs() >= Self::FAR);
+        }
+      }
+      under = *step;
+    }
+  }
+
+  /// whether the pairs are as many as `rule` asks for; the top region, which a low cutoff
+  /// empties, is left out of the regions asked
+  fn enough(&self, rule: &FamilySteps) -> bool {
+    let total: usize = self.pairs.iter().sum();
+    total >= rule.min_pairs.max(1)
+      && self.pairs[..3]
+        .iter()
+        .all(|pairs| *pairs >= rule.min_region_pairs.max(1))
+  }
+
+  /// the encoder family `rules` name from these counts
+  fn family(&self, rules: &FamilySteps) -> Option<Family> {
+    self
+      .enough(rules)
+      .then(|| named(rules, |of| self.share(of)))
+      .flatten()
+  }
+
+  /// the counts read as `of`; `None` of nothing, and for a share AAC's counts do not hold
+  fn share(&self, of: StepShare) -> Option<f64> {
+    let total: usize = self.pairs.iter().sum();
+    let same: usize = self.same.iter().sum();
+    let within = |counts: &[usize; 4], all: &[usize; 4], region: usize| {
+      share(*counts.get(region)?, *all.get(region)?)
+    };
+    let moved_in = |region: usize| Some(self.pairs.get(region)? - self.same.get(region)?);
+    match of {
+      StepShare::Moved => share(total - same, total),
+      StepShare::SameIn(region) => within(&self.same, &self.pairs, region),
+      StepShare::FinerIn(region) => within(&self.finer, &self.pairs, region),
+      StepShare::OneIn(region) => share(*self.one.get(region)?, moved_in(region)?),
+      StepShare::Far => share(self.far.iter().sum(), total - same),
+      StepShare::FarIn(region) => share(*self.far.get(region)?, moved_in(region)?),
+      StepShare::Coarsest => share(self.coarsest.iter().sum(), self.ranked.iter().sum()),
+      StepShare::CoarsestIn(region) => within(&self.coarsest, &self.ranked, region),
+      StepShare::OnesIn(region) => within(&self.ones, &self.bands, region),
+      StepShare::TwoFiner
+      | StepShare::TwoCoarser
+      | StepShare::Joint
+      | StepShare::LowLog
+      | StepShare::HighLog => None,
+    }
+  }
+
+  fn add(&mut self, other: &Self) {
+    let all = [
+      (&mut self.pairs, &other.pairs),
+      (&mut self.same, &other.same),
+      (&mut self.finer, &other.finer),
+      (&mut self.one, &other.one),
+      (&mut self.far, &other.far),
+      (&mut self.bands, &other.bands),
+      (&mut self.ones, &other.ones),
+      (&mut self.ranked, &other.ranked),
+      (&mut self.coarsest, &other.coarsest),
+    ];
+    for (mine, theirs) in all {
+      for (mine, theirs) in mine.iter_mut().zip(theirs) {
+        *mine += theirs;
+      }
+    }
+  }
+}
+
+/// the family the rules of `steps` name from the shares `share` gives: the one family whose
+/// rule holds every bound, `None` where none does or where rules of two families do
+fn named(steps: &FamilySteps, share: impl Fn(StepShare) -> Option<f64>) -> Option<Family> {
+  let mut holding = steps
+    .rules
+    .iter()
+    .filter(|rule| {
+      rule.bounds.iter().all(|bound| {
+        share(bound.share).is_some_and(|share| {
+          bound.min.is_none_or(|min| share >= min) && bound.max.is_none_or(|max| share <= max)
+        })
+      })
+    })
+    .map(|rule| rule.family);
+  let family = holding.next()?;
+  holding.all(|other| other == family).then_some(family)
 }
 
 /// Scan for MP3 and AAC of a file's samples brought to the other of 44.1 and 48 kHz.
@@ -723,9 +985,83 @@ mod tests {
     // band 5 alone is under band 6, band 13 alone from band 12 up
     assert_eq!((neighbours.low_bands, neighbours.low_log), (1, 3.0));
     assert_eq!((neighbours.high_bands, neighbours.high_log), (1, 2.0));
+    // bands 5 to 8 sit in the low and middle thirds, and none holds a value of one alone
+    assert_eq!(neighbours.mid_bands, 3);
+    assert_eq!(neighbours.ones, [0, 2, 0]);
+    assert_eq!(neighbours.far, [0; 3]);
     let mut twice = neighbours.clone();
     twice.add(&neighbours);
     assert_eq!(twice.pairs, [4, 2, 0]);
     assert_eq!(twice.high_log, 4.0);
+    assert_eq!(twice.ones, [0, 4, 0]);
+  }
+
+  #[test]
+  fn steps_kept_by_version_0_2_are_read_and_name_no_family() {
+    // a Helix decode's steps as version 0.2 wrote them
+    let kept = r#"{"tested":10307,"stepped":10281,"whole":10048,"segmentWhole":[2509,2517,2512,2510],
+      "neighbours":{"pairs":[3110,3163,2920],"same":[986,1198,1289],"finer":[981,1025,1227],
+      "twoFiner":2470,"twoCoarser":1820,"lowBands":2869,"lowLog":9090.728,"highBands":4009,
+      "highLog":6382.107}}"#;
+    let steps: Mp3Steps = serde_json::from_str(kept).expect("the kept steps are read");
+    let neighbours = steps.neighbours.expect("version 0.2 compared neighbours");
+    assert_eq!((neighbours.far, neighbours.granules), ([0; 3], 0));
+    let rules = crate::ReadingThresholds::default().mp3_family_steps;
+    assert_eq!(neighbours.family(&rules), None);
+    // with the counts this version adds, the same steps are Helix's
+    let counted = Mp3Neighbours {
+      far: [190, 50, 36],
+      granules: 268,
+      ..neighbours
+    };
+    assert_eq!(counted.family(&rules), Some(Family::Helix));
+    let kept =
+      r#"{"tested":12000,"stepped":8000,"whole":8000,"segmentWhole":[2000,2000,2000,2000]}"#;
+    let steps: AacSteps = serde_json::from_str(kept).expect("the kept steps are read");
+    assert_eq!(steps.neighbours, None);
+  }
+
+  #[test]
+  fn a_channels_bands_are_ranked_against_its_coarsest_step() {
+    // four bands show a step and two sit at the coarsest, -40
+    let mut steps = [None; 22];
+    for (band, step) in [(2, -40), (3, -46), (9, -40), (10, -42)] {
+      steps[band] = Some(step);
+    }
+    let mut mp3 = Mp3Neighbours::default();
+    mp3.take_channel(&steps);
+    assert_eq!((mp3.ranked, mp3.coarsest), (4, 2));
+    // three bands are too few to rank
+    steps[10] = None;
+    mp3.take_channel(&steps);
+    assert_eq!((mp3.ranked, mp3.coarsest), (4, 2));
+    assert_eq!(mp3.share(StepShare::Coarsest), Some(0.5));
+    assert_eq!(mp3.share(StepShare::Joint), None, "of no granules");
+    assert_eq!(mp3.share(StepShare::CoarsestIn(0)), None, "AAC's alone");
+    // AAC's bands 11 to 14 and 36: the pair of 11 and 12 is the low region's, and a step
+    // four quarter powers off is far
+    let mut steps = [None; 49];
+    for (band, step) in [(11, -40), (12, -41), (13, -41), (14, -45), (36, -40)] {
+      steps[band] = Some(step);
+    }
+    let mut ones = [false; 49];
+    ones[13] = true;
+    let mut aac = AacNeighbours::default();
+    aac.take_channel(&steps, &ones);
+    assert_eq!(aac.pairs, [1, 2, 0, 0]);
+    assert_eq!(aac.same, [0, 1, 0, 0]);
+    assert_eq!(aac.finer, [1, 1, 0, 0]);
+    assert_eq!(aac.one, [1, 0, 0, 0]);
+    assert_eq!(aac.far, [0, 1, 0, 0]);
+    assert_eq!((aac.bands, aac.ones), ([1, 3, 0, 1], [0, 1, 0, 0]));
+    assert_eq!((aac.ranked, aac.coarsest), ([1, 3, 0, 1], [1, 0, 0, 1]));
+    assert_eq!(aac.share(StepShare::Moved), Some(2.0 / 3.0));
+    assert_eq!(aac.share(StepShare::OneIn(0)), Some(1.0));
+    assert_eq!(aac.share(StepShare::FarIn(1)), Some(1.0));
+    assert_eq!(aac.share(StepShare::SameIn(2)), None, "of no pairs");
+    assert_eq!(aac.share(StepShare::SameIn(4)), None, "of no such region");
+    let mut twice = aac.clone();
+    twice.add(&aac);
+    assert_eq!(twice.pairs, [2, 4, 0, 0]);
   }
 }

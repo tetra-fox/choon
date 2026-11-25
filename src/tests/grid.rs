@@ -9,31 +9,57 @@ use crate::fixtures::{self, Audio, Bitrate, LongWindow, music, pink};
 use crate::grid::{self, Codec, Evidence};
 use crate::limitation::Limitation;
 use crate::reading::Verdict;
-use crate::thresholds::ReadingThresholds;
+use crate::thresholds::{ReadingThresholds, StepShare};
 
 #[test]
-fn a_lame_decode_at_the_offset_of_no_delay_is_not_read_as_fraunhofers() {
+fn steps_name_a_lame_decode_alike_whole_and_with_its_start_cut() {
   let dir = tempfile::tempdir().unwrap();
   let thresholds = ReadingThresholds::default();
+  // the generated noise moves fewer of its middle bands' steps far than music does, so
+  // LAME's rule is read with that bound lowered to where the noise at 192 kbit/s sits
+  let mut lowered = thresholds.clone();
+  for rule in &mut lowered.mp3_family_steps.rules {
+    for bound in &mut rule.bounds {
+      if rule.family == grid::Family::Lame && bound.share == StepShare::FarIn(1) {
+        bound.min = Some(0.15);
+      }
+    }
+  }
   for bitrate in [Bitrate::Kbps128, Bitrate::Kbps192] {
     // the fixture's stream carries no tag, so its decode keeps LAME's delay and the grid
     // sits where an encoder that states none leaves it
     let through = fixtures::through_mp3(&music(1, 44_100, pink), bitrate, dir.path());
-    let measured = measure(flac(dir.path(), "t.flac", &through, 16), &settings()).unwrap();
-    let scan = measured.grid.as_ref().expect("scanned");
-    assert_eq!(scan.mp3.offset, 1, "{scan:?}");
-    let steps = scan
-      .mp3_steps
-      .as_ref()
-      .expect("the steps are read at 44.1 kHz");
-    let neighbours = steps.neighbours.as_ref().expect("neighbours are compared");
-    let rule = &thresholds.fraunhofer_steps;
-    assert!(
-      neighbours.pairs.iter().sum::<usize>() >= rule.min_pairs,
-      "{neighbours:?}"
-    );
-    let found = read(&measured).grid.expect("the decode carries its grid");
-    assert_eq!(found.family, Some(grid::Family::Untagged), "{neighbours:?}");
+    // and a decode whose start was cut carries it at an offset no encoder leaves
+    let cut = Audio {
+      rate: through.rate,
+      channels: through
+        .channels
+        .iter()
+        .map(|c| c[1234..].to_vec())
+        .collect(),
+    };
+    for (name, audio, offset) in [("whole.flac", &through, 1), ("cut.flac", &cut, 495)] {
+      let measured = measure(flac(dir.path(), name, audio, 16), &settings()).unwrap();
+      let scan = measured.grid.as_ref().expect("scanned");
+      assert_eq!(scan.mp3.offset, offset, "{name}: {scan:?}");
+      let steps = scan
+        .mp3_steps
+        .as_ref()
+        .expect("the steps are read at 44.1 kHz");
+      let neighbours = steps.neighbours.as_ref().expect("neighbours are compared");
+      let family = |thresholds| grid::found(scan, thresholds).and_then(|found| found.family);
+      // the rules the analyzer ships with leave the noise to its offset, which names the
+      // group for the whole decode and nothing for the cut one
+      let by_offset = (offset == 1).then_some(grid::Family::Untagged);
+      assert_eq!(family(&thresholds), by_offset, "{name}: {neighbours:?}");
+      // the lowered rule names both decodes at 192 kbit/s, and neither at 128, whose high
+      // bands move too few steps far
+      let named = match bitrate {
+        Bitrate::Kbps192 => Some(grid::Family::Lame),
+        _ => by_offset,
+      };
+      assert_eq!(family(&lowered), named, "{name}: {neighbours:?}");
+    }
   }
 }
 

@@ -2,6 +2,8 @@
 
 use std::fmt;
 
+use crate::grid::Family;
+
 /// a cutoff at or above this fraction of the band's top counts as reaching it, when a window is
 /// measured and when it is read
 const FULL_BAND: f64 = 0.9;
@@ -374,8 +376,16 @@ pub struct ReadingThresholds {
   /// It is compared with [`OpusShort::uncut_frames`](crate::grid::OpusShort::uncut_frames)
   /// of each length, as `opus_short_frames` is with its count.
   pub opus_short_uncut_frames: usize,
-  /// Weights that read an MP3 grid at offset 1 as Fraunhofer's encoder.
-  pub fraunhofer_steps: FraunhoferSteps,
+  /// Rules that name an MP3 encoder family by its quantizer steps.
+  ///
+  /// They are held against [`Mp3Steps::neighbours`](crate::grid::Mp3Steps::neighbours), and
+  /// the family they name stands before the one the grid's offset fits.
+  pub mp3_family_steps: FamilySteps,
+  /// Rules that name an AAC encoder family by its quantizer steps.
+  ///
+  /// They are held against [`AacSteps::neighbours`](crate::grid::AacSteps::neighbours) under
+  /// the Kaiser-Bessel-derived window, where the grid's offset and window name no one encoder.
+  pub aac_family_steps: FamilySteps,
   /// Fewest different pairs of steps among Opus's hybrid frames.
   ///
   /// It is compared with [`OpusHybrid::steps`](crate::grid::OpusHybrid::steps) and with
@@ -389,74 +399,228 @@ pub struct ReadingThresholds {
   pub opus_hybrid_share: f64,
 }
 
-/// Weights that read the steps of an MP3 decode as Fraunhofer's encoder.
+/// Share of the bands or pairs of bands that a file's quantizer steps are counted in.
 ///
-/// Encoders that state no delay all leave their grid at offset 1. They differ in how they
-/// move a band's quantizer step from the band under it, which
-/// [`Mp3Neighbours`](crate::grid::Mp3Neighbours) counts. Each weight multiplies one share of
-/// those counts, and a decode whose sum is over `over` reads as Fraunhofer's.
+/// [`Mp3Neighbours`](crate::grid::Mp3Neighbours) and
+/// [`AacNeighbours`](crate::grid::AacNeighbours) hold the counts, and say which bands a
+/// region is: three regions for MP3, four for AAC, counted from 0. A share of no bands, of a
+/// region the codec does not have, or that a codec's counts do not hold meets no bound.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[non_exhaustive]
+pub enum StepShare {
+  /// Pairs whose two steps differ, of all pairs, from 0 to 1.
+  Moved,
+  /// Pairs of a region with one step, of the region's pairs, from 0 to 1.
+  SameIn(usize),
+  /// Pairs of a region whose higher band is finer, of the region's pairs, from 0 to 1.
+  FinerIn(usize),
+  /// Pairs of a region one quarter power apart, of its pairs that differ, from 0 to 1.
+  ///
+  /// AAC alone: an MP3 encoder moves a step by two quarter powers at the least.
+  OneIn(usize),
+  /// Pairs far apart, of the pairs that differ, from 0 to 1.
+  ///
+  /// Far is six quarter powers or more for MP3, four or more for AAC.
+  Far,
+  /// Pairs of a region far apart, of the region's pairs that differ, from 0 to 1.
+  FarIn(usize),
+  /// Pairs whose higher band is two quarter powers finer, of all pairs, from 0 to 1.
+  ///
+  /// MP3 alone.
+  TwoFiner,
+  /// Pairs whose higher band is two quarter powers coarser, of all pairs, from 0 to 1.
+  ///
+  /// MP3 alone.
+  TwoCoarser,
+  /// Bands at the coarsest step of their channel, of the bands ranked, from 0 to 1.
+  Coarsest,
+  /// The same share of a region's bands, from 0 to 1.
+  ///
+  /// AAC alone.
+  CoarsestIn(usize),
+  /// Bands whose largest quantized value is one, of a region's bands, from 0 to 1.
+  ///
+  /// For MP3 the regions are bands 0 to 5, 6 to 11, and 12 up.
+  OnesIn(usize),
+  /// Granules read as mid and side, of all granules, from 0 to 1.
+  ///
+  /// MP3 alone.
+  Joint,
+  /// Mean of log2 of one more than the largest quantized value, over MP3's bands 0 to 5.
+  LowLog,
+  /// The same mean over MP3's bands 12 up.
+  HighLog,
+}
+
+/// Range a share of a file's quantizer steps lies in for an encoder family.
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
+pub struct StepBound {
+  /// Share the range is of.
+  pub share: StepShare,
+  /// Lowest value of the share, where it has one.
+  #[cfg_attr(feature = "serde", serde(default))]
+  pub min: Option<f64>,
+  /// Highest value of the share, where it has one.
+  #[cfg_attr(feature = "serde", serde(default))]
+  pub max: Option<f64>,
+}
+
+impl StepBound {
+  fn at_least(share: StepShare, min: f64) -> Self {
+    Self {
+      share,
+      min: Some(min),
+      max: None,
+    }
+  }
+
+  fn at_most(share: StepShare, max: f64) -> Self {
+    Self {
+      share,
+      min: None,
+      max: Some(max),
+    }
+  }
+}
+
+/// Ranges that the quantizer steps of one encoder family's decodes lie in.
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(deny_unknown_fields))]
+pub struct StepRule {
+  /// Family the ranges name.
+  pub family: Family,
+  /// Ranges a decode's shares all lie in.
+  pub bounds: Vec<StepBound>,
+}
+
+/// Rules that name an encoder family by how it moves the quantizer's step between bands.
 ///
-/// The weights were fitted on decodes of the codec Windows ships against Shine, BladeEnc,
-/// GOGO, Apple, Helix and LAME. Another version of Fraunhofer's encoder may fall under the
-/// threshold.
+/// An encoder sets each scalefactor band's step, and encoders differ in how often, how far
+/// and which way they move it from one band to the next. The shares of a decode's bands and
+/// pairs of bands ([`StepShare`]) are held against each rule, and the decode is named where
+/// the rules of one family alone hold. The steps are read on the grid wherever it sits, so a
+/// rule names a decode whose start was cut too.
+///
+/// The rules the analyzer ships with were fitted on LAME, Helix, Fraunhofer's codec, Shine,
+/// BladeEnc and GOGO for MP3, and on ffmpeg's encoder and fdk-aac for AAC. Another
+/// encoder, or another version of one, can fall inside a rule or outside its own.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(
   feature = "serde",
-  serde(default, deny_unknown_fields, rename_all = "camelCase")
+  serde(deny_unknown_fields, rename_all = "camelCase")
 )]
-pub struct FraunhoferSteps {
-  /// Fewest pairs of neighbouring bands, over the three regions.
+pub struct FamilySteps {
+  /// Fewest pairs of neighbouring bands, over all regions.
   pub min_pairs: usize,
   /// Fewest pairs in each region.
+  ///
+  /// AAC's top region, which a low cutoff empties, is not asked for any.
   pub min_region_pairs: usize,
-  /// Weight of the pairs whose higher band is two quarter powers finer.
-  ///
-  /// The pairs count as a share of all.
-  pub two_finer: f64,
-  /// Weight of the pairs whose higher band is two quarter powers coarser.
-  ///
-  /// The pairs count as a share of all.
-  pub two_coarser: f64,
-  /// Weight of each region's pairs with one step.
-  ///
-  /// The pairs count as a share of the region's.
-  pub same: [f64; 3],
-  /// Weight of each region's pairs whose higher band is finer.
-  ///
-  /// The pairs count as a share of the region's.
-  pub finer: [f64; 3],
-  /// Weight of the mean logarithm of the largest value in bands 0 to 5.
-  pub low_log: f64,
-  /// Weight of the mean logarithm of the largest value in bands 12 up.
-  pub high_log: f64,
-  /// Weight of the lowest region's pairs, as a share of all.
-  pub low_share: f64,
-  /// Weight of the highest region's pairs, as a share of all.
-  pub high_share: f64,
-  /// Sum over which the steps read as Fraunhofer's.
-  ///
-  /// A higher value names fewer of its decodes and fewer of another encoder's.
-  pub over: f64,
+  /// Rules, each naming one family; several may name the same one.
+  pub rules: Vec<StepRule>,
 }
 
-impl Default for FraunhoferSteps {
-  fn default() -> Self {
-    // fitted in the tuning on 445 decodes of Fraunhofer's codec against 2,989 of other
-    // encoders. each master left out in turn, the threshold names 361 of the 445, none of
-    // 468 decodes of the other encoders at offset 1 and 3 of 2,521 of LAME and Helix
+impl FamilySteps {
+  /// the rules for MP3 the analyzer ships with
+  fn mp3() -> Self {
+    use StepShare::{
+      Coarsest, Far, FarIn, FinerIn, HighLog, Joint, Moved, OnesIn, SameIn, TwoCoarser,
+    };
+    let (least, most) = (StepBound::at_least, StepBound::at_most);
+    // the bounds were placed on decodes of 200 recordings, whole and with their starts cut:
+    // 100 through LAME 3.90.3 to 3.100, Helix, Shine, BladeEnc and GOGO at 96 to 320 kbit/s,
+    // 60 of them through Fraunhofer's codec as Windows ships it and 40 through Apple's, and
+    // the corpus's LAME decodes of 100 more. each stands 0.02 clear of every decode of
+    // another encoder that meets its rule's other bounds, Shine's by 0.001 and 0.1, and
+    // LAME's on the far pairs of its middle region and on its granules as mid and side by
+    // 0.05: GOGO, made from LAME's source, and LAME 3.90.3 and 3.93.1 at a constant bitrate
+    // are the neighbours they are drawn against.
+    //
+    // tested on 26 recordings no bound was placed on, through the same encoders: of the
+    // decodes with their starts cut the rules name 228 of 910 of LAME, 137 of 156 of Helix,
+    // 145 of 156 of Fraunhofer and 70 of 104 of Shine, none of 260 of BladeEnc and GOGO, and
+    // no decode as another encoder's
     Self {
-      min_pairs: 200,
-      min_region_pairs: 30,
-      two_finer: 18.913,
-      two_coarser: -46.687,
-      same: [-10.995, 14.846, 24.374],
-      finer: [-2.863, 37.678, 15.258],
-      low_log: -2.315,
-      high_log: 1.054,
-      low_share: -1.271,
-      high_share: -6.886,
-      over: 26.001,
+      min_pairs: 2000,
+      min_region_pairs: 200,
+      rules: vec![
+        StepRule {
+          family: Family::Lame,
+          bounds: vec![
+            least(FarIn(1), 0.234),
+            least(FarIn(2), 0.031),
+            least(Joint, 0.05),
+            least(Moved, 0.289),
+            most(OnesIn(1), 0.32),
+          ],
+        },
+        StepRule {
+          family: Family::Helix,
+          bounds: vec![
+            least(TwoCoarser, 0.157),
+            most(Far, 0.119),
+            most(SameIn(2), 0.675),
+          ],
+        },
+        // the bounds on the low region's finer pairs and on the middle one's same pairs keep
+        // out Apple's encoder, whose decodes move few steps
+        StepRule {
+          family: Family::Fraunhofer,
+          bounds: vec![
+            most(Coarsest, 0.247),
+            least(SameIn(1), 0.462),
+            most(SameIn(1), 0.8),
+            least(SameIn(2), 0.413),
+            most(TwoCoarser, 0.136),
+            least(FinerIn(0), 0.17),
+          ],
+        },
+        // every encoder leaves the steps alone at the highest bitrates, where its values are
+        // large, and Shine alone at the lower ones
+        StepRule {
+          family: Family::Shine,
+          bounds: vec![most(Moved, 0.0014), most(HighLog, 2.39)],
+        },
+      ],
+    }
+  }
+
+  /// the rules for AAC the analyzer ships with
+  fn aac() -> Self {
+    use StepShare::{Coarsest, FinerIn, Moved, OneIn, SameIn};
+    let (least, most) = (StepBound::at_least, StepBound::at_most);
+    // placed on the decodes of 100 of those recordings through fdk-aac and Nero, 60 through
+    // ffmpeg's encoder with the corpus's ffmpeg decodes of 100 more, at 96 to 256 kbit/s,
+    // each bound 0.02 clear as MP3's are.
+    //
+    // tested on the same 26 recordings: of the decodes with their starts cut the rules name
+    // 112 of 130 of ffmpeg and 141 of 208 of fdk-aac, and no decode as another encoder's.
+    // Nero's steps lie beside fdk-aac's at 256 kbit/s: bounds placed for Nero name 6 of the
+    // test's fdk-aac decodes as Nero's, so Nero has no rule and is named by its offset alone
+    Self {
+      min_pairs: 2000,
+      min_region_pairs: 200,
+      rules: vec![
+        StepRule {
+          family: Family::Ffmpeg,
+          bounds: vec![most(SameIn(0), 0.383), most(SameIn(3), 0.297)],
+        },
+        StepRule {
+          family: Family::FdkAac,
+          bounds: vec![
+            most(Moved, 0.479),
+            least(OneIn(0), 0.385),
+            most(FinerIn(0), 0.292),
+            least(Coarsest, 0.055),
+          ],
+        },
+      ],
     }
   }
 }
@@ -625,7 +789,8 @@ impl Default for ReadingThresholds {
       opus_short_uncut_frames: 3,
       // of 3,837 lossless files of the corpus none has such a frame, of 40 pairs searched
       opus_unfiltered_frames: 4,
-      fraunhofer_steps: FraunhoferSteps::default(),
+      mp3_family_steps: FamilySteps::mp3(),
+      aac_family_steps: FamilySteps::aac(),
       // the pilot files that were never Opus reach nine pairs of steps at this share, and a
       // share of 0.04 with this many pairs
       opus_hybrid_steps: 30,
@@ -672,6 +837,29 @@ mod tests {
         ..ReadingThresholds::default()
       }
     );
+  }
+
+  #[test]
+  fn the_family_rules_are_read_back_from_the_json_they_are_written_as() {
+    let defaults = ReadingThresholds::default();
+    let json = serde_json::to_string(&defaults).unwrap();
+    assert!(
+      json.contains(r#"{"family":"shine","bounds":[{"share":"moved","min":null,"max":0.0014}"#),
+      "{json}"
+    );
+    assert!(json.contains(r#"{"share":{"sameIn":3},"min":null,"max":0.297}"#));
+    let read: ReadingThresholds = serde_json::from_str(&json).unwrap();
+    assert_eq!(read, defaults);
+    // a bound names its share and either end
+    let rules = r#"{"mp3FamilySteps": {"minPairs": 1, "minRegionPairs": 1, "rules": [
+      {"family": "helix", "bounds": [{"share": {"farIn": 2}, "max": 0.1}]}]}}"#;
+    let read: ReadingThresholds = serde_json::from_str(rules).unwrap();
+    let bound = &read.mp3_family_steps.rules[0].bounds[0];
+    assert_eq!(
+      (bound.share, bound.min, bound.max),
+      (StepShare::FarIn(2), None, Some(0.1))
+    );
+    refused::<ReadingThresholds>(r#"{"mp3FamilySteps": {"minPairs": 1}}"#);
   }
 
   fn refused<T: serde::de::DeserializeOwned>(json: &str) {

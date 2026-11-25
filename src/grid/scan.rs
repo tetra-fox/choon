@@ -3,14 +3,15 @@
 
 use rayon::prelude::*;
 
-use super::aac::{Aac, AacStepper, Window, aac_bands};
+use super::aac::{self, Aac, AacStepper, Window, aac_bands};
 use super::lattice;
 use super::mp3::{GranuleSteps, Mp3, mp3_bands};
 use super::resample::Resampler;
 use super::segments::{Segment, Segments};
 use super::{
-  AacSteps, CodecScan, MP3_HOP, Mp3Neighbours, Mp3Steps, OPUS_UNCUT_OFFSET, OpusHybrid, OpusScan,
-  OpusShifted, OpusShort, OpusUnfiltered, OtherRate, SEGMENTS, Scan, in_stretch,
+  AacNeighbours, AacSteps, CodecScan, MP3_HOP, Mp3Neighbours, Mp3Steps, OPUS_UNCUT_OFFSET,
+  OpusHybrid, OpusScan, OpusShifted, OpusShort, OpusUnfiltered, OtherRate, SEGMENTS, Scan,
+  in_stretch,
 };
 
 /// MAD times this estimates the standard deviation of normally distributed values
@@ -248,15 +249,20 @@ pub(crate) fn scan(
         stepped: 0,
         whole: 0,
         segment_whole: [0; SEGMENTS],
+        neighbours: None,
       };
+      let mut neighbours = AacNeighbours::default();
       for (segment, in_segment) in stepped.iter().zip(&mut steps.segment_whole) {
-        for [tested, stepped, whole] in segment.aac.iter().map(|windows| windows[window]) {
+        for read in segment.aac.iter().map(|windows| &windows[window]) {
+          let [tested, stepped, whole] = read.counts;
           steps.tested += tested;
           steps.stepped += stepped;
           steps.whole += whole;
           *in_segment += whole;
+          neighbours.add(&read.neighbours);
         }
       }
+      steps.neighbours = Some(neighbours);
       steps
     })
   };
@@ -277,12 +283,12 @@ pub(crate) fn scan(
   })
 }
 
-/// the quantizers' steps in one segment: MP3's by granule, and AAC's bands tested, on one step
-/// and on a whole one under the Kaiser-Bessel-derived window and under the sine one. each is
-/// `None` at a rate its steps are not read at
+/// the quantizers' steps in one segment: MP3's by granule, and AAC's under the
+/// Kaiser-Bessel-derived window and under the sine one. each is `None` at a rate its steps
+/// are not read at
 struct SegmentSteps {
   mp3: Option<Vec<GranuleSteps>>,
-  aac: Option<[[usize; 3]; 2]>,
+  aac: Option<[aac::SegmentSteps; 2]>,
 }
 
 /// the rate a segment is scanned at: the file's own, or the other of 44.1 and 48 kHz
