@@ -419,7 +419,7 @@ fn aac_stepped<'a>(
 ///
 /// - MP3, MP2, AAC, Vorbis, WMA or AC-3 over its z threshold with as many segments agreeing as
 ///   its own threshold asks, the one furthest over its z threshold when several are. AAC is
-///   read under each window
+///   read under each window, and stands before Vorbis or AC-3 where its quantizer's steps show
 /// - MP3 by its quantizer's steps in enough segments, then AAC by its own
 /// - Opus with enough frames on its lattice in the segments or in the windows: at the
 ///   decoder's level, at another, as frames under 20 ms, with the pitch post-filter taken
@@ -693,6 +693,12 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
     };
     Some((Codec::Opus, evidence, false))
   };
+  // the short blocks of an AAC decode count under AC-3's shorter transform, and its long ones
+  // under Vorbis's window. neither codec's decode shows AAC's steps
+  let own = match own {
+    Some((Codec::Vorbis | Codec::Ac3, ..)) => stepped_aac().or(own),
+    own => own,
+  };
   own
     .or_else(stepped)
     .or_else(stepped_aac)
@@ -774,6 +780,21 @@ mod tests {
     };
     assert_eq!(found(&one, &thresholds).map(|f| f.codec), Some(Codec::Aac));
     assert_eq!(found(&scan(4.0, 5.0, under, under), &thresholds), None);
+    // an AC-3 or Vorbis count over an AAC decode's is AAC's where its steps show: its short
+    // blocks count under AC-3's transform
+    let shorter = |codec: Codec, steps: usize| {
+      let other = Some(count(128, 30.0));
+      let scan = Scan {
+        ac3: other.clone().filter(|_| codec == Codec::Ac3),
+        vorbis: other.filter(|_| codec == Codec::Vorbis),
+        ..scan(4.0, 5.0, under, steps)
+      };
+      found(&scan, &thresholds).map(|found| found.codec)
+    };
+    for codec in [Codec::Ac3, Codec::Vorbis] {
+      assert_eq!(shorter(codec, under), Some(codec));
+      assert_eq!(shorter(codec, 2_500), Some(Codec::Aac));
+    }
   }
 
   #[test]

@@ -91,6 +91,8 @@
 //! - Vorbis's grid shows through the AAC scan too, so a Vorbis decode whose grid does not stand
 //!   out under Vorbis's own window can read as AAC by the count. Its values do not sit on AAC's
 //!   steps.
+//! - The short blocks of an AAC decode count under AC-3's transform, so a decode coded mostly
+//!   in short blocks can read as AC-3 where AAC's steps do not show.
 //! - Opus frames the pitch post-filter ran over are found on the grid of an uncut decode alone
 //!   ([`OpusUnfiltered`]). Its SILK mode is not found, nor are frames of 2.5, 5 and 10 ms coded
 //!   as several blocks or at another level than the decoder's.
