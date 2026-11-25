@@ -21,15 +21,13 @@ nix develop .#web -c just web
 | `_astro/index-client.*.js` | the part of Svelte that script runs on                         |
 | `_astro/worker-*.js`       | the Web Worker that runs the analyzer, with the wasm as base64 |
 | `_astro/client.*.js`       | written by Astro's Svelte integration, and loaded by nothing   |
-| `choon_web.js`             | the module wasm-bindgen writes (`--target web`)                |
-| `choon_web_bg.wasm`        | the wasm as a file                                             |
 
 - The wasm uses SIMD (`+simd128`) and goes through `wasm-opt -O2`
 - The `wasm-bindgen` crate is pinned in `Cargo.toml`, and the flake takes the version of
   wasm-bindgen's program from that line
 - A file under `_astro` has a hash of its contents in its name
-- `choon_web.js` and `choon_web_bg.wasm` are for other callers. The page loads neither: its
-  worker has both in its own file
+- `web/page/wasm` holds what wasm-bindgen writes (`--target web`): `choon_web.js`, its types and
+  `choon_web_bg.wasm`, for the worker's build and for other callers. None of it is in `web/dist`
 - `index.html` names the commit `web/dist` was built from and links the source at that commit,
   under the `repository` of the main `Cargo.toml`. A build from a checkout with changes says so
 - The links in `index.html` are relative, so `web/dist` is served from any path of a host
@@ -47,12 +45,12 @@ they are missing or older than it.
 | `src/page.ts`           | starts that component in the browser                              |
 | `src/worker.ts`         | the Web Worker                                                    |
 | `src/page.css`          | the stylesheet                                                    |
-| `public/`               | copied to `web/dist` as it is: the icon, and wasm-bindgen's files |
-| `wasm/`                 | the wasm as base64 in a module, which the worker imports          |
+| `public/`               | copied to `web/dist` as it is: the icon                           |
+| `wasm/`                 | wasm-bindgen's files, and the wasm as base64 in a module          |
 | `astro.config.ts`       | what the build is told                                            |
 
 - Astro renders the component into `index.html` when it builds, and `page.ts` starts it there
-- `just web` writes wasm-bindgen's files and `wasm/`, and git ignores them
+- `just web` writes `wasm/`, and git ignores it
 - `just web-check` checks the types of the Astro, Svelte and TypeScript files (`astro check`
   and `svelte-check`), under TypeScript's strictest settings as Astro names them
 
@@ -115,10 +113,13 @@ connection of any kind (`connect-src 'none'`).
 ```js
 import init, { check } from "./choon_web.js";
 
-await init();
+await init({ module_or_path: new URL("choon_web_bg.wasm", import.meta.url) });
 const bytes = new Uint8Array(await file.arrayBuffer());
 const { measured, reading } = JSON.parse(check(bytes, ""));
 ```
+
+`choon_web.js` and `choon_web_bg.wasm` are in `web/page/wasm` after `just web`. `init` is told
+where the wasm is, as the module is written without a default path.
 
 `check(bytes: Uint8Array, thresholds: string): string`
 
@@ -194,7 +195,7 @@ in Chromium and in Firefox: the `web` shell has both on Linux, and `CHROMIUM` an
 name others. Without a Firefox the test of it passes without opening the page.
 
 `tests/node.rs` writes generated audio to a temporary directory, has node read each file with
-the wasm in `web/dist` (`tests/run.mjs`), and compares the JSON with what the same function
+the wasm in `web/page/wasm` (`tests/run.mjs`), and compares the JSON with what the same function
 returns natively. It also compares `words` with the lines the program prints for the same
 files.
 
