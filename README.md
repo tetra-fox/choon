@@ -19,8 +19,8 @@ Check that lossless audio is actually lossless. A command-line tool and a Rust l
   decode, in CELT and hybrid modes, in frames of 2.5 to 60 ms
 - Tuned on LAME at 96 to 320 kbps and V0 to V9, ffmpeg's AAC at 96 to 256 kbps and libopus at
   16 to 256 kbps
-- Names the [encoder family](docs/encoders.md#encoder-family) a grid's offset fits, such as
-  LAME, Apple or libopus
+- Names the [encoder family](docs/encoders.md#encoder-family) a grid fits, such as LAME, Helix,
+  fdk-aac or libopus, by its quantizer's steps or its offset
 - Guesses the encoder and setting behind a transcode, such as `MP3 (LAME) ~128 kbps`
 - Reads the encoder's cutoff in the spectrum, which alone raises a doubt
 - Flags upsampled audio, bit-padded samples and two channels holding the same audio
@@ -172,6 +172,8 @@ done
 - `--from-measures` prints each file as the check printed it, lines, JSON or a terminal's
   tables, with the same exit code. No audio file is opened
 - A reading's `measureSeconds` is 0 there, and `readSeconds` is the time the reading took
+- Measures saved by version 0.2 hold none of the counts the encoder's steps are named by, so a
+  grid read from them is named by its offset alone
 - A profile reads a file only from a measuring made with its own `measure` thresholds. Without
   one the file is not read, and stderr or a terminal's `Not read` list names the profile and
   the file
@@ -286,8 +288,8 @@ fn main() -> Result<(), choon::Error> {
 ## Methodology
 
 The [`grid` module's documentation](https://docs.rs/choon/latest/choon/grid/) describes each
-scan in full. [docs/encoders.md](docs/encoders.md) has the offsets that name an encoder family
-and the counts for each encoder tested.
+scan in full. [docs/encoders.md](docs/encoders.md) has the steps and offsets that name an
+encoder family and the counts for each encoder tested.
 
 ### Spectrum
 

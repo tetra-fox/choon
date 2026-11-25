@@ -13,6 +13,11 @@ files read.
   after any other conversion it can read as possibly lossy
 - A Vorbis decode whose grid does not stand out under Vorbis's own window can read as AAC,
   without AAC's quantizer steps, and a WMA decode's can too
+- An AAC decode coded mostly in short blocks, as FAAC's can be, can read as AC-3 where AAC's
+  quantizer steps do not show
+- The encoder named beside a grid is the family its steps or offset fit, as
+  [encoders.md](encoders.md#encoder-family) counts: an encoder the bounds were not fitted on
+  can read as one of those that were, and a cut start can land on another encoder's offset
 - The grid thresholds were tuned on LAME's MP3 and ffmpeg's AAC;
   [encoders.md](encoders.md#tested-encoders) lists what the scan finds of others
 - A lossy sample that was processed and mixed into a master, as a pitched or filtered clip
