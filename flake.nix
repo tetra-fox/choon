@@ -117,10 +117,13 @@
           };
 
           # what `just web` and `just web-test` run: binaryen for wasm-opt, node to run the
-          # wasm, CMake for the encoders the test's fixtures build, and Chromium and Firefox to
-          # open the page in. nixpkgs builds the two for Linux alone: elsewhere CHROMIUM and
-          # FIREFOX name them
+          # wasm and, with its npm, to build the page, CMake for the encoders the test's
+          # fixtures build, and Chromium and Firefox to open the page in. nixpkgs builds the two
+          # for Linux alone: elsewhere CHROMIUM and FIREFOX name them
           web = pkgs.mkShell {
+            # Astro reports its use to its makers unless told not to
+            env.ASTRO_TELEMETRY_DISABLED = "1";
+
             packages =
               (with pkgs; [
                 (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
