@@ -97,12 +97,12 @@ web: (lock "web")
     #!/usr/bin/env bash
     set -euo pipefail
     RUSTFLAGS="-C target-feature=+simd128" cargo build --manifest-path web/Cargo.toml --lib --release --target wasm32-unknown-unknown
-    # Astro copies web/page/public into web/dist as it is
-    wasm-bindgen --target web --out-dir web/page/public web/target/wasm32-unknown-unknown/release/choon_web.wasm
-    wasm-opt -O2 web/page/public/choon_web_bg.wasm -o web/page/public/choon_web_bg.wasm
+    # without the default path the JavaScript names no wasm file, which the page's build would
+    # otherwise copy into web/dist for a fetch the page never makes
+    wasm-bindgen --target web --omit-default-module-path --out-dir web/page/wasm web/target/wasm32-unknown-unknown/release/choon_web.wasm
+    wasm-opt -O2 web/page/wasm/choon_web_bg.wasm -o web/page/wasm/choon_web_bg.wasm
     # the wasm as a module the worker imports
-    mkdir -p web/page/wasm
-    { printf 'export default "'; base64 < web/page/public/choon_web_bg.wasm | tr -d '\n'; printf '";\n'; } > web/page/wasm/choon_web_wasm.js
+    { printf 'export default "'; base64 < web/page/wasm/choon_web_bg.wasm | tr -d '\n'; printf '";\n'; } > web/page/wasm/choon_web_wasm.js
     # npm's packages as the lockfile states them, installed again when it is newer than they are
     [ web/page/node_modules/.package-lock.json -nt web/page/package-lock.json ] || npm ci --prefix web/page
     # the page names the commit it is built from, and says when the checkout differs from it

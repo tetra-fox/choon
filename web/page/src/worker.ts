@@ -2,7 +2,7 @@
 // then for each file posted `{ result }`, the JSON `check` returns, or `{ error }`, why the
 // file was not read. a trap is reported as an uncaught error, which the page gets as the
 // worker's `error` event
-import { check, initSync, version } from "../public/choon_web.js";
+import { check, initSync, version } from "../wasm/choon_web.js";
 import wasm from "../wasm/choon_web_wasm.js";
 
 export type Posted = { version: number } | { result: string } | { error: string };

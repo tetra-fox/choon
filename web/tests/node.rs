@@ -1,4 +1,4 @@
-//! the wasm of `web/dist`, run by node over generated audio and compared with the same
+//! the wasm of `web/page/wasm`, run by node over generated audio and compared with the same
 //! function called natively. `just web-test` builds the wasm first
 
 use std::path::Path;
@@ -158,8 +158,8 @@ fn files(dir: &Path) -> Vec<(&'static str, Vec<u8>)> {
 fn wasm(path: &Path) -> Result<String, String> {
   let web = Path::new(env!("CARGO_MANIFEST_DIR"));
   assert!(
-    web.join("dist/choon_web_bg.wasm").exists(),
-    "`just web` has built web/dist"
+    web.join("page/wasm/choon_web_bg.wasm").exists(),
+    "`just web` has built web/page/wasm"
   );
   let node = Command::new("node")
     .arg(web.join("tests/run.mjs"))

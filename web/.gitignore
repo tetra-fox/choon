@@ -5,5 +5,4 @@ Cargo.lock
 # written by `just web`: npm's packages, Astro's types, and the analyzer for the page
 page/node_modules
 page/.astro
-page/public/choon_web*
 page/wasm
