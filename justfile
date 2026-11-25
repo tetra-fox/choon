@@ -87,29 +87,32 @@ fuzz TARGET SECONDS="": fuzz-seed
     cargo fuzz run "${build[@]}" {{ TARGET }} -- -timeout=60 -max_len=65536 "${dict[@]}" \
       {{ if SECONDS == "" { "" } else { "-max_total_time=" + SECONDS } }}
 
-# the web recipes need wasm-bindgen's program, wasm-opt, node, Chromium and Firefox: run them inside
-# `nix develop .#web`
+# the web recipes need wasm-bindgen's program, wasm-opt, node with npm, Chromium and Firefox:
+# run them inside `nix develop .#web`
 
 # the analyzer as WebAssembly with SIMD, the JavaScript wasm-bindgen writes for it and the page
-# of web/page, in web/dist: web/README.md. wasm-opt makes the wasm about a quarter smaller and
-# no faster
+# of web/page, which Astro builds into web/dist: web/README.md. wasm-opt makes the wasm about a
+# quarter smaller and no faster
 web: (lock "web")
     #!/usr/bin/env bash
     set -euo pipefail
     RUSTFLAGS="-C target-feature=+simd128" cargo build --manifest-path web/Cargo.toml --lib --release --target wasm32-unknown-unknown
-    wasm-bindgen --target web --out-dir web/dist web/target/wasm32-unknown-unknown/release/choon_web.wasm
-    wasm-opt -O2 web/dist/choon_web_bg.wasm -o web/dist/choon_web_bg.wasm
+    # Astro copies web/page/public into web/dist as it is
+    wasm-bindgen --target web --out-dir web/page/public web/target/wasm32-unknown-unknown/release/choon_web.wasm
+    wasm-opt -O2 web/page/public/choon_web_bg.wasm -o web/page/public/choon_web_bg.wasm
     # the wasm as a module the worker imports
-    { printf 'export default "'; base64 < web/dist/choon_web_bg.wasm | tr -d '\n'; printf '";\n'; } > web/dist/choon_web_wasm.js
-    cp web/page/page.css web/page/page.js web/page/worker.js web/page/icon.svg web/dist/
+    mkdir -p web/page/wasm
+    { printf 'export default "'; base64 < web/page/public/choon_web_bg.wasm | tr -d '\n'; printf '";\n'; } > web/page/wasm/choon_web_wasm.js
+    # npm's packages as the lockfile states them, installed again when it is newer than they are
+    [ web/page/node_modules/.package-lock.json -nt web/page/package-lock.json ] || npm ci --prefix web/page
     # the page names the commit it is built from, and says when the checkout differs from it
-    changed=""
-    git diff --quiet HEAD || changed=", with changes not committed"
-    sed -e "s|__REPOSITORY__|$(sed -n 's/^repository = "\(.*\)"/\1/p' Cargo.toml)|g" \
-      -e "s|__COMMIT__|$(git rev-parse HEAD)|g" \
-      -e "s|__COMMIT_SHORT__|$(git rev-parse --short HEAD)|g" \
-      -e "s|__CHANGED__|$changed|g" \
-      web/page/index.html > web/dist/index.html
+    changed=false
+    git diff --quiet HEAD || changed=true
+    CHOON_REPOSITORY="$(sed -n 's/^repository = "\(.*\)"/\1/p' Cargo.toml)" \
+      CHOON_COMMIT="$(git rev-parse HEAD)" \
+      CHOON_COMMIT_SHORT="$(git rev-parse --short HEAD)" \
+      CHOON_CHANGED="$changed" \
+      npm run --prefix web/page build
 
 # node runs web/dist over generated audio, and each reading is compared with the native one
 # and worded as the program words it; then a headless Chromium and a headless Firefox read

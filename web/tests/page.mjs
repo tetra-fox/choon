@@ -20,6 +20,9 @@ const TYPES = {
   ".wasm": "application/wasm",
 };
 
+// the worker's module, which Astro names with a hash of what is in it
+const WORKER = /\/_astro\/worker-[\w-]+\.js$/;
+
 // the page's own policy, which the second server sends as a header too
 const policy = readFileSync(new URL("index.html", dist), "utf8").match(
   /Content-Security-Policy"\s+content="([^"]+)"/,
@@ -47,8 +50,8 @@ function serve({ header = false, probe = false, loose = false } = {}) {
       response.writeHead(404).end();
       return;
     }
-    if (probe && name === "worker.js") {
-      body += '\nfetch(new URL("probe", import.meta.url)).catch(() => {});\n';
+    if (probe && WORKER.test(request.url)) {
+      body += '\nfetch(new URL("/probe", import.meta.url)).catch(() => {});\n';
     }
     if (loose && name === "index.html") {
       body = String(body).replace("connect-src 'none'", "connect-src 'self'");
@@ -395,7 +398,7 @@ async function run() {
       !origins.some((origin) => url.replace(/^blob:/, "").startsWith(`${origin}/`)),
   );
   check(elsewhere.length === 0, `requests left the origin: ${elsewhere.join(", ")}`);
-  check(requests.some((url) => url.endsWith("/worker.js")), "the worker's requests are counted");
+  check(requests.some((url) => WORKER.test(url)), "the worker's requests are counted");
   check(faults.length === 0, `errors or policy violations: ${faults.join("; ")}`);
 }
 

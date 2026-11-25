@@ -1,0 +1,66 @@
+---
+import { CHOON_CHANGED, CHOON_COMMIT, CHOON_COMMIT_SHORT, CHOON_REPOSITORY } from "astro:env/server";
+
+import Reader from "../Reader.svelte";
+import "../page.css";
+
+// no connection of any kind, and nothing from another origin: web/README.md has the reasoning
+const policy = [
+  "default-src 'none'",
+  "script-src 'self' 'wasm-unsafe-eval'",
+  "worker-src 'self' blob:",
+  "style-src 'self'",
+  "img-src 'self'",
+  "connect-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+].join("; ");
+const readme = `${CHOON_REPOSITORY}/blob/${CHOON_COMMIT}/README.md`;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="Content-Security-Policy" content={policy} />
+    <meta name="color-scheme" content="light dark" />
+    <meta
+      name="description"
+      content="Checks in the browser that lossless audio is actually lossless. No file is uploaded."
+    />
+    <title>choon</title>
+    <link rel="icon" href="icon.svg" type="image/svg+xml" />
+    <script src="../page.ts"></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>choon</h1>
+        <p class="lead">Checks that lossless audio is actually lossless.</p>
+        <p>
+          A FLAC or WAV file made from an MP3, AAC or Opus file keeps traces of the lossy encoder:
+          its frame grid in the samples, its cutoff in the spectrum. choon reads a file for them.
+        </p>
+        <p>Files stay on this device. The analysis runs in this tab and nothing is uploaded.</p>
+      </header>
+
+      <div id="reader"><Reader /></div>
+    </main>
+
+    <footer>
+      <p>
+        A reading says what the analyzer saw in the samples. The README says
+        <a href={`${readme}#verdicts`}>what each verdict means</a>
+        and
+        <a href={`${readme}#limitations`}>what a reading cannot tell</a>.
+      </p>
+      <p>
+        Built from <a href={CHOON_REPOSITORY}>choon</a> at commit
+        <a href={`${CHOON_REPOSITORY}/tree/${CHOON_COMMIT}`}><code>{CHOON_COMMIT_SHORT}</code></a>{
+          CHOON_CHANGED && ", with changes not committed"
+        }. choon is also a command-line program and a Rust library. Licensed under AGPL-3.0-only.
+      </p>
+    </footer>
+  </body>
+</html>
