@@ -114,10 +114,14 @@ web: (lock "web")
       CHOON_CHANGED="$changed" \
       npm run --prefix web/page build
 
+# the types of the page's Astro, Svelte and TypeScript files
+web-check: web
+    npm run --prefix web/page check
+
 # node runs web/dist over generated audio, and each reading is compared with the native one
 # and worded as the program words it; then a headless Chromium and a headless Firefox read
 # files on the page
-web-test: web
+web-test: web-check
     cargo build --release
     cargo test --manifest-path web/Cargo.toml --release -- --nocapture
 
