@@ -148,7 +148,7 @@ music/lame-320.flac: likely transcode (MP3 grid, cutoff 20.2 kHz, MP3 (LAME) ~32
 - A second interrupt ends the program at once
 
 ```sh
-for f in *.flac; do choon check "$f" > /dev/null || mv "$f" flagged/; done
+for f in *.flac; do choon check "$f" > /dev/null; [ $? -eq 1 ] && mv "$f" flagged/; done
 ```
 
 #### Measures file
