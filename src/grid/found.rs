@@ -248,11 +248,19 @@ pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found
     .then(|| aac_stepped(scan, thresholds))
     .flatten();
   // the family the quantizer's steps name, and the one the grid's offset fits
-  let (by_steps, by_offset) = match (&evidence, codec) {
+  let (by_steps, by_offset) = match (&evidence, codec, taken) {
     // a section's start is not the stream's, so its offset names no encoder, and the steps
     // are counted over stretches the section may not reach
-    (Evidence::Part { .. }, _) => (None, None),
-    (_, Codec::Aac) => {
+    (Evidence::Part { .. }, ..) => (None, None),
+    (Evidence::Short { short }, _, Taken::Lattice(at)) => {
+      let uncut = lattice::SHORT
+        .iter()
+        .filter(|length| length.length == short.length)
+        .any(|length| length.uncut_offsets().contains(&at));
+      (None, uncut.then_some(Family::Libopus))
+    }
+    (_, _, Taken::Lattice(at)) => (None, (at == OPUS_UNCUT_OFFSET).then_some(Family::Libopus)),
+    (_, Codec::Aac, _) => {
       // the steps show under the encoder's window alone, so they name it where they show. a
       // Vorbis decode's count sits at Nero's offset too often for the count alone to name Nero
       let by_offset = match (&stepped, &evidence) {
@@ -275,10 +283,10 @@ pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found
       (by_steps, by_offset)
     }
     // the steps were read on the grid of the file's own rate
-    (Evidence::CountAt { .. }, Codec::Mp3) => (None, Family::of_mp3(evidence.offset())),
+    (Evidence::CountAt { .. }, Codec::Mp3, _) => (None, Family::of_mp3(evidence.offset())),
     // a cut start lands on an encoder's offset by chance, and the steps are the encoder's
     // own, so they stand before the offset
-    (_, Codec::Mp3) => {
+    (_, Codec::Mp3, _) => {
       let neighbours = scan
         .mp3_steps
         .as_ref()
@@ -289,19 +297,9 @@ pub(crate) fn found(scan: &Scan, thresholds: &ReadingThresholds) -> Option<Found
       let by_offset = Family::of_mp3(evidence.offset()).filter(|_| taken != Taken::Subbands);
       (by_steps, by_offset)
     }
-    (Evidence::Short { short }, Codec::Opus) => {
-      let uncut = lattice::SHORT
-        .iter()
-        .filter(|length| length.length == short.length)
-        .any(|length| length.uncut_offsets().contains(&short.most().0));
-      (None, uncut.then_some(Family::Libopus))
-    }
-    (_, Codec::Opus) => {
-      let uncut = evidence.offset() == OPUS_UNCUT_OFFSET;
-      (None, uncut.then_some(Family::Libopus))
-    }
-    // no encoder of Vorbis, WMA, AC-3 or layer II is told from another
-    (_, Codec::Vorbis | Codec::Wma | Codec::Mp2 | Codec::Ac3) => (None, None),
+    // no encoder of Vorbis, WMA, AC-3 or layer II is told from another, and Opus is shown on
+    // its lattice alone
+    (_, Codec::Vorbis | Codec::Wma | Codec::Mp2 | Codec::Ac3 | Codec::Opus, _) => (None, None),
   };
   let (family, named_by) = match (by_steps, by_offset) {
     (Some(steps), Some(offset)) if steps == offset => (Some(steps), Some(NamedBy::Both)),
@@ -361,6 +359,20 @@ enum Taken {
   Sine,
   /// the 32 phases of the subband filterbank
   Subbands,
+  /// Opus's lattice, at the offset of the count of frames that met its threshold
+  Lattice(usize),
+}
+
+impl Taken {
+  /// the offset of the Opus count that met its threshold, `segments` or `windows` where one
+  /// alone did and `most` where both did. `None` where neither did
+  fn lattice(segments: Option<usize>, windows: Option<usize>, most: usize) -> Option<Self> {
+    let at = match (segments, windows) {
+      (Some(_), Some(_)) => Some(most),
+      (segments, windows) => segments.or(windows),
+    };
+    at.map(Self::Lattice)
+  }
 }
 
 /// a count that may show a grid: its codec, what it was taken with, the z it has to pass, how
@@ -695,56 +707,83 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
     };
     Some((codec, Evidence::Count(subbands.clone()), Taken::Subbands))
   };
+  // each Opus count is taken in the segments and in the windows, and the grid's offset is that
+  // of the one that meets its threshold
   let opus = || {
     let opus = scan.opus.as_ref()?;
-    let evidence = if opus.frames >= thresholds.opus_grid_frames
-      || opus.uncut_frames >= thresholds.opus_uncut_frames
-    {
-      Evidence::Lattice(opus.clone())
-    } else if let Some(shifted) = opus.shifted.as_ref().filter(|shifted| {
-      shifted.frames >= thresholds.opus_shifted_frames
-        || shifted.uncut_frames >= thresholds.opus_shifted_uncut_frames
-    }) {
-      // the lattice at the decoder's own level names the decode more closely, so it comes first
-      Evidence::Shifted {
+    let lattice = || {
+      let taken = Taken::lattice(
+        (opus.frames >= thresholds.opus_grid_frames).then_some(opus.offset),
+        (opus.uncut_frames >= thresholds.opus_uncut_frames).then_some(OPUS_UNCUT_OFFSET),
+        opus.most().0,
+      )?;
+      Some((Evidence::Lattice(opus.clone()), taken))
+    };
+    // the lattice at the decoder's own level names the decode more closely, so it comes first
+    let shifted = || {
+      let shifted = opus.shifted.as_ref()?;
+      let taken = Taken::lattice(
+        (shifted.frames >= thresholds.opus_shifted_frames).then_some(shifted.offset),
+        (shifted.uncut_frames >= thresholds.opus_shifted_uncut_frames).then_some(OPUS_UNCUT_OFFSET),
+        shifted.most().0,
+      )?;
+      let evidence = Evidence::Shifted {
         shifted: shifted.clone(),
-      }
-    } else if let Some(short) = opus
-      .short
-      .iter()
-      .filter(|short| {
-        short.frames >= thresholds.opus_short_frames
-          || short.uncut_frames >= thresholds.opus_short_uncut_frames
-      })
-      .max_by_key(|short| short.most().1)
-    {
-      Evidence::Short {
+      };
+      Some((evidence, taken))
+    };
+    let short = || {
+      let (short, taken) = opus
+        .short
+        .iter()
+        .filter_map(|short| {
+          let taken = Taken::lattice(
+            (short.frames >= thresholds.opus_short_frames).then_some(short.offset),
+            (short.uncut_frames >= thresholds.opus_short_uncut_frames)
+              .then_some(short.uncut_offset),
+            short.most().0,
+          )?;
+          Some((short, taken))
+        })
+        .max_by_key(|(short, _)| short.most().1)?;
+      let evidence = Evidence::Short {
         short: short.clone(),
-      }
-    } else if let Some(unfiltered) = opus
-      .unfiltered
-      .as_ref()
-      .filter(|unfiltered| unfiltered.frames >= thresholds.opus_unfiltered_frames)
-    {
-      Evidence::Unfiltered {
+      };
+      Some((evidence, taken))
+    };
+    let unfiltered = || {
+      let unfiltered = opus
+        .unfiltered
+        .as_ref()
+        .filter(|unfiltered| unfiltered.frames >= thresholds.opus_unfiltered_frames)?;
+      let evidence = Evidence::Unfiltered {
         unfiltered: unfiltered.clone(),
-      }
-    } else {
+      };
+      Some((evidence, Taken::Lattice(OPUS_UNCUT_OFFSET)))
+    };
+    let hybrid = || {
       let hybrid = opus.hybrid.as_ref()?;
       let enough = |frames: usize, tested: usize, steps: usize| {
         steps >= thresholds.opus_hybrid_steps
           && frames as f64 >= thresholds.opus_hybrid_share * tested as f64
       };
-      if !enough(hybrid.frames, hybrid.tested, hybrid.steps)
-        && !enough(hybrid.uncut_frames, hybrid.uncut_tested, hybrid.uncut_steps)
-      {
-        return None;
-      }
-      Evidence::Hybrid {
+      let taken = Taken::lattice(
+        enough(hybrid.frames, hybrid.tested, hybrid.steps).then_some(hybrid.offset),
+        enough(hybrid.uncut_frames, hybrid.uncut_tested, hybrid.uncut_steps)
+          .then_some(OPUS_UNCUT_OFFSET),
+        hybrid.most().0,
+      )?;
+      let evidence = Evidence::Hybrid {
         hybrid: hybrid.clone(),
-      }
+      };
+      Some((evidence, taken))
     };
-    Some((Codec::Opus, evidence, Taken::Transform))
+    let (evidence, taken) = lattice()
+      .or_else(shifted)
+      .or_else(short)
+      .or_else(unfiltered)
+      .or_else(hybrid)?;
+    Some((Codec::Opus, evidence, taken))
   };
   // the short blocks of an AAC decode count under AC-3's shorter transform, and its long ones
   // under Vorbis's window. neither codec's decode shows AAC's steps
@@ -1067,7 +1106,7 @@ mod tests {
   }
 
   #[test]
-  fn a_subband_phase_names_no_family() {
+  fn a_family_is_named_by_the_offset_of_what_shows_the_grid() {
     let thresholds = ReadingThresholds::default();
     let quiet = CodecScan {
       offset: 5,
@@ -1076,7 +1115,7 @@ mod tests {
       segment_z: [1.0; SEGMENTS],
       segment_offset: [300, 411, 520, 9],
     };
-    let scan = |mp2: Option<CodecScan>| Scan {
+    let scan = |mp2: Option<CodecScan>, opus: Option<OpusScan>| Scan {
       aac: quiet.clone(),
       aac_sine: None,
       vorbis: None,
@@ -1084,7 +1123,7 @@ mod tests {
       ac3: None,
       mp3: quiet.clone(),
       mp2,
-      opus: None,
+      opus,
       other_rate: None,
       mp3_steps: None,
       aac_steps: None,
@@ -1100,7 +1139,48 @@ mod tests {
       segment_z: [3.0; SEGMENTS],
       segment_offset: [16; SEGMENTS],
     };
-    assert_eq!(named(&scan(Some(phased))), Some((Codec::Mp3, None)));
+    assert_eq!(named(&scan(Some(phased), None)), Some((Codec::Mp3, None)));
+    // a hybrid count in the segments shows the grid, the larger count in the windows does not
+    let hybrid = |frames: usize, uncut_frames: usize| OpusScan {
+      offset: 0,
+      frames: 0,
+      segment_frames: [0; SEGMENTS],
+      uncut_frames: 0,
+      shifted: None,
+      hybrid: Some(OpusHybrid {
+        offset: 517,
+        frames,
+        tested: 100,
+        steps: 60,
+        uncut_frames,
+        uncut_tested: 2900,
+        uncut_steps: 70,
+      }),
+      short: Vec::new(),
+      unfiltered: None,
+    };
+    assert_eq!(
+      named(&scan(None, Some(hybrid(80, 87)))),
+      Some((Codec::Opus, None))
+    );
+    assert_eq!(
+      named(&scan(None, Some(hybrid(8, 400)))),
+      Some((Codec::Opus, Some(Family::Libopus)))
+    );
+    // under thresholds that ask more of the windows, the segments' smaller count shows it
+    let windows = ReadingThresholds {
+      opus_uncut_frames: 10,
+      ..thresholds.clone()
+    };
+    let lattice = OpusScan {
+      offset: 517,
+      frames: 5,
+      uncut_frames: 6,
+      hybrid: None,
+      ..hybrid(0, 0)
+    };
+    let read = found(&scan(None, Some(lattice)), &windows).expect("the segments' count is over");
+    assert_eq!((read.codec, read.family), (Codec::Opus, None));
   }
 
   #[test]
