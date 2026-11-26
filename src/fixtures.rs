@@ -114,6 +114,12 @@ pub struct Audio {
 struct Rng(u64);
 
 impl Rng {
+  /// the stream of `seed`, one of its own for every seed but `u64::MAX`, which shares the stream
+  /// of 0 as the generator cannot start from 0
+  fn new(seed: u64) -> Self {
+    Self(if seed == 0 { u64::MAX } else { seed })
+  }
+
   fn next(&mut self) -> f64 {
     // xorshift64*
     self.0 ^= self.0 >> 12;
@@ -234,7 +240,7 @@ pub fn lo_fi(hz: f64) -> f64 {
 /// `seconds` of noise at `rate` whose spectrum has the shape `envelope`, one channel
 fn noise(seed: u64, seconds: usize, rate: u32, envelope: impl Fn(f64) -> f64) -> Vec<f32> {
   let length = seconds * rate as usize;
-  let mut rng = Rng(seed | 1);
+  let mut rng = Rng::new(seed);
   let mut planner = RealFftPlanner::<f32>::new();
   let forward = planner.plan_fft_forward(length);
   let inverse = planner.plan_fft_inverse(length);
@@ -329,7 +335,7 @@ impl Audio {
   ///
   /// The bursts are at the start of each period, as a lossy codec can leave at its frame edges.
   pub fn with_frame_rhythm(mut self, period: usize) -> Audio {
-    let mut rng = Rng(5);
+    let mut rng = Rng::new(5);
     for channel in &mut self.channels {
       for (i, sample) in channel.iter_mut().enumerate() {
         if i % period < 64 {
@@ -405,7 +411,7 @@ impl Audio {
       .channels
       .iter()
       .map(|channel| {
-        let mut rng = Rng(seed | 1);
+        let mut rng = Rng::new(seed);
         channel
           .iter()
           .map(|s| {
