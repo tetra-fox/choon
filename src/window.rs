@@ -38,9 +38,9 @@ pub struct Step {
   pub drop: f64,
   /// Height of the band above the step over the cutoff line, in dB.
   ///
-  /// The cutoff line is the loudest band less `cutoff_range_db`, or the quantization noise plus
-  /// `floor_margin_db` when that is higher. A few dB is a noise floor that only just reaches the
-  /// line.
+  /// The cutoff line is the loudest band less [`MeasureThresholds::cutoff_range_db`], or the
+  /// quantization noise plus [`MeasureThresholds::floor_margin_db`] when that is higher. A few dB
+  /// is a noise floor that only just reaches the line.
   pub clearance: f64,
 }
 
