@@ -584,6 +584,30 @@ fn audio_that_was_never_opus_carries_no_opus_frames() {
 }
 
 #[test]
+fn a_file_shorter_than_four_stretches_is_not_scanned() {
+  // a second at 44.1 kHz, a loud burst then digital silence: stretches laid over the same
+  // samples would count one chance dip as several agreeing
+  let dir = tempfile::tempdir().unwrap();
+  let mut audio = fixtures::music_for(3, 1, 44_100, pink);
+  for channel in &mut audio.channels {
+    channel.truncate(44_100);
+    for (i, sample) in channel.iter_mut().enumerate() {
+      *sample = if i < 1500 {
+        (*sample * 8.0).clamp(-1.0, 1.0)
+      } else {
+        0.0
+      };
+    }
+  }
+  let path = flac(dir.path(), "short.flac", &audio, 16);
+  let measured = measure(&path, &settings()).unwrap();
+  assert_eq!(measured.grid, None);
+  let reading = read(&measured);
+  assert_eq!(reading.grid, None, "{:?}", reading.limitations);
+  assert_ne!(reading.verdict, Verdict::LikelyTranscode);
+}
+
+#[test]
 fn a_decode_that_states_no_length_is_scanned_once_it_is_read() {
   let dir = tempfile::tempdir().unwrap();
   let through = fixtures::through_mp3(&music(1, 44_100, pink), Bitrate::Kbps128, dir.path());

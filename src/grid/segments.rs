@@ -6,9 +6,6 @@ use super::resample::Resampler;
 use super::{SEGMENT, SEGMENTS};
 use crate::totals::CLIPPED;
 
-/// where the segments start, as fractions of the file's length
-const SEGMENT_AT: [f64; SEGMENTS] = [0.2, 0.4, 0.6, 0.8];
-
 /// the share of a stretch's frames at full scale past which it is clipped. clipping after a
 /// decode fills the bands the encoder emptied, and the grid's count with them
 const CLIPPED_SHARE: f64 = 0.05;
@@ -145,16 +142,23 @@ impl Spares {
 pub(crate) struct Segments(pub(super) Vec<Segment>, Spares);
 
 impl Segments {
-  /// the segments of a file of `frames` sample frames; `None` when it is shorter than one
+  /// the segments of a file of `frames` sample frames, none sharing a sample with another: at
+  /// 20, 40, 60 and 80% of it from five segments' length up, spread evenly from its start to
+  /// its end under that. `None` when it is shorter than the four segments
   pub(crate) fn of(frames: u64) -> Option<Self> {
-    let length = SEGMENT as u64;
-    if frames < length {
+    let (length, count) = (SEGMENT as u64, SEGMENTS as u64);
+    if frames < count * length {
       return None;
     }
-    let segments = SEGMENT_AT
-      .iter()
-      // a length below 2^53 is exact as an f64; the start is the fraction floored
-      .map(|at| Segment::starting(((frames as f64 * at) as u64).min(frames - length)))
+    let (span, parts, first) = if frames >= (count + 1) * length {
+      (frames, count + 1, 1)
+    } else {
+      (frames - length, count - 1, 0)
+    };
+    // `span * i / parts` floored, without the product that could overflow
+    let at = |i: u64| span / parts * i + span % parts * i / parts;
+    let segments = (first..first + count)
+      .map(|i| Segment::starting(at(i)))
       .collect();
     Some(Self(segments, Spares::default()))
   }
@@ -248,5 +252,40 @@ impl Segments {
   /// whether every segment is full
   pub(crate) fn complete(&self) -> bool {
     self.0.iter().all(Segment::full)
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn no_two_segments_share_a_sample() {
+    let length = SEGMENT as u64;
+    let lengths = (4 * length..6 * length).step_by(997).chain([
+      4 * length,
+      5 * length - 1,
+      5 * length,
+      5 * length + 1,
+      u64::MAX,
+    ]);
+    for frames in lengths {
+      let Segments(segments, _) = Segments::of(frames).expect("four segments fit");
+      for (i, segment) in segments.iter().enumerate() {
+        assert!(
+          segment.start + length <= frames,
+          "{frames}: {i} ends past the file"
+        );
+        for other in &segments[i + 1..] {
+          assert!(
+            !segment.overlaps(other),
+            "{frames}: {} and {}",
+            segment.start,
+            other.start
+          );
+        }
+      }
+    }
+    assert!(Segments::of(4 * length - 1).is_none());
   }
 }
