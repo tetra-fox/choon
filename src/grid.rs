@@ -124,7 +124,6 @@ pub(crate) use scan::{Opus, jobs, scan};
 pub(crate) const AAC_HOP: usize = 1024;
 /// MP3's hop, a granule
 const MP3_HOP: usize = 576;
-/// the number of segments scanned
 pub(crate) const SEGMENTS: usize = 4;
 /// the samples of one segment: 40 AAC hops
 pub(crate) const SEGMENT: usize = 40 * AAC_HOP;
