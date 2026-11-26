@@ -13,7 +13,7 @@ use crate::window::{Step, Window};
 /// the top of the band of a 48 kHz recording; a file whose band goes past it is hi-res
 const HI_RES_TOP_HZ: f64 = 24_000.0;
 
-/// What the analyzer makes of a file.
+/// Conclusion a reading comes to about a file.
 ///
 /// # Examples
 ///
@@ -47,9 +47,9 @@ pub enum Verdict {
   /// Samples that show a codec's frame grid.
   ///
   /// In a file no grid is looked for in, one that claims a lossy codec or is DSD, nearly every
-  /// window stops at the same known encoder cutoff with a sharp shelf.
+  /// window stops at the same known encoder cutoff, at least half of them with a sharp shelf.
   LikelyTranscode,
-  /// Audio decoded from a lossy codec in part.
+  /// Audio that reads as decoded from a lossy codec in part.
   ///
   /// In a file that claims a lossless format, some of the stretches scanned carry a codec's
   /// frame grid and the others none. Elsewhere the audio is band-limited for part of the time
@@ -64,12 +64,16 @@ pub enum Verdict {
   PossiblyLossy,
   /// Too little audio, or measures that fit no pattern or fit two explanations.
   ///
-  /// Two explanations fit a sharp cutoff or a step under a full band where the highest bitrates
-  /// cut, which a recording filtered when it was made shows too; a cliff at the top of a lower
-  /// sample rate's band where an encoder also cuts; a lossy file's cutoff below what its
-  /// bitrate keeps but too near it to call a transcode; and content that rolls off gently below
-  /// [`ReadingThresholds::natural_limit`] of the top, as band-limited recordings do. The summary
-  /// names what fits.
+  /// Two explanations fit:
+  ///
+  /// - a sharp cutoff or a step under a full band where the highest bitrates cut, which a
+  ///   recording filtered when it was made shows too
+  /// - a cliff at the top of a lower sample rate's band where an encoder also cuts
+  /// - a lossy file's cutoff below what its bitrate keeps but too near it to call a transcode
+  /// - content that rolls off gently below [`ReadingThresholds::natural_limit`] of the top, as
+  ///   band-limited recordings do
+  ///
+  /// The summary names what fits.
   Inconclusive,
 }
 
@@ -94,7 +98,7 @@ pub struct Reading {
   pub cutoff_verdict: Verdict,
   /// Codec frame grid the samples show.
   pub grid: Option<Found>,
-  /// How sure the reading is, from 0 to the confidence cap.
+  /// How sure the reading is, from 0 to [`ReadingThresholds::confidence_cap`].
   pub confidence: f64,
   /// Findings independent of the cutoff.
   pub flags: Vec<Flag>,
