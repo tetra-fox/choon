@@ -125,7 +125,7 @@ fn seek_timestamp(
 
 /// a call into a container's reader once it is open, a panic in it given as an error.
 /// symphonia-format-isomp4 0.6.1 adds an MP4's sample counts in 32 bits (atoms/stts.rs,
-/// find_timing_for_sample), which panics in a build with overflow checks on a table whose
+/// `find_timing_for_sample`), which panics in a build with overflow checks on a table whose
 /// counts pass 2^32. the default panic hook still prints it, and panic = "abort" still aborts
 // TODO: remove once a symphonia release checks that sum
 fn caught<T>(
@@ -332,7 +332,7 @@ impl Decoder {
     let file_bytes = source.byte_len();
     let stream = MediaSourceStream::new(source, Default::default());
     // symphonia-format-riff 0.6.1 multiplies a WAVE file's channel count by its bytes a sample
-    // in 16 bits (wave/chunks.rs, expected_block_align), which panics in a build with overflow
+    // in 16 bits (wave/chunks.rs, `expected_block_align`), which panics in a build with overflow
     // checks on a header that states thousands of channels. panic = "abort" still aborts
     // TODO: remove once a symphonia release checks that product
     let probing = AssertUnwindSafe(|| {
