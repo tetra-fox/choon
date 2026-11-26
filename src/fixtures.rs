@@ -354,9 +354,10 @@ impl Audio {
     }
   }
 
-  /// Returns the audio resampled to `rate` by padding its spectrum with silence.
+  /// Returns the audio resampled to `rate` by lengthening or cutting its spectrum.
   ///
-  /// It is what a converter makes of it, with nothing above the old rate's band.
+  /// A higher rate holds nothing above the old rate's band, as a converter leaves it. A lower
+  /// rate drops what is above its own band.
   pub fn resampled(&self, rate: u32) -> Audio {
     let mut planner = RealFftPlanner::<f32>::new();
     let channels = self
