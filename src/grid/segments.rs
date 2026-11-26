@@ -131,7 +131,6 @@ impl Spares {
       return;
     }
     self.kept.push(stretch);
-    // the loudest first, and of two as loud the earlier
     self
       .kept
       .sort_by(|a, b| b.power.total_cmp(&a.power).then(a.start.cmp(&b.start)));
