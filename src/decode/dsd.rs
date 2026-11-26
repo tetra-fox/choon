@@ -736,13 +736,15 @@ impl DsdDecoder {
 
   fn decode(&mut self, packet: &[u8]) -> Result<()> {
     self.buffer.clear();
+    if packet.is_empty() {
+      return Ok(());
+    }
     let channels = self.chains.len();
     let bytes = packet.len() / channels;
     if bytes > BLOCK || !packet.len().is_multiple_of(channels) {
       return decode_error("dsd: a packet's length is out of range");
     }
-    // an empty packet gives a size of zero, which chunks_exact panics on
-    let stored = packet.chunks_exact(bytes.max(1));
+    let stored = packet.chunks_exact(bytes);
     for ((chain, plane), stored) in self.chains.iter_mut().zip(&mut self.planes).zip(stored) {
       plane.clear();
       chain.push(stored, plane);
