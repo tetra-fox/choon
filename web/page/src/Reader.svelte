@@ -60,7 +60,7 @@
   let version: number | null = null;
   let ticking: ReturnType<typeof setInterval> | undefined;
 
-  // a length of time as the program writes one
+  // a length of time in whole seconds, in the program's words from 10 s on
   function length(seconds: number) {
     return seconds < 60 ? `${seconds} s` : `${Math.floor(seconds / 60)} min ${seconds % 60} s`;
   }
