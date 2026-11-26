@@ -94,9 +94,10 @@ pub struct OpusUse {
 }
 
 impl OpusUse {
-  /// Describes the mode and bandwidth most of the time is spent in.
+  /// Describes the first mode and bandwidth in `uses`.
   ///
-  /// SILK and hybrid are named as voice mode, and the share of the time is added when `uses`
+  /// The first is the one with the most time when `uses` is ordered as
+  /// [`Measured::opus`](crate::Measured::opus) orders it. SILK and hybrid are named as voice mode, and the share of the time is added when `uses`
   /// holds more than one: "CELT fullband", "SILK wideband, voice mode", "hybrid fullband,
   /// voice mode for 71% of the time". Returns `None` for no uses, as of a file that is not
   /// Opus.
