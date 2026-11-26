@@ -159,7 +159,9 @@ pub struct Claimed {
   pub codec: String,
   /// Samples per second.
   pub sample_rate: u32,
-  /// Bits per sample, `None` for a codec without integer samples.
+  /// Bits per sample the file states of a lossless or PCM codec.
+  ///
+  /// `None` for any other codec, and where the file states none.
   pub bit_depth: Option<u32>,
   /// Number of channels in the file, analyzed or not.
   pub channels: u32,
