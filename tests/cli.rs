@@ -329,6 +329,12 @@ fn a_line_and_a_complaint_hold_the_bytes_of_a_path_that_is_not_unicode() {
   assert_eq!(status(&output), 2, "{output:?}");
   let wanted = [damaged.as_os_str().as_bytes(), b":1: "].concat();
   assert!(output.stdout.starts_with(&wanted), "{output:?}");
+
+  // a measures file that cannot be opened ends the run
+  let missing = dir.path().join(OsStr::from_bytes(b"missing\xff.jsonl"));
+  let output = from(&missing);
+  assert_eq!(status(&output), 2, "{output:?}");
+  assert!(starts(&output.stderr, &missing, b"choon: "), "{output:?}");
 }
 
 #[test]

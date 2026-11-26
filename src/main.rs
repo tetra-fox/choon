@@ -297,7 +297,7 @@ fn main() -> ExitCode {
   match run(&check) {
     Ok(code) => ExitCode::from(code),
     Err(e) => {
-      eprintln!("choon: {e}");
+      complain(&e.complaint(io::stderr().is_terminal()));
       ExitCode::from(FAILED)
     }
   }
@@ -362,15 +362,16 @@ impl std::fmt::Display for Unread {
 /// how often a terminal's bars are brought up to date
 const TICK: Duration = Duration::from_millis(100);
 
-impl std::fmt::Display for Failed {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Failed {
+  /// what stderr says of it, with a path shown as every other complaint shows one
+  fn complaint(&self, terminal: bool) -> Vec<u8> {
     match self {
-      Self::Profile(path, e) => write!(f, "{}: {e}", path.display()),
-      Self::Stdin(e) => write!(f, "reading the paths on stdin: {e}"),
-      Self::Threads(e) => write!(f, "starting the threads: {e}"),
-      Self::Output(e) => write!(f, "writing the output: {e}"),
-      Self::Measures(path, e) => write!(f, "{}: {e}", path.display()),
-      Self::Signals(e) => write!(f, "setting the interrupt handler: {e}"),
+      Self::Profile(path, e) => complaint(path, e.as_bytes(), terminal),
+      Self::Measures(path, e) => complaint(path, e.to_string().as_bytes(), terminal),
+      Self::Stdin(e) => format!("choon: reading the paths on stdin: {e}").into_bytes(),
+      Self::Threads(e) => format!("choon: starting the threads: {e}").into_bytes(),
+      Self::Output(e) => format!("choon: writing the output: {e}").into_bytes(),
+      Self::Signals(e) => format!("choon: setting the interrupt handler: {e}").into_bytes(),
     }
   }
 }
