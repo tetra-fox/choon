@@ -226,7 +226,7 @@ pub(crate) struct Decoder {
   pub(crate) channels: usize,
   /// decoded samples not taken yet, one vector per analyzed channel
   pending: Vec<Vec<f32>>,
-  /// where the next sample of `pending` starts in `pending`
+  /// how many samples at the start of each `pending` vector were taken already
   taken: usize,
   /// a scratch buffer each packet is converted into
   scratch: Vec<Vec<f32>>,
