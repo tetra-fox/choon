@@ -163,6 +163,22 @@ fn a_second_stream_chained_after_the_first_is_named_as_left_out() {
   );
 }
 
+#[test]
+fn a_wavpack_file_whose_first_block_is_damaged_is_refused_as_damaged() {
+  let mut wavpack = fixtures::wavpack(&music(1, 44_100, pink), 16);
+  // a byte in the middle of the first block's audio fails the block's checksum
+  let block = u32::from_le_bytes(wavpack[4..8].try_into().unwrap()) as usize + 8;
+  wavpack[block / 2] ^= 0x55;
+  let refused = measure_bytes(wavpack, &settings());
+  assert!(
+    matches!(
+      &refused,
+      Err(Error::Unsupported(why)) if why == "wavpack: the file's first block could not be decoded"
+    ),
+    "{refused:?}"
+  );
+}
+
 proptest::proptest! {
   #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
 

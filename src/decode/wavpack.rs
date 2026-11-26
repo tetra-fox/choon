@@ -45,6 +45,12 @@ const HYBRID: u32 = 1 << 3;
 /// the flag of a block that holds DSD
 const DSD: u32 = 1 << 31;
 
+/// why a hybrid file is refused, by its flags or by the decoder
+const REFUSED_HYBRID: &str =
+  "wavpack: hybrid WavPack without its correction file is lossy and is not read";
+/// why a file of DSD is refused, by its flags or by the decoder
+const REFUSED_DSD: &str = "wavpack: DSD in WavPack is not read";
+
 const FORMAT: FormatInfo = FormatInfo {
   format: FORMAT_ID_WAVPACK,
   short_name: "wavpack",
@@ -104,6 +110,31 @@ impl Header {
   }
 }
 
+/// why a file is refused whose first block with audio the decoder gave `error` on
+fn first_block_refusal(error: &wavicle::Error) -> &'static str {
+  use wavicle::{Error, Scope};
+  match error {
+    Error::OutOfScope(Scope::MoreThanTwoChannels | Scope::MultichannelSpanning) => {
+      "wavpack: more than two channels are not read"
+    }
+    Error::OutOfScope(Scope::Hybrid | Scope::CorrectionFile) => REFUSED_HYBRID,
+    Error::OutOfScope(Scope::Dsd) => REFUSED_DSD,
+    Error::UnsupportedVersion(_) => "wavpack: the stream's version is not one the decoder reads",
+    Error::NotYetImplemented("8-bit integer decode") => "wavpack: 8-bit samples are not read",
+    Error::NotYetImplemented(_) => "wavpack: the decoder does not read the file's sample format",
+    Error::Truncated { .. }
+    | Error::BadMagic(_)
+    | Error::BadBlockSize(_)
+    | Error::BadSubBlock { .. }
+    | Error::UnknownRequiredId(_)
+    | Error::FormatChanged
+    | Error::CrcMismatch { .. }
+    | Error::OverMagnitude
+    | Error::MissingSubBlock(_)
+    | Error::NonContiguousBlock { .. } => "wavpack: the file's first block could not be decoded",
+  }
+}
+
 /// the header at the reader's position, which is left after it; `None` at the end of the file
 /// and at anything that is not a block, such as the tags after the audio
 fn next_header(reader: &mut MediaSourceStream<'_>) -> Result<Option<Header>> {
@@ -147,12 +178,10 @@ impl<'s> WavPackReader<'s> {
         return refused("wavpack: the file holds no block with audio");
       };
       if header.flags & DSD != 0 {
-        return refused("wavpack: DSD in WavPack is not read");
+        return refused(REFUSED_DSD);
       }
       if header.flags & HYBRID != 0 {
-        return refused(
-          "wavpack: hybrid WavPack without its correction file is lossy and is not read",
-        );
+        return refused(REFUSED_HYBRID);
       }
       reader.seek(SeekFrom::Start(at))?;
       let block = reader.read_boxed_slice_exact(header.length)?;
@@ -171,10 +200,7 @@ impl<'s> WavPackReader<'s> {
       Ok(decoded) => decoded,
       Err(e) => {
         debug!(error = %e, "wavpack first block not decoded");
-        return refused(
-          "wavpack: more than two channels, 8-bit samples and streams older than WavPack 4 \
-           are not read",
-        );
+        return refused(first_block_refusal(&e));
       }
     };
     let Some(rate) = NonZeroU32::new(decoded.sample_rate) else {
