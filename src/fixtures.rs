@@ -420,19 +420,27 @@ impl Audio {
 
 /// Writes `audio` as FLAC at `path`.
 ///
-/// The samples are `bits`-bit, or 16-bit stored in 24 bits when `padded`.
+/// The file is the one [`flac`] returns, so it leaves out the frames after the last whole
+/// block.
 pub fn write_flac(audio: &Audio, bits: u32, padded: bool, path: &Path) {
   std::fs::write(path, flac(audio, bits, padded)).unwrap();
 }
 
-/// Returns `audio` encoded as FLAC, as [`write_flac`] writes it.
+/// Returns `audio` encoded as FLAC.
+///
+/// The samples are `bits`-bit, or 16-bit stored in 24 bits when `padded`. The stream holds
+/// whole blocks of [`FLAC_BLOCK`] sample frames and leaves out the frames after the last whole
+/// block.
 pub fn flac(audio: &Audio, bits: u32, padded: bool) -> Vec<u8> {
   let mut sink = flacenc::bitsink::ByteSink::new();
   flac_stream(audio, bits, padded).write(&mut sink).unwrap();
   sink.into_inner()
 }
 
-/// Returns `audio` as a WavPack stream of `bits`-bit samples, the ones [`flac`] writes.
+/// Returns `audio` as a WavPack stream of `bits`-bit samples.
+///
+/// The samples are the ones [`flac`] writes, and the stream keeps the frames after the last
+/// whole block that [`flac`] leaves out.
 pub fn wavpack(audio: &Audio, bits: u32) -> Vec<u8> {
   let planes = audio.quantized(bits, 7);
   let interleaved: Vec<i32> = (0..planes[0].len())
@@ -448,8 +456,9 @@ pub fn wavpack(audio: &Audio, bits: u32) -> Vec<u8> {
 
 /// Returns `audio` as a Monkey's Audio file of `bits`-bit samples.
 ///
-/// `bits` is 16 or 24, and the samples are the ones [`flac`] writes. The level is extra high
-/// with `extra_high` and fast without.
+/// `bits` is 16 or 24, and the samples are the ones [`flac`] writes. The file keeps the frames
+/// after the last whole block that [`flac`] leaves out. The level is extra high with
+/// `extra_high` and fast without.
 pub fn ape(audio: &Audio, bits: u32, extra_high: bool) -> Vec<u8> {
   let planes = audio.quantized(bits, 7);
   let width = (bits / 8) as usize;
@@ -599,8 +608,9 @@ pub fn wavpack_float(audio: &Audio) -> Vec<u8> {
 
 /// Returns `audio` encoded as `bits`-bit FLAC in an Ogg container.
 ///
-/// Every page but the last holds three frames of [`FLAC_BLOCK`] sample frames each, so a seek
-/// lands on a page and reads on from its first frame.
+/// The stream is the one [`flac`] returns without `padded`, so it leaves out the frames after
+/// the last whole block. Every page but the last holds three frames of [`FLAC_BLOCK`] sample
+/// frames each, so a seek lands on a page and reads on from its first frame.
 pub fn ogg_flac(audio: &Audio, bits: u32) -> Vec<u8> {
   let stream = flac_stream(audio, bits, false);
   let bytes = |part: &dyn Fn(&mut flacenc::bitsink::ByteSink)| {
