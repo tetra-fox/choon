@@ -73,11 +73,15 @@ fn an_mp4_whose_sample_counts_pass_32_bits_is_read_without_a_panic() {
   bytes[entries + 8..entries + 12].copy_from_slice(&u32::MAX.to_be_bytes());
   let measured = measure_bytes(bytes, &settings()).expect("the first sample is read");
   let reading = read(&measured);
+  // the reader's 32-bit sum panics only with overflow checks on and wraps without them. the
+  // profile sets them for symphonia as for this crate, which the probe asks
+  let overflow_checked = std::panic::catch_unwind(|| std::hint::black_box(u32::MAX) + 1).is_err();
   assert!(
-    reading
-      .limitations
-      .iter()
-      .any(|l| matches!(l, Limitation::Decoder(why) if why.contains("reader failed"))),
+    !overflow_checked
+      || reading
+        .limitations
+        .iter()
+        .any(|l| matches!(l, Limitation::Decoder(why) if why.contains("reader failed"))),
     "{:?}",
     reading.limitations
   );
