@@ -485,7 +485,7 @@ fn aac_stepped<'a>(
 ///   decoder's level, at another, as frames under 20 ms, with the pitch post-filter taken
 ///   off, or as the hybrid mode codes them
 /// - MP3 or AAC at the other rate
-/// - MP3, Vorbis or MP2 by the phase every segment's subband count sits at
+/// - MP3, Vorbis or MP2 by the phase enough segments' subband counts sit at
 /// - one of the first group in some of the segments alone, each far over its z threshold, or
 ///   in fewer at an offset an uncut decode has
 /// - MP3 by its quantizer's steps in fewer segments, as a grid in part of the file
