@@ -46,7 +46,7 @@ pub(super) struct BandScratch {
 }
 
 /// the step of a band whose lines are `lines`, each with rounding noise of `sigma`. the
-/// smallest value over the noise is taken as 1, 2 and so on times the step in turn
+/// smallest value over the noise is taken as the whole number 1, 2 and so on in turn
 pub(super) fn band_step(lines: &[f64], sigma: f64, scratch: &mut BandScratch) -> BandStep {
   let BandScratch { values, points } = scratch;
   values.clear();
