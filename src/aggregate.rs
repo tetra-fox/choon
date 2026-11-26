@@ -53,7 +53,9 @@ pub struct Measures {
   pub bit_depth_effective: Option<u32>,
   /// Level of the quietest passages, in dBFS.
   pub noise_floor_dbfs: Option<f64>,
-  /// Correlation between the two channels, `None` for mono.
+  /// Correlation between the two channels, from -1 to 1.
+  ///
+  /// `None` for mono, and where either channel is constant.
   pub stereo_correlation: Option<f64>,
   /// Side channel energy relative to the mid channel's, in dB.
   ///
