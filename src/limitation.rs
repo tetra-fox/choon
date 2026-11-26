@@ -219,7 +219,7 @@ impl fmt::Display for Limitation {
       Self::ClippedStretches { stretches } => write!(
         f,
         "{stretches} of the {SEGMENTS} stretches scanned for a frame grid are clipped and the file has \
-         none that is not to scan in their place: clipping after a decode hides its grid"
+         no unclipped stretch to scan in their place: clipping after a decode hides its grid"
       ),
       Self::EarlyRollOff => f.write_str(
         "Old masters, speech, lo-fi material and vinyl or cassette transfers roll off early, and \
