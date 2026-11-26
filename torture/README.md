@@ -16,7 +16,7 @@ just torture-run    # reads every file with a release build and judges it
 vorbis-tools, fdkaac, flac, WavPack and Monkey's Audio. It also writes
 `seeds/`, a second or less of each format, which `just fuzz-seed` copies into the fuzz corpus.
 
-## The manifest
+## Manifest
 
 `make.sh` writes `manifest.tsv` beside the files, one line a case, tab-separated:
 
@@ -49,7 +49,7 @@ vorbis-tools, fdkaac, flac, WavPack and Monkey's Audio. It also writes
 - `C`: containers, tags, muxers, damage and the edges of each format
 - `D`: lengths
 
-## The run
+## Run
 
 `run.py RESULTS.tsv BINARY...` reads each file alone with each binary as a line, as JSON and
 as JSON sampled at 20 windows, with a minute's timeout (twenty for the hours-long files), and
