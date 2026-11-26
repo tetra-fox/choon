@@ -750,7 +750,6 @@ fn a_frame_rhythm_is_measured() {
 #[test]
 fn gaps_in_the_top_band_are_measured() {
   let dir = tempfile::tempdir().unwrap();
-  // gaps 40 Hz wide every 80 Hz in 16-20 kHz
   let combed = music(1, 44_100, fixtures::combed);
   let reading = analyzed(&flac(dir.path(), "combed.flac", &combed, 16));
   assert!(
