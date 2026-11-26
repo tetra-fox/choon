@@ -94,12 +94,18 @@ pub(crate) const SHORT: [Short; 3] = [
 ];
 
 impl Short {
-  /// where the frames of a decode sit when nothing was cut from its start, from the file's
-  /// first sample, for each of [`DELAYS`]: a frame's window reaches half of what its length has
-  /// over the overlap back from where its rise starts
+  /// where the frames of a decode sit when nothing was cut from its start, for each of
+  /// [`DELAYS`]
   pub(crate) fn uncut_offsets(&self) -> [usize; 2] {
-    DELAYS.map(|delay| (4 * self.length - delay - (self.length - OVERLAP) / 2) % self.length)
+    DELAYS.map(|delay| uncut_offset(self.length, delay))
   }
+}
+
+/// where frames of `length` samples sit from the file's first sample when nothing was cut from
+/// the start of a decode delayed by `delay`: a frame's window reaches half of what its length has
+/// over the overlap back from where its rise starts
+const fn uncut_offset(length: usize, delay: usize) -> usize {
+  (length - (delay + (length - OVERLAP) / 2) % length) % length
 }
 
 /// the short blocks of a transient frame, and the samples each brings
@@ -164,10 +170,9 @@ const LAG_POINTS: usize = 4096;
 /// the whole fractions of the strongest lag that are tried, each with the lags beside it
 const FRACTIONS: usize = 4;
 
-/// where the frames of a decode sit when nothing was cut from its start, from the file's first
-/// sample: libopus's encoders delay by the first of [`DELAYS`], and a frame's window reaches
-/// half of what its length has over the overlap back from where its rise starts
-pub(crate) const UNCUT_OFFSET: usize = (2 * FRAME - DELAYS[0] - (FRAME - OVERLAP) / 2) % FRAME;
+/// where the frames of a decode sit when nothing was cut from its start: libopus's encoders
+/// delay by the first of [`DELAYS`]
+pub(crate) const UNCUT_OFFSET: usize = uncut_offset(FRAME, DELAYS[0]);
 /// the most windows the pass at that offset reads
 const UNCUT_WINDOWS: usize = 60;
 
@@ -1235,6 +1240,7 @@ mod tests {
     }
     let offsets = SHORT.map(|short| short.uncut_offsets());
     assert_eq!(offsets, [[468, 180], [108, 60], [48, 0]]);
+    assert_eq!(UNCUT_OFFSET, 228);
   }
 
   /// a frame after `before`: each band a coarse step of its own, refined by a quarter or an
