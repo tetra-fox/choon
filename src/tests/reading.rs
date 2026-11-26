@@ -186,7 +186,7 @@ fn a_cover_larger_than_the_audio_does_not_raise_an_mp3s_bitrate() {
 }
 
 #[test]
-fn a_128_kbps_mp3_encoded_again_at_320_kbps_keeps_the_lower_cutoff() {
+fn a_128_kbps_mp3_encoded_again_at_320_kbps_reads_as_a_transcode() {
   let dir = tempfile::tempdir().unwrap();
   let through = fixtures::through_mp3(&music(1, 44_100, pink), Bitrate::Kbps128, dir.path());
   let inflated = dir.path().join("inflated.mp3");
