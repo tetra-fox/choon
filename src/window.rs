@@ -61,7 +61,8 @@ pub struct Window {
   pub rms_dbfs: f64,
   /// Highest frequency within the measured range of the loudest band, in Hz.
   ///
-  /// `None` for a near-silent window or one too short for a spectrum.
+  /// `None` for a near-silent window, one too short for a spectrum, or one whose spectrum
+  /// nowhere rises over the cutoff line.
   pub cutoff_hz: Option<f64>,
   /// Drop across the cutoff, in dB.
   ///
@@ -186,10 +187,9 @@ impl<'a> Analyzer<'a> {
       .map_or(peak - t.cutoff_range_db, |floor| {
         (peak - t.cutoff_range_db).max(floor + t.floor_margin_db)
       });
-    let top = smoothed
-      .iter()
-      .rposition(|level| *level >= line)
-      .unwrap_or(0);
+    let Some(top) = smoothed.iter().rposition(|level| *level >= line) else {
+      return window;
+    };
     let cutoff = top as f64 * self.bin_hz;
     window.cutoff_hz = Some(cutoff);
     window.shelf_db = self

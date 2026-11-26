@@ -853,3 +853,28 @@ fn digital_silence_holds_zero_seconds_of_audio_not_minus_zero() {
     reading.limitations
   );
 }
+
+#[test]
+fn quiet_audio_under_its_quantization_noise_has_no_cutoff() {
+  // 8-bit samples at -65 dBFS: louder than silence, but nowhere over the quantization noise and
+  // the margin above it
+  let mut audio = music_for(40, 1, 44_100, pink);
+  audio.set_level(-65.0);
+  let measured = measure_bytes(fixtures::flac(&audio, 8, false), &settings()).unwrap();
+  assert!(!measured.windows.is_empty());
+  assert!(
+    measured.windows.iter().all(|w| w.cutoff_hz.is_none()),
+    "{:?}",
+    measured
+      .windows
+      .iter()
+      .map(|w| w.cutoff_hz)
+      .collect::<Vec<_>>()
+  );
+  let reading = read(&measured);
+  assert_eq!(reading.measures.cutoff_median_hz, None, "{reading:#?}");
+  assert!(
+    !reading.limitations.contains(&Limitation::EarlyRollOff),
+    "{reading:#?}"
+  );
+}
