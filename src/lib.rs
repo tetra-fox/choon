@@ -48,8 +48,9 @@
 //!
 //! Every threshold either step uses is data the caller passes ([`MeasureThresholds`],
 //! [`ReadingThresholds`]), so a sweep needs no rebuild. `Default` holds the values the analyzer
-//! ships with. They come from what common encoders do and are checked against generated audio
-//! in the tests. They are rules of thumb that real files can break, so a reading is evidence.
+//! ships with. The cutoffs come from what common encoders do, the grid thresholds were tuned on
+//! decodes of known history, and both are checked against generated audio in the tests. They
+//! are rules of thumb that real files can break, so a reading is evidence.
 //!
 //! # Features
 //!
