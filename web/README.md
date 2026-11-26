@@ -131,8 +131,8 @@ where the wasm is, as the module is written without a default path.
   thresholds that are not a profile
 - `check` blocks the thread it is called on and takes no deadline, progress or cancel check
 - The whole file is held in the instance's memory
-- A panic is a trap, which JavaScript catches as a `WebAssembly.RuntimeError`. An instance
-  that trapped is replaced by a new one
+- A panic is a trap, which JavaScript catches as a `WebAssembly.RuntimeError`. The caller
+  makes a new instance after one: the page starts a new worker
 
 `version(): number` returns the `version` that `check` writes, without reading a file.
 
