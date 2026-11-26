@@ -242,13 +242,14 @@ fn main() -> Result<(), choon::Error> {
 - `cli` turns `serde` on
 - `testing` builds LAME and libopus, which need a C compiler, `make` and CMake
 
-| Decoder           | Panic                                          | Handling                           |
-| ----------------- | ---------------------------------------------- | ---------------------------------- |
-| ape-decoder 0.3.2 | on a damaged Monkey's Audio file               | logged at `warn`, frame skipped    |
-| wavicle 0.1.0     | on a damaged WavPack block                     | block skipped                      |
-| symphonia 0.6.1   | on an MP4 file with sample counts past 32 bits | the reading of the file ends there |
+| Decoder           | Panic                                              | Handling                           |
+| ----------------- | -------------------------------------------------- | ---------------------------------- |
+| ape-decoder 0.3.2 | on a damaged Monkey's Audio file                   | frame skipped                      |
+| wavicle 0.1.0     | on a damaged WavPack block                         | block skipped                      |
+| symphonia 0.6.1   | on an MP4 file with sample counts past 32 bits     | the reading of the file ends there |
+| symphonia 0.6.1   | on a WAVE header that states thousands of channels | the file is not read               |
 
-- Each can panic in a build with overflow checks, and the panic is caught
+- Each can panic in a build with overflow checks, and the panic is caught and logged at `warn`
 - Any other panic while a file is measured is the error `Error::Panicked`, and the panic's
   message goes where the panic hook writes it
 - A build with `panic = "abort"` aborts
