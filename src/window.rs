@@ -67,7 +67,7 @@ pub struct Window {
   /// Drop across the cutoff, in dB.
   ///
   /// It is how much quieter the band just above the cutoff is than the band just below. `None`
-  /// without a cutoff or when the cutoff is too near the top of the band to tell.
+  /// without a cutoff, or when the cutoff is too near either end of the band to tell.
   pub shelf_db: Option<f64>,
   /// Empty bins per populated bin in the upper band below the cutoff.
   pub holes: Option<f64>,
@@ -274,7 +274,7 @@ impl<'a> Analyzer<'a> {
 
   /// the levels either side of `hz`: of the band below it and of the band above it, each
   /// `shelf_span_hz` wide and `shelf_gap_hz` away; `None` when the band above passes the top of
-  /// the spectrum
+  /// the spectrum or the band below passes 0 Hz
   fn step(&self, smoothed: &[f64], hz: f64) -> Option<(f64, f64)> {
     let nyquist = self.rate / 2.0;
     let (gap, span) = (self.thresholds.shelf_gap_hz, self.thresholds.shelf_span_hz);
