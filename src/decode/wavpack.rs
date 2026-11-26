@@ -236,7 +236,7 @@ impl<'s> WavPackReader<'s> {
 }
 
 impl Scoreable for WavPackReader<'_> {
-  /// a marker is a file's when a block's header follows it
+  /// a marker is a file's when it starts a block's header the reader takes
   fn score(mut source: ScopedStream<&mut MediaSourceStream<'_>>) -> Result<Score> {
     let mut bytes = [0; HEADER];
     source.read_buf_exact(&mut bytes)?;
