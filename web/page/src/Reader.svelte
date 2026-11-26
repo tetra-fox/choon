@@ -278,7 +278,7 @@
     <h2 id="read-title">Readings</h2>
     <button id="clear" type="button" onclick={clear}>Clear</button>
   </div>
-  <p class="hint">Kept in this browser under each file's name, until cleared.</p>
+  <p class="hint">Kept in this browser until cleared</p>
   <ul id="readings">
     {#each items as item (item.id)}
       {#if item.state === "read"}
