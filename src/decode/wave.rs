@@ -5,13 +5,17 @@
 //! symphonia-format-riff 0.6.1 reads the 32 bits of a RIFF file's data chunk as they are, so
 //! it takes the first for a file of no audio and the third for a short one, and does not know
 //! RF64 (wave/mod.rs, wave/chunks.rs). the source is handed over with the header's sizes
-//! written as the file holds them, and an RF64 file's marker as RIFF's
+//! written as the file holds them, and an RF64 file's marker as RIFF's. samples of more than
+//! 32 bits are written as of no stated size, which the reader reads to the end of its source,
+//! so the source ends where they do, and the end of the source is the end of the audio
 //! TODO: remove once a symphonia release reads RF64 and reads a data chunk of no stated size
 //! to the end of its file
 
 use std::io::{self, Read, Seek, SeekFrom};
 
 use symphonia::core::io::MediaSource;
+
+use super::ending::Ended;
 
 const RIFF: &[u8; 4] = b"RIFF";
 const RF64: &[u8; 4] = b"RF64";
@@ -29,31 +33,48 @@ const WRAP: u64 = 1 << 32;
 const CHUNKS: usize = 64;
 
 /// `source`, with the sizes of a WAVE file's header as the file holds them where the header's
-/// own are not. any other source comes back as it is, at its start
-pub(super) fn sized(mut source: Box<dyn MediaSource>) -> Box<dyn MediaSource> {
+/// own are not, and whether the reader reads its samples to the end of the source, which is
+/// where they end. any other source comes back as it is, at its start
+pub(super) fn sized(mut source: Box<dyn MediaSource>) -> (Box<dyn MediaSource>, bool) {
   let Some(length) = source.byte_len().filter(|_| source.is_seekable()) else {
-    return source;
+    return (source, false);
   };
   // a source that fails here fails the same way when the reader opens it
-  let patches = patches(source.as_mut(), length).unwrap_or_default();
-  if source.seek(SeekFrom::Start(0)).is_err() || patches.is_empty() {
-    return source;
+  let Sizes { patches, end } = sizes(source.as_mut(), length).unwrap_or_default();
+  if source.seek(SeekFrom::Start(0)).is_err() {
+    return (source, false);
   }
-  Box::new(Patched {
-    inner: source,
-    patches,
-    at: 0,
-  })
+  if !patches.is_empty() {
+    source = Box::new(Patched {
+      inner: source,
+      patches,
+      at: 0,
+    });
+  }
+  if let Some(end) = end.filter(|end| *end < length) {
+    source = Box::new(Ended::new(source, end));
+  }
+  (source, end.is_some())
 }
 
-/// the bytes to give the reader in place of the file's own, each with where it goes
-fn patches(source: &mut dyn MediaSource, length: u64) -> io::Result<Vec<(u64, [u8; 4])>> {
+/// what the reader of a WAVE file is given in place of the file's own sizes
+#[derive(Default)]
+struct Sizes {
+  /// the bytes in place of the file's own, each with where it goes
+  patches: Vec<(u64, [u8; 4])>,
+  /// where the samples end, when they are more than 32 bits hold and the file holds all its
+  /// header states of them
+  end: Option<u64>,
+}
+
+/// the sizes the reader of the WAVE file in `source` is given; none for any other file
+fn sizes(source: &mut dyn MediaSource, length: u64) -> io::Result<Sizes> {
   let mut form = [0; FORM as usize];
   source.seek(SeekFrom::Start(0))?;
   source.read_exact(&mut form)?;
   let rf64 = form.starts_with(RF64);
   if !(rf64 || form.starts_with(RIFF)) || !form.ends_with(WAVE) {
-    return Ok(Vec::new());
+    return Ok(Sizes::default());
   }
   // the size of the samples an RF64 file states, from its first chunk
   let mut wide = None;
@@ -74,7 +95,7 @@ fn patches(source: &mut dyn MediaSource, length: u64) -> io::Result<Vec<(u64, [u
     if chunk.starts_with(DATA) {
       let held = length.saturating_sub(body);
       let samples = samples(stated, wide, held);
-      // more than 32 bits hold is written as not stated, which the reader reads to the end
+      // more than 32 bits hold is written as not stated
       let fit = |size: u64| u32::try_from(size).unwrap_or(UNSTATED).to_le_bytes();
       let mut patches = Vec::new();
       if rf64 {
@@ -86,12 +107,15 @@ fn patches(source: &mut dyn MediaSource, length: u64) -> io::Result<Vec<(u64, [u
         patches.push((4, fit((body + samples).max(length) - CHUNK)));
         patches.push((at + 4, fit(samples)));
       }
-      return Ok(patches);
+      // an RF64 file that holds less than its own chunk states is read to its end as one cut
+      let cut = stated == UNSTATED && wide.is_some_and(|wide| wide > held);
+      let end = (samples > u64::from(UNSTATED) && !cut).then_some(body + samples);
+      return Ok(Sizes { patches, end });
     }
     // a chunk of an odd size is followed by a byte of padding
     at = body + u64::from(stated) + u64::from(stated % 2);
   }
-  Ok(Vec::new())
+  Ok(Sizes::default())
 }
 
 /// the bytes of samples in a data chunk that states `stated` of them, in a file that holds
@@ -179,7 +203,9 @@ mod tests {
   fn patched(bytes: Vec<u8>) -> Vec<(u64, [u8; 4])> {
     let length = bytes.len() as u64;
     // a file too short to hold a chunk is none to patch, as in `sized`
-    patches(&mut io::Cursor::new(bytes), length).unwrap_or_default()
+    sizes(&mut io::Cursor::new(bytes), length)
+      .unwrap_or_default()
+      .patches
   }
 
   #[test]
@@ -222,7 +248,8 @@ mod tests {
       ]
     );
     // the source reads as the file with those bytes in it, however it is read
-    let mut source = sized(Box::new(io::Cursor::new(bytes.clone())));
+    let (mut source, read_to_end) = sized(Box::new(io::Cursor::new(bytes.clone())));
+    assert!(!read_to_end);
     let mut whole = Vec::new();
     source.read_to_end(&mut whole).unwrap();
     assert_eq!(whole[..4], *RIFF);
@@ -276,12 +303,109 @@ mod tests {
         (size, 400_000u32.to_le_bytes())
       ]
     );
-    let mut decoder =
-      Decoder::from_source(Box::new(io::Cursor::new(bytes)), &Hint::new()).unwrap();
+    let mut decoder = Decoder::from_source(Box::new(io::Cursor::new(bytes)), &Hint::new()).unwrap();
     assert_eq!(decoder.claimed.frames, Some(100_000));
     let read = fixtures::rest(&mut decoder);
     assert_eq!(read[0].len(), 50_000);
     assert_eq!(decoder.stopped.as_deref(), Some(CUT_SHORT));
+  }
+
+  /// a file of `head`, `zeros` bytes of zeros that are counted and not held, and `tail`
+  struct Sparse {
+    head: Vec<u8>,
+    zeros: u64,
+    tail: Vec<u8>,
+    at: u64,
+  }
+
+  impl Sparse {
+    fn new(head: Vec<u8>, zeros: u64, tail: Vec<u8>) -> Self {
+      Self {
+        head,
+        zeros,
+        tail,
+        at: 0,
+      }
+    }
+  }
+
+  impl Read for Sparse {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+      let head = self.head.len() as u64;
+      let zeros_end = head + self.zeros;
+      let read = if self.at < zeros_end && self.at >= head {
+        let read =
+          usize::try_from(zeros_end - self.at).map_or(buf.len(), |left| left.min(buf.len()));
+        buf[..read].fill(0);
+        read
+      } else {
+        let from = if self.at < head {
+          &self.head[self.at as usize..]
+        } else {
+          self
+            .tail
+            .get((self.at - zeros_end) as usize..)
+            .unwrap_or(&[])
+        };
+        let read = from.len().min(buf.len());
+        buf[..read].copy_from_slice(&from[..read]);
+        read
+      };
+      self.at += read as u64;
+      Ok(read)
+    }
+  }
+
+  impl Seek for Sparse {
+    fn seek(&mut self, to: SeekFrom) -> io::Result<u64> {
+      self.at = match to {
+        SeekFrom::Start(at) => at,
+        SeekFrom::End(by) => self.byte_len().unwrap().checked_add_signed(by).unwrap(),
+        SeekFrom::Current(by) => self.at.checked_add_signed(by).unwrap(),
+      };
+      Ok(self.at)
+    }
+  }
+
+  impl MediaSource for Sparse {
+    fn is_seekable(&self) -> bool {
+      true
+    }
+
+    fn byte_len(&self) -> Option<u64> {
+      Some(self.head.len() as u64 + self.zeros + self.tail.len() as u64)
+    }
+  }
+
+  /// the frames read of `file` past its `samples` bytes of 16-bit stereo, read from 3 s before
+  /// their end, and why reading stopped
+  fn read_past_the_end(file: Sparse, samples: u64) -> (i64, Option<String>) {
+    let mut decoder = Decoder::from_source(Box::new(file), &Hint::new()).unwrap();
+    let from = samples / 4 / 44_100 - 3;
+    decoder.seek(from as f64).unwrap();
+    let read = fixtures::rest(&mut decoder);
+    let past = read[0].len() as i64 - (samples / 4 - from * 44_100) as i64;
+    (past, decoder.stopped)
+  }
+
+  #[test]
+  fn samples_of_more_than_32_bits_end_where_the_header_says() {
+    // 4 GiB and 10 s of samples, then a chunk of bytes that are no audio
+    let samples = WRAP + 1_764_000;
+    let list = [&b"LIST"[..], &400_000u32.to_le_bytes(), &[0x55; 400_000]].concat();
+    let rf64 = Sparse::new(rf64_header(samples, UNSTATED), samples, list.clone());
+    assert_eq!(read_past_the_end(rf64, samples), (0, None), "RF64");
+    let mut riff = [&RIFF[..], &[0; 4], WAVE].concat();
+    riff.extend(format());
+    riff.extend_from_slice(DATA);
+    riff.extend_from_slice(&(samples as u32).to_le_bytes());
+    let wrapped = Sparse::new(riff, samples, list);
+    assert_eq!(read_past_the_end(wrapped, samples), (0, None), "wrapped");
+    // an RF64 file that holds less than its own chunk states is still one cut short
+    let cut = Sparse::new(rf64_header(samples + 4000, UNSTATED), samples, Vec::new());
+    let (past, stopped) = read_past_the_end(cut, samples);
+    assert_eq!(past, 0);
+    assert_eq!(stopped.as_deref(), Some(CUT_SHORT), "cut");
   }
 
   #[test]

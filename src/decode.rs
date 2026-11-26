@@ -236,6 +236,9 @@ pub(crate) struct Decoder {
   pub(crate) stopped: Option<String>,
   /// the bytes after an Ogg file's last page that the reader was not given
   pub(crate) left_out: Option<u64>,
+  /// whether the reader reads the samples to the end of a source that ends where they do, as
+  /// it does a WAVE file's of more than 32 bits, so the end of the source is no cut
+  read_to_end: bool,
   /// the audio tracks the file holds beside the one read
   pub(crate) other_tracks: usize,
   /// whether the file's source can be sought in
@@ -311,7 +314,8 @@ impl Decoder {
   ) -> Result<Self, engine::Error> {
     let not_audio = |why: String| engine::Error::NotAudio(why);
     let unsupported = |why: &str| engine::Error::Unsupported(why.to_string());
-    let (source, left_out) = ending::ended(wave::sized(source));
+    let (source, read_to_end) = wave::sized(source);
+    let (source, left_out) = ending::ended(source);
     let seekable = source.is_seekable();
     let file_bytes = source.byte_len();
     let stream = MediaSourceStream::new(source, Default::default());
@@ -461,6 +465,7 @@ impl Decoder {
       skipped: 0,
       stopped: None,
       left_out,
+      read_to_end,
       other_tracks: audio_tracks.saturating_sub(1),
       seekable,
       opus,
@@ -773,6 +778,9 @@ impl Decoder {
         Ok(Some(packet)) => packet,
         Ok(None) => return None,
         Err(Error::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+          if self.read_to_end {
+            return None;
+          }
           debug!("audio ends early");
           self.stopped = Some(CUT_SHORT.to_string());
           return None;

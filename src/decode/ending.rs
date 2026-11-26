@@ -75,12 +75,10 @@ pub(super) fn ended(mut source: Box<dyn MediaSource>) -> (Box<dyn MediaSource>, 
   let Some(end) = page.or(tag) else {
     return (source, None);
   };
-  let ended = Ended {
-    inner: source,
-    length: end,
-    at: 0,
-  };
-  (Box::new(ended), page.map(|end| length - end))
+  (
+    Box::new(Ended::new(source, end)),
+    page.map(|end| length - end),
+  )
 }
 
 /// where the tags after a FLAC file of `length` bytes start; `None` for a file that is not
@@ -263,11 +261,22 @@ fn sums(page: &[u8]) -> bool {
 }
 
 /// a source that ends `length` bytes in, whatever its file holds after them
-struct Ended {
+pub(super) struct Ended {
   inner: Box<dyn MediaSource>,
   length: u64,
   /// where the next read starts
   at: u64,
+}
+
+impl Ended {
+  /// `inner`, which is at its start, ended `length` bytes in
+  pub(super) fn new(inner: Box<dyn MediaSource>, length: u64) -> Self {
+    Self {
+      inner,
+      length,
+      at: 0,
+    }
+  }
 }
 
 impl Read for Ended {
@@ -451,11 +460,7 @@ mod tests {
   #[test]
   fn an_ended_source_reads_and_seeks_as_a_file_of_its_length() {
     let inner = Box::new(io::Cursor::new((0..=99u8).collect::<Vec<u8>>()));
-    let mut source = Ended {
-      inner,
-      length: 10,
-      at: 0,
-    };
+    let mut source = Ended::new(inner, 10);
     let mut all = Vec::new();
     source.read_to_end(&mut all).unwrap();
     assert_eq!(all, (0..10).collect::<Vec<u8>>());
