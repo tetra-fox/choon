@@ -131,13 +131,14 @@ pub enum Family {
   /// [`Evidence::AacSteps`]. A Vorbis decode's AAC count sits at this offset about one time in
   /// thirteen, and shows none.
   Nero,
-  /// ffmpeg's AAC encoder or fdk-aac: the Kaiser-Bessel-derived window, their delay cut whole.
+  /// AAC encoder of ffmpeg, or fdk-aac, by window and delay.
   ///
-  /// The two share window and delay, and read so where the steps name neither.
+  /// Both use the Kaiser-Bessel-derived window and have their delay cut whole. The two share
+  /// window and delay, and read so where the steps name neither.
   FfmpegOrFdk,
-  /// ffmpeg's AAC encoder, by its quantizer's steps.
+  /// AAC encoder of ffmpeg, by its quantizer's steps.
   Ffmpeg,
-  /// fdk-aac, by its quantizer's steps.
+  /// AAC encoder fdk-aac, by its quantizer's steps.
   FdkAac,
   /// Fraunhofer's MP3 encoder, by its quantizer's steps.
   ///
@@ -148,10 +149,11 @@ pub enum Family {
   /// Other encoders leave the steps alone at the highest bitrates, so Shine is named under
   /// them.
   Shine,
-  /// libopus, every version of which delays by 312 samples, or by 120 in its low-delay mode.
+  /// Opus encoder libopus, by its delay.
   ///
-  /// A grid of 20 ms frames is named at the offset the first delay leaves, and a grid of
-  /// shorter frames at the offset either leaves.
+  /// Every version delays by 312 samples, or by 120 in its low-delay mode. A grid of 20 ms
+  /// frames is named at the offset the first delay leaves, and a grid of shorter frames at the
+  /// offset either leaves.
   Libopus,
 }
 
