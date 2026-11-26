@@ -36,7 +36,6 @@ pub(super) fn fold_with<T, U>(
 /// [`fold`] of `frame` times `window`, sample by sample, without the windowed frame in between
 pub(crate) fn fold_windowed<T: Float>(frame: &[T], window: &[T], folded: &mut [T]) {
   let q = folded.len() / 2;
-  // the quarters a, b, c, d
   fn quarters<T>(all: &[T], q: usize) -> [&[T]; 4] {
     let (ab, cd) = all.split_at(2 * q);
     let ((a, b), (c, d)) = (ab.split_at(q), cd.split_at(q));
