@@ -5,9 +5,10 @@
 //! symphonia-format-riff 0.6.1 reads the 32 bits of a RIFF file's data chunk as they are, so
 //! it takes the first for a file of no audio and the third for a short one, and does not know
 //! RF64 (wave/mod.rs, wave/chunks.rs). the source is handed over with the header's sizes
-//! written as the file holds them, and an RF64 file's marker as RIFF's. samples of more than
-//! 32 bits are written as of no stated size, which the reader reads to the end of its source,
-//! so the source ends where they do, and the end of the source is the end of the audio
+//! written as the file holds them, and an RF64 file's marker as RIFF's. samples whose size
+//! 32 bits cannot state, which includes 0xFFFFFFFF itself, are written as of no stated size,
+//! which the reader reads to the end of its source, so the source ends where they do, and the
+//! end of the source is the end of the audio
 //! TODO: remove once a symphonia release reads RF64 and reads a data chunk of no stated size
 //! to the end of its file
 
@@ -62,7 +63,7 @@ pub(super) fn sized(mut source: Box<dyn MediaSource>) -> (Box<dyn MediaSource>, 
 struct Sizes {
   /// the bytes in place of the file's own, each with where it goes
   patches: Vec<(u64, [u8; 4])>,
-  /// where the samples end, when they are more than 32 bits hold and the file holds all its
+  /// where the samples end, when their size is written as unstated and the file holds all its
   /// header states of them
   end: Option<u64>,
 }
@@ -95,8 +96,9 @@ fn sizes(source: &mut dyn MediaSource, length: u64) -> io::Result<Sizes> {
     if chunk.starts_with(DATA) {
       let held = length.saturating_sub(body);
       let samples = samples(stated, wide, held);
-      // more than 32 bits hold is written as not stated
-      let fit = |size: u64| u32::try_from(size).unwrap_or(UNSTATED).to_le_bytes();
+      // a size 32 bits cannot state is written as unstated, as is one of exactly `UNSTATED`
+      let stating = |size: u64| u32::try_from(size).ok().filter(|size| *size != UNSTATED);
+      let fit = |size: u64| stating(size).unwrap_or(UNSTATED).to_le_bytes();
       let mut patches = Vec::new();
       if rf64 {
         patches.push((0, *RIFF));
@@ -109,7 +111,7 @@ fn sizes(source: &mut dyn MediaSource, length: u64) -> io::Result<Sizes> {
       }
       // an RF64 file that holds less than its own chunk states is read to its end as one cut
       let cut = stated == UNSTATED && wide.is_some_and(|wide| wide > held);
-      let end = (samples > u64::from(UNSTATED) && !cut).then_some(body + samples);
+      let end = (stating(samples).is_none() && !cut).then_some(body + samples);
       return Ok(Sizes { patches, end });
     }
     // a chunk of an odd size is followed by a byte of padding
@@ -261,29 +263,30 @@ mod tests {
     assert_eq!(some, [b'F', b'F', whole[4], whole[5]]);
   }
 
-  /// the format chunk of 16-bit stereo at 44.1 kHz
-  fn format() -> Vec<u8> {
+  /// the format chunk of `channels` of `bits` at 44.1 kHz
+  fn format(channels: u16, bits: u16) -> Vec<u8> {
+    let block = channels * bits / 8;
     [
       &b"fmt "[..],
       &16u32.to_le_bytes(),
       &1u16.to_le_bytes(),
-      &2u16.to_le_bytes(),
+      &channels.to_le_bytes(),
       &44_100u32.to_le_bytes(),
-      &176_400u32.to_le_bytes(),
-      &4u16.to_le_bytes(),
-      &16u16.to_le_bytes(),
+      &(44_100 * u32::from(block)).to_le_bytes(),
+      &block.to_le_bytes(),
+      &bits.to_le_bytes(),
     ]
     .concat()
   }
 
-  /// the header of an RF64 file whose own chunk states `wide` bytes of samples, up to the size
-  /// of its data chunk, which states `stated`
-  fn rf64_header(wide: u64, stated: u32) -> Vec<u8> {
+  /// the header of an RF64 file of `format` whose own chunk states `wide` bytes of samples, up
+  /// to the size of its data chunk, which states `stated`
+  fn rf64_header(format: Vec<u8>, wide: u64, stated: u32) -> Vec<u8> {
     let mut bytes = [&RF64[..], &[0xff; 4], WAVE, DS64, &28u32.to_le_bytes()].concat();
     bytes.extend_from_slice(&0u64.to_le_bytes());
     bytes.extend_from_slice(&wide.to_le_bytes());
     bytes.extend_from_slice(&[0; 12]);
-    bytes.extend(format());
+    bytes.extend(format);
     bytes.extend_from_slice(DATA);
     bytes.extend_from_slice(&stated.to_le_bytes());
     bytes
@@ -291,7 +294,7 @@ mod tests {
 
   #[test]
   fn an_rf64_file_cut_short_opens_as_the_same_riff_file_does() {
-    let mut bytes = rf64_header(400_000, 400_000);
+    let mut bytes = rf64_header(format(2, 16), 400_000, 400_000);
     let body = bytes.len() as u32;
     bytes.extend(std::iter::repeat_n(0, 200_000));
     let size = u64::from(body) - 4;
@@ -377,33 +380,46 @@ mod tests {
     }
   }
 
-  /// the frames read of `file` past its `samples` bytes of 16-bit stereo, read from 3 s before
-  /// their end, and why reading stopped
-  fn read_past_the_end(file: Sparse, samples: u64) -> (i64, Option<String>) {
+  /// the frames read of `file` past its `samples` bytes in blocks of `block` bytes at 44.1 kHz,
+  /// read from 3 s before their end, and why reading stopped
+  fn read_past_the_end(file: Sparse, samples: u64, block: u64) -> (i64, Option<String>) {
     let mut decoder = Decoder::from_source(Box::new(file), &Hint::new()).unwrap();
-    let from = samples / 4 / 44_100 - 3;
+    let frames = samples / block;
+    let from = frames / 44_100 - 3;
     decoder.seek(from as f64).unwrap();
     let read = fixtures::rest(&mut decoder);
-    let past = read[0].len() as i64 - (samples / 4 - from * 44_100) as i64;
+    let past = read[0].len() as i64 - (frames - from * 44_100) as i64;
     (past, decoder.stopped)
   }
 
   #[test]
-  fn samples_of_more_than_32_bits_end_where_the_header_says() {
+  fn samples_32_bits_cannot_state_end_where_the_header_says() {
     // 4 GiB and 10 s of samples, then a chunk of bytes that are no audio
     let samples = WRAP + 1_764_000;
     let list = [&b"LIST"[..], &400_000u32.to_le_bytes(), &[0x55; 400_000]].concat();
-    let rf64 = Sparse::new(rf64_header(samples, UNSTATED), samples, list.clone());
-    assert_eq!(read_past_the_end(rf64, samples), (0, None), "RF64");
+    let rf64 = Sparse::new(
+      rf64_header(format(2, 16), samples, UNSTATED),
+      samples,
+      list.clone(),
+    );
+    assert_eq!(read_past_the_end(rf64, samples, 4), (0, None), "RF64");
     let mut riff = [&RIFF[..], &[0; 4], WAVE].concat();
-    riff.extend(format());
+    riff.extend(format(2, 16));
     riff.extend_from_slice(DATA);
     riff.extend_from_slice(&(samples as u32).to_le_bytes());
-    let wrapped = Sparse::new(riff, samples, list);
-    assert_eq!(read_past_the_end(wrapped, samples), (0, None), "wrapped");
+    let wrapped = Sparse::new(riff, samples, list.clone());
+    assert_eq!(read_past_the_end(wrapped, samples, 4), (0, None), "wrapped");
+    // a size of exactly 0xFFFFFFFF is one the reader takes as unstated
+    let whole = u64::from(UNSTATED);
+    let mono = Sparse::new(rf64_header(format(1, 24), whole, UNSTATED), whole, list);
+    assert_eq!(read_past_the_end(mono, whole, 3), (0, None), "0xFFFFFFFF");
     // an RF64 file that holds less than its own chunk states is still one cut short
-    let cut = Sparse::new(rf64_header(samples + 4000, UNSTATED), samples, Vec::new());
-    let (past, stopped) = read_past_the_end(cut, samples);
+    let cut = Sparse::new(
+      rf64_header(format(2, 16), samples + 4000, UNSTATED),
+      samples,
+      Vec::new(),
+    );
+    let (past, stopped) = read_past_the_end(cut, samples, 4);
     assert_eq!(past, 0);
     assert_eq!(stopped.as_deref(), Some(CUT_SHORT), "cut");
   }
