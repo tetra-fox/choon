@@ -269,7 +269,9 @@ pub struct OpusScan {
 /// An Opus decoder runs a comb filter at the pitch of the audio over frames the encoder
 /// marked, which moves their band energies off the lattice. In the windows measured, on the
 /// grid of an uncut decode, pairs of frames with a strong pitch that do not sit on the lattice
-/// are read again with each lag, gain and shape the filter can have taken off them.
+/// are read again with the filter taken off: at the lag that stands out most in them and its
+/// whole fractions down to a quarter, each with the lags beside it, and with each gain and
+/// shape the filter has.
 ///
 /// The filter is searched with one setting held over both frames of a pair, so frames where
 /// it changes are not counted, and neither is a decode whose start was cut.
