@@ -147,7 +147,10 @@ pub enum Family {
   /// Other encoders leave the steps alone at the highest bitrates, so Shine is named under
   /// them.
   Shine,
-  /// libopus, every version of which delays by 312 samples.
+  /// libopus, every version of which delays by 312 samples, or by 120 in its low-delay mode.
+  ///
+  /// A grid of 20 ms frames is named at the offset the first delay leaves, and a grid of
+  /// shorter frames at the offset either leaves.
   Libopus,
 }
 
