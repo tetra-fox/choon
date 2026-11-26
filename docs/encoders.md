@@ -108,7 +108,7 @@ whose cutoff most of the file stops at with a sharp shelf:
 - An MP3 grid of no named encoder, or of one that states no delay, takes LAME's setting
 - LAME 3.90.3 and 3.93.1 cut 128 kbps at 15.2 kHz, where later versions cut 96, so LAME's
   setting there is `~96-128 kbps`. GOGO cuts 128 kbps there too, 160 at 18.5 kHz and 192 at
-  18.9, and reads as LAME's `~96`, `~192` and `~224 kbps`
+  19.3, and reads as LAME's `~96`, `~192` and `~224 kbps`
 - Helix cuts at 16 kHz at every bitrate unless told otherwise, Fraunhofer's codec moves its
   cutoff with the audio, and Shine does not cut, so no setting is named beside them
 - Of the whole decodes of the 26 recordings, 32 of 130 of ffmpeg's AAC show a setting, each its
