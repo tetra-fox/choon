@@ -546,19 +546,8 @@ impl FamilySteps {
       Coarsest, Far, FarIn, FinerIn, HighLog, Joint, Moved, OnesIn, SameIn, TwoCoarser,
     };
     let (least, most) = (StepBound::at_least, StepBound::at_most);
-    // the bounds were placed on decodes of 200 recordings, whole and with their starts cut:
-    // 100 through LAME 3.90.3 to 3.100, Helix, Shine, BladeEnc and GOGO at 96 to 320 kbit/s,
-    // 60 of them through Fraunhofer's codec as Windows ships it and 40 through Apple's, and
-    // the corpus's LAME decodes of 100 more. each stands 0.02 clear of every decode of
-    // another encoder that meets its rule's other bounds, Shine's by 0.001 and 0.1, and
-    // LAME's on the far pairs of its middle region and on its granules as mid and side by
-    // 0.05: GOGO, made from LAME's source, and LAME 3.90.3 and 3.93.1 at a constant bitrate
-    // are the neighbours they are drawn against.
-    //
-    // tested on 26 recordings no bound was placed on, through the same encoders: of the
-    // decodes with their starts cut the rules name 228 of 910 of LAME, 137 of 156 of Helix,
-    // 145 of 156 of Fraunhofer and 70 of 104 of Shine, none of 260 of BladeEnc and GOGO, and
-    // no decode as another encoder's
+    // each bound stands 0.02 clear of every decode of another encoder that meets its rule's other
+    // bounds: Shine's by 0.001 and 0.1, LAME's far pairs and joint granules by 0.05
     Self {
       min_pairs: 2000,
       min_region_pairs: 200,
@@ -608,14 +597,8 @@ impl FamilySteps {
   fn aac() -> Self {
     use StepShare::{Coarsest, FinerIn, Moved, OneIn, SameIn};
     let (least, most) = (StepBound::at_least, StepBound::at_most);
-    // placed on the decodes of 100 of those recordings through fdk-aac and Nero, 60 through
-    // ffmpeg's encoder with the corpus's ffmpeg decodes of 100 more, at 96 to 256 kbit/s,
-    // each bound 0.02 clear as MP3's are.
-    //
-    // tested on the same 26 recordings: of the decodes with their starts cut the rules name
-    // 112 of 130 of ffmpeg and 141 of 208 of fdk-aac, and no decode as another encoder's.
-    // Nero's steps lie beside fdk-aac's at 256 kbit/s: bounds placed for Nero name 6 of the
-    // test's fdk-aac decodes as Nero's, so Nero has no rule and is named by its offset alone
+    // each bound stands 0.02 clear, as MP3's do. Nero's steps lie beside fdk-aac's at 256 kbit/s,
+    // so Nero has no rule and is named by its offset alone
     Self {
       min_pairs: 2000,
       min_region_pairs: 200,
