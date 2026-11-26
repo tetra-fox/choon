@@ -378,7 +378,7 @@ enum Samples {
 fn guarded<T>(decode: impl FnOnce() -> T) -> Option<T> {
   let decoded = catch_unwind(AssertUnwindSafe(decode));
   if decoded.is_err() {
-    warn!("a panic in the WavPack decoder was caught, its block skipped");
+    warn!("a panic in the WavPack decoder was caught, its block not decoded");
   }
   decoded.ok()
 }
