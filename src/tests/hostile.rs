@@ -247,8 +247,7 @@ proptest::proptest! {
     survives(input);
   }
 
-  /// arbitrary bytes, and a real file's header followed by arbitrary bytes, are read without a
-  /// panic, as a reading of some kind
+  /// arbitrary bytes, alone and after the start of a FLAC, WAVE or MP3 file
   #[test]
   fn any_bytes_are_read_without_panicking(
     bytes in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..4096),
