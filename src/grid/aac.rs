@@ -96,8 +96,8 @@ impl Aac {
   }
 
   /// the active count summed over the long frames of `segment`, for each offset of the grid
-  /// from its first sample. every offset counts the same frames. runs of offsets are tasks on
-  /// rayon's thread pool, each with an analysis of its own.
+  /// from its first sample. every offset counts the same number of frames. runs of offsets are
+  /// tasks on rayon's thread pool, each with an analysis of its own.
   pub(super) fn curve(segment: &Segment, window: Window) -> Vec<f64> {
     let channel =
       |samples: &[f64]| Strided::new(&samples.iter().map(|s| *s as f32).collect::<Vec<_>>());
