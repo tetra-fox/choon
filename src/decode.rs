@@ -1149,7 +1149,7 @@ mod tests {
   #[test]
   fn a_seek_that_lands_past_its_position_fails() {
     // the WebM's blocks state no duration, so its reader lands on the first block that starts
-    // at or after a position, not on the one that holds it
+    // at or after a position, which is the block after the one that holds it
     let audio = fixtures::music_for(12, 3, 48_000, fixtures::pink);
     let bytes = fixtures::opus(&audio, OpusSettings::music(128)).webm();
     let mut decoder =
