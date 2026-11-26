@@ -45,7 +45,7 @@ const ALIAS: [f64; 8] = [
   -0.6, -0.535, -0.33, -0.185, -0.095, -0.041, -0.0142, -0.0037,
 ];
 
-/// subband samples per granule and the lines each subband's MDCT gives
+/// the subband samples a granule's MDCT reads and the lines it gives each subband
 const SUBBAND_SAMPLES: usize = 36;
 const LINES: usize = 18;
 const SUBBANDS: usize = 32;
