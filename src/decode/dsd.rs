@@ -819,10 +819,10 @@ impl RegisterableAudioDecoder for DsdDecoder {
 mod tests {
   use super::*;
 
-  /// the gain of the filter from one-bit samples at 64 times 44.1 kHz to PCM at `hz`, in dB.
-  /// the filter is linear, so flipping one bit of silence gives its response to one sample;
-  /// a flip at each of the sixteen places a PCM sample spans gives the response at every
-  /// one-bit sample, which is summed against a tone
+  /// the gain at `hz` of the filter from one-bit samples at 64 times 44.1 kHz to PCM at four
+  /// times 44.1 kHz, in dB. the filter is linear, so flipping one bit of silence gives its
+  /// response to one sample; a flip at each of the sixteen places a PCM sample spans gives the
+  /// response at every one-bit sample, which is summed against a tone
   fn gain_db(hz: f64) -> f64 {
     let (rate, pcm) = (2_822_400u32, 176_400u32);
     let decimation = (rate / pcm) as usize;
