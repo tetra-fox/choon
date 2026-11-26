@@ -108,8 +108,7 @@
   }
 
   function start() {
-    // a worker made from a blob is held to the page's policy, connections included. one made
-    // from its URL is held to the policy its own response states, and a static host states none.
+    // a worker made from a blob is held to the page's policy: web/README.md has the reasoning.
     // the worker's URL is relative to the page
     const source = `import ${JSON.stringify(new URL(workerUrl, document.baseURI))};`;
     const blob = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
