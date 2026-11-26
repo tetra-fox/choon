@@ -140,7 +140,10 @@ impl From<std::io::Error> for Unread {
 }
 
 /// the DSF or DSDIFF header at the start of `file`, which is `length` bytes long
-fn read_header(file: &mut (impl Read + Seek), length: u64) -> std::result::Result<Header, Unread> {
+fn read_header(
+  file: &mut MediaSourceStream<'_>,
+  length: u64,
+) -> std::result::Result<Header, Unread> {
   let mut magic = [0u8; 4];
   file.read_exact(&mut magic)?;
   match &magic {
@@ -150,7 +153,7 @@ fn read_header(file: &mut (impl Read + Seek), length: u64) -> std::result::Resul
   }
 }
 
-fn dsf(file: &mut impl Read, length: u64) -> std::result::Result<Header, Unread> {
+fn dsf(file: &mut MediaSourceStream<'_>, length: u64) -> std::result::Result<Header, Unread> {
   // the rest of the DSD chunk (24 bytes), the fmt chunk (52) and the data chunk's header (12)
   let mut head = [0u8; 88];
   file.read_exact(&mut head)?;
@@ -204,7 +207,7 @@ fn dsf(file: &mut impl Read, length: u64) -> std::result::Result<Header, Unread>
   })
 }
 
-fn dff(file: &mut (impl Read + Seek), length: u64) -> std::result::Result<Header, Unread> {
+fn dff(file: &mut MediaSourceStream<'_>, length: u64) -> std::result::Result<Header, Unread> {
   let overflow = || Unread::Why("dsd: a DSDIFF chunk's size is out of range");
   let mut head = [0u8; 12];
   file.read_exact(&mut head)?;
