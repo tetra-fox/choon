@@ -200,6 +200,21 @@ the wasm in `web/page/wasm` (`tests/run.mjs`), and compares the JSON with what t
 returns natively. It also compares `words` with the lines the program prints for the same
 files.
 
+- Files compared: FLAC, FLAC decoded from MP3 and from Opus, MP3, Opus in Ogg, WebM and MP4,
+  FLAC in Ogg, WAV, RF64, AIFF, CAF, WavPack, Monkey's Audio, DSF, DSDIFF, ALAC, HE-AAC in MP4
+  and ADTS, HE-AAC v2 and MP2. Each opens from its bytes with no file name
+- Everything but the floats is the same: the verdicts, a grid's codec, family and offset, the
+  flags, the summary and the limitations
+- The floats differ by at most 6.1e-5 of their value: 2.6e-16 in a lossless file with no
+  grid, 1.8e-6 in the two with one, and the most in the MP2 file, where a shelf of 91.29 dB
+  reads 0.006 dB lower. The test allows 1e-3
+- Vorbis and AAC-LC are not compared, as nothing here encodes them
+- The two error cases, bytes that are not audio and a hybrid WavPack file, throw the message
+  the library gives
+- No file here makes the wasm trap. ape-decoder's panic on a damaged Monkey's Audio file is an
+  overflow check, which a release build leaves out: the two damaged files saved in
+  `proptest-regressions/tests/hostile.txt` give a reading in the release wasm
+
 `tests/page.rs` opens the page from a local server in a headless Chromium, over the DevTools
 protocol, and in a headless Firefox, over WebDriver BiDi (`tests/page.mjs`), and gives it
 generated files:
@@ -219,18 +234,3 @@ generated files:
 - The page reads a file when the server sends the policy as a header too
 - `SHOTS=dir` writes Chromium's screenshots of the page there, at desktop and phone width,
   light and dark
-
-- Files compared: FLAC, FLAC decoded from MP3 and from Opus, MP3, Opus in Ogg, WebM and MP4,
-  FLAC in Ogg, WAV, RF64, AIFF, CAF, WavPack, Monkey's Audio, DSF, DSDIFF, ALAC, HE-AAC in MP4
-  and ADTS, HE-AAC v2 and MP2. Each opens from its bytes with no file name
-- Everything but the floats is the same: the verdicts, a grid's codec, family and offset, the
-  flags, the summary and the limitations
-- The floats differ by at most 6.1e-5 of their value: 2.6e-16 in a lossless file with no
-  grid, 1.8e-6 in the two with one, and the most in the MP2 file, where a shelf of 91.29 dB
-  reads 0.006 dB lower. The test allows 1e-3
-- Vorbis and AAC-LC are not compared, as nothing here encodes them
-- The two error cases, bytes that are not audio and a hybrid WavPack file, throw the message
-  the library gives
-- No file here makes the wasm trap. ape-decoder's panic on a damaged Monkey's Audio file is an
-  overflow check, which a release build leaves out: the two damaged files saved in
-  `proptest-regressions/tests/hostile.txt` give a reading in the release wasm
