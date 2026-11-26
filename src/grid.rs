@@ -468,7 +468,7 @@ pub struct Scan {
   /// `None` in measures kept by a version of the analyzer that did not scan for it.
   #[cfg_attr(feature = "serde", serde(default))]
   pub mp2: Option<CodecScan>,
-  /// MP3's quantizer steps on that grid.
+  /// MP3's quantizer steps on the grid of `mp3`.
   ///
   /// `None` at a sample rate other than 32, 44.1 and 48 kHz, and in measures kept by a version
   /// of the analyzer that did not look for them.
