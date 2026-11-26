@@ -308,9 +308,9 @@ impl<'a> Analyzer<'a> {
     best
   }
 
-  /// how many bins from `holes_from_hz` to `holes_to_hz`, below `cutoff`, are much quieter than
-  /// the bins around them, per bin that is not, averaged over the window's frames. `None` when
-  /// less than a kilohertz of that band is below the cutoff.
+  /// how many bins from `holes_from_hz` to `holes_to_hz`, and no nearer `cutoff` than twice
+  /// `shelf_gap_hz`, are much quieter than the bins around them, per bin that is not, averaged
+  /// over the window's frames. `None` when that leaves less than a kilohertz.
   fn holes(&self, cutoff: f64) -> Option<f64> {
     let t = self.thresholds;
     let high = t.holes_to_hz.min(cutoff - t.shelf_gap_hz * 2.0);
