@@ -60,10 +60,11 @@ vorbis-tools, fdkaac, flac, WavPack and Monkey's Audio. It also writes
 `run.py RESULTS.tsv BINARY...` reads each file alone with each binary as a line, as JSON and
 as JSON sampled at 20 windows, with a minute's timeout (twenty for the hours-long files), and
 writes the exit status, wall time and peak memory of every run. The manifest lists the long
-files whether or not they were made, and a case whose file is not there is left out. The first binary's reading is judged against the expectation.
-Another binary that reads the file differently, and a sampled read that does, is noted beside
-it. A second binary built with `-C debug-assertions -C overflow-checks` turns an integer
-overflow that a release build wraps into a panic.
+files whether or not they were made, and a case whose file is not there is left out.
+The first binary's reading is judged against the expectation. Another binary that reads the
+file differently, and a sampled read that does, is noted beside it. A second binary built
+with `-C debug-assertions -C overflow-checks` turns an integer overflow that a release build
+wraps into a panic.
 
 The outcomes: `as documented`, `worse`, `undocumented`, and by name the failures that matter
 most: `FALSE ACCUSATION` (an honest file read as lossy), `CRASH`, `HANG`, `OVERCLAIM` (a
