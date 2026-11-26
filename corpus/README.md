@@ -48,19 +48,26 @@ The masters are only ever read. No audio is kept in the repository.
 
 A master gives about 100 files:
 
-| Kind                  | Files                                                                       |
-| --------------------- | --------------------------------------------------------------------------- |
-| Master and its copies | resampled to the other rate and back, upsampled to 96 kHz, dithered to 16 bits, lowpassed at 16, 19 and 20 kHz |
-| MP3 (LAME)            | CBR 96, 128, 160, 192, 256, 320 kbps and V0 to V9                           |
-| AAC (ffmpeg)          | 96, 128, 192, 256 kbps                                                      |
-| Opus (libopus)        | 64, 96, 128, 192, 256 kbps                                                  |
-| Vorbis (libvorbis)    | q2 to q8 and q10                                                            |
-| MP2 (ffmpeg)          | 128, 192, 256, 384 kbps                                                     |
-| WMA (ffmpeg)          | 64, 128, 192, 320 kbps                                                      |
-| AC-3 (ffmpeg)         | 192, 384, 448, 640 kbps                                                     |
-| E-AC-3 (ffmpeg)       | 192, 384 kbps                                                               |
-| Encoded twice         | MP3, AAC, Opus or Vorbis decoded and encoded again as MP3                   |
-| Altered decodes       | of MP3 CBR 128, CBR 320, V0 and AAC 128, 256: decoded to 16 bits, by mpg123, LAME and FAAD2, dithered, gained by 3 dB up and down, peak normalized, resampled between 44.1 and 48 kHz |
+| Kind                  | Files                                                     |
+| --------------------- | --------------------------------------------------------- |
+| Master and its copies | the master and its lossless copies                        |
+| MP3 (LAME)            | CBR 96, 128, 160, 192, 256, 320 kbps and V0 to V9         |
+| AAC (ffmpeg)          | 96, 128, 192, 256 kbps                                    |
+| Opus (libopus)        | 64, 96, 128, 192, 256 kbps                                |
+| Vorbis (libvorbis)    | q2 to q8 and q10                                          |
+| MP2 (ffmpeg)          | 128, 192, 256, 384 kbps                                   |
+| WMA (ffmpeg)          | 64, 128, 192, 320 kbps                                    |
+| AC-3 (ffmpeg)         | 192, 384, 448, 640 kbps                                   |
+| E-AC-3 (ffmpeg)       | 192, 384 kbps                                             |
+| Encoded twice         | MP3, AAC, Opus or Vorbis decoded and encoded again as MP3 |
+| Altered decodes       | decodes of five encodes, altered                          |
+
+- The copies: resampled to the other rate and back, upsampled to 96 kHz, dithered to 16 bits,
+  lowpassed at 16, 19 and 20 kHz
+- The altered decodes are of MP3 CBR 128, CBR 320 and V0 and of AAC 128 and 256
+- Each of those encodes is decoded to 16 bits, by ffmpeg and by mpg123, LAME or FAAD2, and
+  that decode is dithered, gained by 3 dB up and down, peak normalized, and resampled between
+  44.1 and 48 kHz
 
 MP2, WMA, AC-3, E-AC-3 and Vorbis q10 are encoded in memory each run; the rest are kept under
 `DIR/lossy`.
