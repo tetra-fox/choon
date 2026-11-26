@@ -1089,6 +1089,24 @@ mod tests {
   }
 
   #[test]
+  fn a_webm_of_60_ms_opus_frames_times_each_packet_after_the_last() {
+    let settings = OpusSettings {
+      frame: 2880,
+      ..OpusSettings::music(64)
+    };
+    let mut decoder = opened(fixtures::opus(&tone_48k(1), settings).webm());
+    let mut starts = Vec::new();
+    while let Some(packet) = decoder.format.next_packet().unwrap() {
+      starts.push(packet.pts.get());
+    }
+    // three seconds and the pre-skip in 60 ms frames, 16 frames to a cluster
+    assert_eq!(starts.len(), 51);
+    for pair in starts.windows(2) {
+      assert_eq!(pair[1] - pair[0], 60, "{starts:?}");
+    }
+  }
+
+  #[test]
   fn an_opus_headers_output_gain_scales_the_samples() {
     let audio = tone_48k(1);
     let plain = fixtures::opus(&audio, OpusSettings::music(96));

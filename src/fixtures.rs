@@ -1141,7 +1141,7 @@ impl OpusStream {
 
   /// Returns the stream in a WebM container.
   ///
-  /// Each cluster holds a second of packets. The container counts in milliseconds and does not
+  /// Each cluster holds up to a second of packets. The container counts in milliseconds and does not
   /// state where the audio ends, so a reader gets the frames that pad the last packet too.
   pub fn webm(&self) -> Vec<u8> {
     let unsigned = |value: u64| -> Vec<u8> {
@@ -1190,8 +1190,9 @@ impl OpusStream {
       .packets
       .chunks(per_cluster)
       .enumerate()
-      .flat_map(|(second, packets)| {
-        let mut cluster = ebml(&[0xe7], &unsigned(second as u64 * 1000));
+      .flat_map(|(number, packets)| {
+        let start_ms = number * per_cluster * self.settings.frame / 48;
+        let mut cluster = ebml(&[0xe7], &unsigned(start_ms as u64));
         for (index, packet) in packets.iter().enumerate() {
           let ms = (index * self.settings.frame / 48) as i16;
           // track 1, the time within the cluster, a keyframe
