@@ -80,9 +80,10 @@ fn patches(source: &mut dyn MediaSource, length: u64) -> io::Result<Vec<(u64, [u
       if rf64 {
         patches.push((0, *RIFF));
       }
-      // the file's own size goes with its samples', which the reader holds it to
+      // the reader refuses a data chunk that runs past the file's own size, so that size holds
+      // the samples, the ones a file cut short is missing too
       if rf64 || fit(samples) != stated.to_le_bytes() {
-        patches.push((4, fit(length - CHUNK)));
+        patches.push((4, fit((body + samples).max(length) - CHUNK)));
         patches.push((at + 4, fit(samples)));
       }
       return Ok(patches);
@@ -151,6 +152,9 @@ impl MediaSource for Patched {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::decode::{CUT_SHORT, Decoder};
+  use crate::fixtures;
+  use symphonia::core::formats::probe::Hint;
 
   /// a WAVE file of `samples` bytes of samples that states `stated` of them, with a chunk of
   /// odd size before them and `after` bytes of another after them
@@ -228,6 +232,56 @@ mod tests {
     let mut some = [0; 4];
     source.read_exact(&mut some).unwrap();
     assert_eq!(some, [b'F', b'F', whole[4], whole[5]]);
+  }
+
+  /// the format chunk of 16-bit stereo at 44.1 kHz
+  fn format() -> Vec<u8> {
+    [
+      &b"fmt "[..],
+      &16u32.to_le_bytes(),
+      &1u16.to_le_bytes(),
+      &2u16.to_le_bytes(),
+      &44_100u32.to_le_bytes(),
+      &176_400u32.to_le_bytes(),
+      &4u16.to_le_bytes(),
+      &16u16.to_le_bytes(),
+    ]
+    .concat()
+  }
+
+  /// the header of an RF64 file whose own chunk states `wide` bytes of samples, up to the size
+  /// of its data chunk, which states `stated`
+  fn rf64_header(wide: u64, stated: u32) -> Vec<u8> {
+    let mut bytes = [&RF64[..], &[0xff; 4], WAVE, DS64, &28u32.to_le_bytes()].concat();
+    bytes.extend_from_slice(&0u64.to_le_bytes());
+    bytes.extend_from_slice(&wide.to_le_bytes());
+    bytes.extend_from_slice(&[0; 12]);
+    bytes.extend(format());
+    bytes.extend_from_slice(DATA);
+    bytes.extend_from_slice(&stated.to_le_bytes());
+    bytes
+  }
+
+  #[test]
+  fn an_rf64_file_cut_short_opens_as_the_same_riff_file_does() {
+    let mut bytes = rf64_header(400_000, 400_000);
+    let body = bytes.len() as u32;
+    bytes.extend(std::iter::repeat_n(0, 200_000));
+    let size = u64::from(body) - 4;
+    assert_eq!(
+      patched(bytes.clone()),
+      [
+        (0, *RIFF),
+        (4, (body + 400_000 - 8).to_le_bytes()),
+        (size, 400_000u32.to_le_bytes())
+      ]
+    );
+    let mut decoder =
+      Decoder::from_source(Box::new(io::Cursor::new(bytes)), &Hint::new()).unwrap();
+    assert_eq!(decoder.claimed.frames, Some(100_000));
+    let read = fixtures::rest(&mut decoder);
+    assert_eq!(read[0].len(), 50_000);
+    assert_eq!(decoder.stopped.as_deref(), Some(CUT_SHORT));
   }
 
   #[test]
