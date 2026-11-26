@@ -658,10 +658,11 @@ fn check_group(
       (path, read.map(Box::new))
     }
     // a line that names no file is named by where it is
-    Err(why) => (
-      PathBuf::from(format!("{}:{}", measures.display(), group.line)),
-      Err(Unread::NotRead(why)),
-    ),
+    Err(why) => {
+      let mut named = measures.as_os_str().to_owned();
+      named.push(format!(":{}", group.line));
+      (PathBuf::from(named), Err(Unread::NotRead(why)))
+    }
   };
   let done = Event::Done {
     file,

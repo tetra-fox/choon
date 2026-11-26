@@ -314,6 +314,21 @@ fn a_line_and_a_complaint_hold_the_bytes_of_a_path_that_is_not_unicode() {
   assert!(starts(&output.stdout, &tone, b""), "{output:?}");
   assert!(starts(&output.stdout, &text, b""), "{output:?}");
   assert!(starts(&output.stderr, &gone, b"choon: "), "{output:?}");
+
+  // a damaged line of a measures file is named by the file and the line
+  let damaged = dir.path().join(OsStr::from_bytes(b"damaged\xff.jsonl"));
+  std::fs::write(&damaged, "garbage\n").unwrap();
+  let from = |measures: &Path| {
+    Command::new(env!("CARGO_BIN_EXE_choon"))
+      .args([OsStr::new("check"), OsStr::new("--from-measures")])
+      .arg(measures)
+      .output()
+      .unwrap()
+  };
+  let output = from(&damaged);
+  assert_eq!(status(&output), 2, "{output:?}");
+  let wanted = [damaged.as_os_str().as_bytes(), b":1: "].concat();
+  assert!(output.stdout.starts_with(&wanted), "{output:?}");
 }
 
 #[test]
