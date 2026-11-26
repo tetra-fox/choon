@@ -393,6 +393,14 @@ fn run(check: &Check) -> Result<u8, Failed> {
     // clap lets neither through without the other
     _ => Coverage::Full,
   };
+  // made before the files are gathered, so a run that finds none still leaves an empty file
+  let mut keep = match &check.save_measures {
+    Some(path) => Some(Keep {
+      path,
+      file: File::create(path).map_err(|e| Failed::Measures(path.clone(), e))?,
+    }),
+    None => None,
+  };
   let mut code = CLEAN;
   // the directories named, which a terminal lists their files under
   let mut roots = Vec::new();
@@ -427,13 +435,6 @@ fn run(check: &Check) -> Result<u8, Failed> {
   let total = match &source {
     Source::Files(files) => OnceLock::from(files.len()),
     Source::Kept(..) => OnceLock::new(),
-  };
-  let mut keep = match &check.save_measures {
-    Some(path) => Some(Keep {
-      path,
-      file: File::create(path).map_err(|e| Failed::Measures(path.clone(), e))?,
-    }),
-    None => None,
   };
   let jobs = match check.jobs {
     Some(jobs) => jobs.get(),

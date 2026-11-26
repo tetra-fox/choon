@@ -708,6 +708,13 @@ fn measures_saved_are_read_again_as_a_check_prints_them() {
   let output = choon(&["--from-measures", &measures, &honest]);
   assert_eq!(status(&output), 2, "{output:?}");
   assert!(output.stdout.is_empty(), "{output:?}");
+
+  // a run that finds no audio file still replaces the measures file, with no lines
+  let silent = dir.path().join("silent");
+  std::fs::create_dir(&silent).unwrap();
+  let output = choon(&["--save-measures", &measures, &path(&silent)]);
+  assert_eq!(status(&output), 0, "{output:?}");
+  assert_eq!(std::fs::read_to_string(&measures).unwrap(), "");
 }
 
 #[test]
