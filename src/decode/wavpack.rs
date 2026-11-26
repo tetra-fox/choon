@@ -50,6 +50,8 @@ const REFUSED_HYBRID: &str =
   "wavpack: hybrid WavPack without its correction file is lossy and is not read";
 /// why a file of DSD is refused, by its flags or by the decoder
 const REFUSED_DSD: &str = "wavpack: DSD in WavPack is not read";
+/// why a file is refused that ends, or runs past [`MAX_LEADING_BLOCKS`], before a block with audio
+const REFUSED_NO_AUDIO: &str = "wavpack: the file holds no block with audio";
 
 const FORMAT: FormatInfo = FormatInfo {
   format: FORMAT_ID_WAVPACK,
@@ -175,7 +177,7 @@ impl<'s> WavPackReader<'s> {
     let (header, block) = loop {
       let at = reader.pos();
       let Some(header) = next_header(&mut reader)? else {
-        return refused("wavpack: the file holds no block with audio");
+        return refused(REFUSED_NO_AUDIO);
       };
       if header.flags & DSD != 0 {
         return refused(REFUSED_DSD);
@@ -190,7 +192,7 @@ impl<'s> WavPackReader<'s> {
       }
       leading += 1;
       if leading == MAX_LEADING_BLOCKS {
-        return refused("wavpack: the file holds no block with audio");
+        return refused(REFUSED_NO_AUDIO);
       }
     };
     let Some(decoded) = guarded(|| wavicle::decode_stream(&block)) else {
