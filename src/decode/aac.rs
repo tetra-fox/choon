@@ -1,5 +1,6 @@
-//! decodes AAC through `rusty_aac` behind symphonia's decoder interface: AAC-LC, and HE-AAC with
-//! the spectral band replication and parametric stereo symphonia's own decoder leaves out
+//! decodes AAC through `rusty_aac` behind symphonia's decoder interface: AAC-LC, AAC-ELD, and
+//! HE-AAC with the spectral band replication and parametric stereo symphonia's own decoder
+//! leaves out
 
 // TODO: remove this module and the rusty_aac dependency once a symphonia release decodes SBR and
 // PS (https://github.com/pdeljanov/Symphonia/pull/473)
