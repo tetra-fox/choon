@@ -797,7 +797,7 @@ pub(crate) fn rest(decoder: &mut Decoder) -> Vec<Vec<f32>> {
 
 /// Returns `audio` through an MP3 encoder at `bitrate` and decoded again.
 ///
-/// It is how a transcode starts.
+/// It is how a transcode starts. The MP3 is written in `dir`, named by its bitrate.
 pub fn through_mp3(audio: &Audio, bitrate: Bitrate, dir: &Path) -> Audio {
   let mp3 = dir.join(format!("through-{}.mp3", bitrate as u32));
   write_mp3(audio, bitrate, &mp3);
