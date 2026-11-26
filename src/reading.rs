@@ -36,9 +36,13 @@ const HI_RES_TOP_HZ: f64 = 24_000.0;
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum Verdict {
-  /// Audio that reaches the top of the claimed band in nearly every window.
+  /// Audio whose band fits what the file claims.
   ///
-  /// It does so without an encoder's shelf.
+  /// Nearly every window reaches the top of the claimed band without an encoder's shelf. Content
+  /// that nearly everywhere stops short of the top without a sharp shelf reads as consistent
+  /// too where it rolls off from [`ReadingThresholds::natural_limit`] of the top or above, with
+  /// [`Limitation::EarlyRollOff`]. A file that claims a lossy codec also reads as consistent
+  /// where its cutoff is at or above what an encoder at its bitrate keeps.
   Consistent,
   /// Samples that show a codec's frame grid.
   ///
@@ -58,7 +62,14 @@ pub enum Verdict {
   /// encoder cuts and a decode resampled afterwards both look like this, and so does a file
   /// whose grid scan did not run.
   PossiblyLossy,
-  /// Too little audio, or measures that fit no pattern.
+  /// Too little audio, or measures that fit no pattern or fit two explanations.
+  ///
+  /// Two explanations fit a sharp cutoff or a step under a full band where the highest bitrates
+  /// cut, which a recording filtered when it was made shows too; a cliff at the top of a lower
+  /// sample rate's band where an encoder also cuts; a lossy file's cutoff below what its
+  /// bitrate keeps but too near it to call a transcode; and content that rolls off gently below
+  /// [`ReadingThresholds::natural_limit`] of the top, as band-limited recordings do. The summary
+  /// names what fits.
   Inconclusive,
 }
 

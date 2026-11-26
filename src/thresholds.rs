@@ -139,8 +139,11 @@ pub struct ReadingThresholds {
   pub few_seconds_over: f64,
   /// Share of windows at the top of the band for consistent content.
   ///
-  /// At least this share of windows must reach the top for the content to be consistent with
-  /// its claim.
+  /// Content reads as reaching the top of its band where at least this share of windows does.
+  /// Where this share of windows reaches the top or stops without a sharp shelf, the content
+  /// reads as a gentle roll-off: consistent from [`natural_limit`](Self::natural_limit) of the
+  /// top up, inconclusive below it. A lossy file where neither holds is read by its
+  /// [`ceiling`](Self::ceiling).
   pub consistent_share: f64,
   /// Share of windows that stop at one encoder cutoff for a transcode.
   pub transcode_share: f64,
