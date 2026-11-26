@@ -202,7 +202,7 @@ pub enum NamedBy {
   Steps,
   /// Offset of the grid, with the window for AAC, which a cut start moves.
   Offset,
-  /// The steps and the offset, which name the same family.
+  /// Steps and offset, which name the same family.
   Both,
 }
 
