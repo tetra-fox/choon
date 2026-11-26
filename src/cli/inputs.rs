@@ -17,10 +17,27 @@ pub const EXTENSIONS: [&str; 20] = [
 /// something a walk could not read
 pub struct Problem {
   pub path: PathBuf,
-  pub why: String,
+  pub why: Why,
+}
+
+impl Problem {
   /// whether files may have gone unread because of it. a link that loops leads only to files
   /// the walk reads anyway
-  pub unread: bool,
+  pub fn unread(&self) -> bool {
+    match self.why {
+      Why::Loops(_) => false,
+      Why::Failed(_) => true,
+    }
+  }
+}
+
+/// why a walk could not read a path
+pub enum Why {
+  /// the path is a link back to this directory above it, kept as a path so that stderr shows
+  /// it as it shows the link
+  Loops(PathBuf),
+  /// anything else, in words
+  Failed(String),
 }
 
 /// a file to read
@@ -95,11 +112,10 @@ impl Inputs {
         Err(e) => self.problems.push(Problem {
           path: e.path().unwrap_or(path).to_path_buf(),
           why: match (e.loop_ancestor(), e.io_error()) {
-            (Some(ancestor), _) => format!("the link loops back to {}", ancestor.display()),
-            (None, Some(io)) => io.to_string(),
-            (None, None) => e.to_string(),
+            (Some(ancestor), _) => Why::Loops(ancestor.to_path_buf()),
+            (None, Some(io)) => Why::Failed(io.to_string()),
+            (None, None) => Why::Failed(e.to_string()),
           },
-          unread: e.loop_ancestor().is_none(),
         }),
       }
     }

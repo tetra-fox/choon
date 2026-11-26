@@ -32,7 +32,7 @@ use clap::{Args, ColorChoice, Parser, Subcommand};
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use serde::{Deserialize, Serialize};
 
-use crate::cli::inputs::{EXTENSIONS, Found, Inputs};
+use crate::cli::inputs::{EXTENSIONS, Found, Inputs, Problem, Why};
 use crate::cli::measures::{self, Group, Groups, Kept};
 use crate::cli::terminal::{self, Bars, Counted, Look, Row};
 use crate::cli::words::{self, lossy};
@@ -418,9 +418,8 @@ fn run(check: &Check) -> Result<u8, Failed> {
       )
       .map_err(Failed::Stdin)?;
       for problem in &inputs.problems {
-        let terminal = io::stderr().is_terminal();
-        complain(&complaint(&problem.path, problem.why.as_bytes(), terminal));
-        if problem.unread {
+        complain(&problem_complaint(problem, io::stderr().is_terminal()));
+        if problem.unread() {
           code = FAILED;
         }
       }
@@ -1002,6 +1001,17 @@ fn complaint(path: &Path, why: &[u8], terminal: bool) -> Vec<u8> {
   [b"choon: ", &*on_stderr(path, terminal), b": ", why].concat()
 }
 
+/// what stderr says of `problem`, with the directory a link loops back to shown as its path is
+fn problem_complaint(problem: &Problem, terminal: bool) -> Vec<u8> {
+  let why = match &problem.why {
+    Why::Loops(ancestor) => {
+      Cow::Owned([b"the link loops back to ", &*on_stderr(ancestor, terminal)].concat())
+    }
+    Why::Failed(why) => Cow::Borrowed(why.as_bytes()),
+  };
+  complaint(&problem.path, &why, terminal)
+}
+
 /// writes `line` and a newline to stderr in one write, and panics where that fails, as
 /// `eprintln!` does
 fn complain(line: &[u8]) {
@@ -1258,5 +1268,29 @@ fn detailed(status: String, found: &[String]) -> String {
     status
   } else {
     format!("{status} ({})", found.join(", "))
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use crate::cli::inputs::{Problem, Why};
+  use crate::problem_complaint;
+
+  #[test]
+  fn the_directory_a_link_loops_back_to_is_shown_as_the_link_is() {
+    let problem = Problem {
+      path: "ev\u{1b}[31mil/sub/back".into(),
+      why: Why::Loops("ev\u{1b}[31mil".into()),
+    };
+    let shown = |terminal| String::from_utf8(problem_complaint(&problem, terminal)).unwrap();
+    assert_eq!(
+      shown(true),
+      "choon: ev\\u{1b}[31mil/sub/back: the link loops back to ev\\u{1b}[31mil"
+    );
+    // off a terminal both paths are as they are, as a piped line holds them
+    assert_eq!(
+      shown(false),
+      "choon: ev\u{1b}[31mil/sub/back: the link loops back to ev\u{1b}[31mil"
+    );
   }
 }
