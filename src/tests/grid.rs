@@ -146,7 +146,7 @@ fn a_decode_converted_between_44_1_and_48_khz_carries_its_grid_at_the_rate_it_wa
 }
 
 #[test]
-fn a_transform_decode_carries_the_aac_grid_under_the_window_it_was_coded_with() {
+fn a_transform_decode_carries_the_grid_of_the_window_it_was_coded_with() {
   let dir = tempfile::tempdir().unwrap();
   let source = music(1, 44_100, pink);
   let apart = |a: &[f32], b: &[f32]| -> f64 {
