@@ -242,7 +242,7 @@
     } else {
       taking = false;
       notice =
-        "This browser lacks WebAssembly SIMD, which the analyzer needs. No file can be read here";
+        "This browser lacks WebAssembly SIMD, which the analyzer needs to read a file";
     }
   });
 </script>
