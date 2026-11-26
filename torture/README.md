@@ -29,7 +29,7 @@ vorbis-tools, fdkaac, flac, WavPack and Monkey's Audio. It also writes
    - `nothing says` where nothing does
 4. how the file was made
 
-| Expectation        | A case passes when                                                         |
+| Expectation        | Condition                                                                  |
 | ------------------ | -------------------------------------------------------------------------- |
 | `honest`           | the verdict is consistent or inconclusive, with no grid, and the exit is 0 |
 | `consistent`       | the verdict is consistent                                                  |
@@ -42,6 +42,9 @@ vorbis-tools, fdkaac, flac, WavPack and Monkey's Audio. It also writes
 | `unread`           | it is not read                                                             |
 | `other`            | it is read, and no encoder family is named; the codec is not looked for    |
 | `open`             | it is read or refused without a crash; nothing documents which             |
+
+- A case that meets its condition is `as documented`, or `undocumented` for `other` and
+  `open`, as nothing documents their reading
 
 ## File names
 
