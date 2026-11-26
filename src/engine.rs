@@ -225,8 +225,8 @@ pub struct Measured {
   pub sampled: bool,
   /// Scan of the samples for a codec's frame grid.
   ///
-  /// `None` for a file that claims a lossy codec, one too short for the scan, or one whose
-  /// scan could not run, which [`Reading::limitations`](crate::Reading::limitations) says.
+  /// `None` for a file that claims a lossy codec, a DSD file, one too short for the scan, or one
+  /// whose scan could not run, which [`Reading::limitations`](crate::Reading::limitations) says.
   pub grid: Option<Scan>,
   /// the channels left out of a file with more than two
   pub(crate) channels_left_out: u32,
@@ -358,8 +358,8 @@ impl MediaSource for Watched {
 /// A FIFO waits for its writer when it is opened. That wait ends too when the analysis is
 /// canceled or its time is up.
 ///
-/// A file that claims a lossless format is then scanned for a codec's frame grid in four
-/// stretches of its samples ([`grid`]). The scan's jobs, one for each codec looked for in each
+/// A file that claims a lossless format other than DSD is then scanned for a codec's frame grid
+/// in four stretches of its samples ([`grid`]). The scan's jobs, one for each codec looked for in each
 /// stretch, run on rayon's thread pool: the global one, or the one the analysis is called from
 /// inside.
 /// Cancellation and the deadline are checked before each job.
