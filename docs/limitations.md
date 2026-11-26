@@ -18,7 +18,7 @@ files read.
 - The encoder named beside a grid is the family its steps or offset fit, as
   [encoders.md](encoders.md#encoder-family) counts: an encoder the bounds were not fitted on
   can read as one of those that were, and a cut start can land on another encoder's offset
-- The grid thresholds were tuned on LAME's MP3 and ffmpeg's AAC;
+- The grid thresholds were tuned on the encoders the [README](../README.md#results) counts;
   [encoders.md](encoders.md#tested-encoders) lists what the scan finds of others
 - A lossy sample that was processed and mixed into a master, as a pitched or filtered clip
   under other sounds, leaves no grid and is not found
