@@ -123,8 +123,8 @@ music/lame-320.flac: likely transcode (MP3 grid, cutoff 20.2 kHz, MP3 (LAME) ~32
   reading
 - A path that is not Unicode has its bytes beside `file` on Unix, as `fileBytes`, a list of
   numbers
-- On Unix a line holds a path's own bytes, as it is, so a script that matches files to
-  readings reads the JSON
+- On Unix a piped line holds a path's bytes as they are, and a newline or a colon in a name
+  reads as the line's own, so a script that matches files to readings reads the JSON
 - A file the analyzer fails on is not read and says so, and the other files are still read
 - A file out of time under `--timeout` prints a reading of the part measured, with a limitation
   that says so, and counts toward the exit code as any reading does. One with no window
