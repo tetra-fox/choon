@@ -421,7 +421,7 @@ fn reads(dir: &Path, name: &str, audio: &Audio, verdict: Verdict) -> Reading {
   reading
 }
 
-/// a recording filtered at 20 kHz with hiss `db` under full scale over it stops where the highest
+/// a recording filtered at 20 kHz with hiss at `db` dBFS over it stops where the highest
 /// bitrates cut, which is all the analyzer can say
 fn hiss_over_a_20_khz_cut_neither_hides_nor_fakes_it(db: f64) {
   let dir = tempfile::tempdir().unwrap();
