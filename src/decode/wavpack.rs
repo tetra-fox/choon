@@ -90,8 +90,10 @@ impl Header {
     if !(HEADER..=MAX_BLOCK).contains(&length) || frames > MAX_BLOCK_FRAMES {
       return None;
     }
-    // the low word of the total is all ones when the encoder did not know it
-    let total = (word(12) != u32::MAX).then(|| u64::from(bytes[11]) << 32 | u64::from(word(12)));
+    // the low word of the total is all ones when the encoder did not know it. that value is
+    // reserved, so the high byte counts units of 2^32 - 1 and is taken off once for each
+    let total = (word(12) != u32::MAX)
+      .then(|| (u64::from(bytes[11]) << 32) + u64::from(word(12)) - u64::from(bytes[11]));
     Some(Self {
       length,
       index: u64::from(bytes[10]) << 32 | u64::from(word(16)),
@@ -497,5 +499,33 @@ impl RegisterableAudioDecoder for WavPackDecoder {
 
   fn supported_codecs() -> &'static [SupportedAudioCodec] {
     &SUPPORTED
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  /// a block's header of 32 bytes, with the total's high byte and low word as given
+  fn header(high: u8, low: u32) -> [u8; HEADER] {
+    let mut bytes = [0; HEADER];
+    bytes[..4].copy_from_slice(b"wvpk");
+    bytes[4..8].copy_from_slice(&(HEADER as u32 - 8).to_le_bytes());
+    bytes[11] = high;
+    bytes[12..16].copy_from_slice(&low.to_le_bytes());
+    bytes
+  }
+
+  #[test]
+  fn a_total_past_32_bits_counts_its_high_byte_in_units_of_one_less_than_2_32() {
+    let total = |high, low| Header::parse(&header(high, low)).unwrap().total;
+    assert_eq!(total(0, 5), Some(5));
+    assert_eq!(total(1, 5), Some((1 << 32) + 4));
+    assert_eq!(
+      total(255, u32::MAX - 1),
+      Some(256 * u64::from(u32::MAX) - 1)
+    );
+    assert_eq!(total(0, u32::MAX), None);
+    assert_eq!(total(1, u32::MAX), None);
   }
 }
