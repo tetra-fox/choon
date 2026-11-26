@@ -279,3 +279,55 @@ proptest::proptest! {
     }
   }
 }
+
+/// `audio` as a WAVE file of 32-bit float samples
+fn float_wave(audio: &Audio) -> Vec<u8> {
+  let channels = audio.channels.len() as u32;
+  let frames = audio.channels[0].len() as u32;
+  let bytes = frames * channels * 4;
+  let mut wave = b"RIFF".to_vec();
+  wave.extend_from_slice(&(36 + bytes).to_le_bytes());
+  wave.extend_from_slice(b"WAVEfmt ");
+  wave.extend_from_slice(&16u32.to_le_bytes());
+  wave.extend_from_slice(&3u16.to_le_bytes());
+  wave.extend_from_slice(&(channels as u16).to_le_bytes());
+  wave.extend_from_slice(&audio.rate.to_le_bytes());
+  wave.extend_from_slice(&(audio.rate * channels * 4).to_le_bytes());
+  wave.extend_from_slice(&(channels as u16 * 4).to_le_bytes());
+  wave.extend_from_slice(&32u16.to_le_bytes());
+  wave.extend_from_slice(b"data");
+  wave.extend_from_slice(&bytes.to_le_bytes());
+  for frame in 0..frames as usize {
+    for channel in &audio.channels {
+      wave.extend_from_slice(&channel[frame].to_le_bytes());
+    }
+  }
+  wave
+}
+
+#[test]
+fn float_samples_that_are_no_number_or_far_past_full_scale_give_finite_measures() {
+  for odd in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 1e30] {
+    let mut audio = music_for(3, 1, 44_100, pink);
+    audio.channels[0][44_100 + 500] = odd;
+    let measured = measure_bytes(float_wave(&audio), &settings()).unwrap();
+    for window in &measured.windows {
+      assert!(
+        window.rms_dbfs.is_finite() && window.power.is_finite() && window.upper_power.is_finite(),
+        "{odd}: {} dBFS, power {}, upper {}",
+        window.rms_dbfs,
+        window.power,
+        window.upper_power
+      );
+    }
+    let totals = &measured.totals;
+    assert!(totals.dc_offset().is_some_and(f64::is_finite), "{odd}");
+    assert!(totals.peak_dbfs().is_some_and(f64::is_finite), "{odd}");
+    let kept = serde_json::to_string(&measured).unwrap();
+    let back: Measured = serde_json::from_str(&kept).unwrap();
+    assert_eq!(serde_json::to_string(&back).unwrap(), kept, "{odd}");
+    assert_eq!(read(&back), read(&measured), "{odd}");
+    let noted = |l: &Limitation| matches!(l, Limitation::Decoder(why) if why.contains("1 sample"));
+    assert!(measured.problems.iter().any(noted), "{odd}");
+  }
+}

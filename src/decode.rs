@@ -54,6 +54,10 @@ const CUT_SHORT: &str = "the last packet is cut short, or bytes that are no audi
 /// how many undecodable packets are skipped before reading stops
 const MAX_SKIPPED: u32 = 1000;
 
+/// the largest sample magnitude the analysis is given, 120 dB past full scale. a float sample
+/// past it is limited to it, which keeps the power of a window's transform inside an f32
+const MAX_SAMPLE: f32 = 1e6;
+
 /// the audio an Opus decoder is given before a position sought to, in seconds. its band energies
 /// are predicted from the frame before, and after this much what a fresh decoder predicts
 /// differs from a read from the start by less than a millionth
@@ -235,6 +239,8 @@ pub(crate) struct Decoder {
   densest: Option<(u64, u64)>,
   /// packets the decoder could not read and skipped
   pub(crate) skipped: u32,
+  /// float samples that were not numbers, set to 0, or past [`MAX_SAMPLE`], limited to it
+  pub(crate) unbounded: u64,
   /// why decoding stopped before the end of the file, when it did
   pub(crate) stopped: Option<String>,
   /// the bytes after an Ogg file's last page that the reader was not given
@@ -466,6 +472,7 @@ impl Decoder {
       file_bytes,
       densest: None,
       skipped: 0,
+      unbounded: 0,
       stopped: None,
       left_out,
       read_to_end,
@@ -767,7 +774,17 @@ impl Decoder {
     };
     let kept = (start + skipped).min(end)..end;
     for (pending, plane) in self.pending.iter_mut().zip(&self.scratch) {
+      let from = pending.len();
       pending.extend_from_slice(&plane[kept.clone()]);
+      for sample in &mut pending[from..] {
+        if !sample.is_finite() {
+          *sample = 0.0;
+          self.unbounded += 1;
+        } else if sample.abs() > MAX_SAMPLE {
+          *sample = sample.clamp(-MAX_SAMPLE, MAX_SAMPLE);
+          self.unbounded += 1;
+        }
+      }
     }
     true
   }

@@ -686,6 +686,15 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
   if let Some(stopped) = decoder.stopped.take() {
     measured.problems.push(Limitation::Decoder(stopped));
   }
+  match decoder.unbounded {
+    0 => {}
+    1 => measured.problems.push(Limitation::Decoder(
+      "1 sample was not a number or far past full scale, and was set to 0 or limited".to_string(),
+    )),
+    count => measured.problems.push(Limitation::Decoder(format!(
+      "{count} samples were not numbers or far past full scale, and were set to 0 or limited"
+    ))),
+  }
   if decoder.other_tracks > 0 {
     measured.problems.push(Limitation::OtherTracks {
       tracks: decoder.other_tracks + 1,
