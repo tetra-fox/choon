@@ -4,14 +4,14 @@ The [README](../README.md#supported-formats) lists the codecs and containers rea
 
 ## Refused files
 
-| Format         | Refused                                                             |
-| -------------- | ------------------------------------------------------------------- |
-| WavPack        | a hybrid file, which is lossy without its correction file           |
-| WavPack        | 8-bit samples, more than two channels, streams older than WavPack 4 |
-| Monkey's Audio | files older than version 3.99, float samples, 32-bit samples        |
-| DSDIFF         | DST compression                                                     |
+| Format         | Refused                                                                           |
+| -------------- | --------------------------------------------------------------------------------- |
+| WavPack        | a hybrid file, which is lossy without its correction file                         |
+| WavPack        | 8-bit samples, more than two channels, DSD, streams older than WavPack 4          |
+| Monkey's Audio | files older than version 3.99, float, 32-bit, big-endian and signed 8-bit samples |
+| DSDIFF         | DST compression                                                                   |
 
-- Each is refused by name
+- The error says which of these the file is
 
 ## Files
 
