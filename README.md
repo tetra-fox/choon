@@ -111,7 +111,8 @@ music/lame-320.flac: likely transcode (MP3 grid, cutoff 20.2 kHz, MP3 (LAME) ~32
   directory file by file, then prints each flagged file in detail
 - A walk skips hidden files and directories; `choon check --help` lists the extensions it reads
 - A file named twice, or named and inside a directory named, is read once
-- With no audio file to read, `choon: no audio files found` goes to stderr and the exit is 0
+- With no audio file to read, `choon: no audio files found` goes to stderr and the exit is 0,
+  or 2 when a directory could not be read
 - A FIFO is read as a file is once a writer opens it, and waits for one until then
 - `--jobs` defaults to the number of cores and takes up to 1024; a file's grid scan runs on the
   same threads
