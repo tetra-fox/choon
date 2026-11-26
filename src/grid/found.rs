@@ -375,9 +375,29 @@ impl<'a> Counted<'a> {
     }
   }
 
-  /// the segments whose own lowest count agrees with the file's and stands out past `z`
+  /// whether the segments' offsets put as many segments at the file's offset as the scan
+  /// counted there. measures kept before the offsets were hold zeros, which do not
+  fn placed(&self) -> bool {
+    let scan = self.scan;
+    let at = scan.segment_offset.iter().filter(|at| **at == scan.offset);
+    at.count() == scan.segments_agreeing
+  }
+
+  /// the segments that agree with the file's offset: as the scan counted them, or to the step
+  fn agreement(&self) -> usize {
+    match self.step {
+      Some(_) => self.agreed(f64::NEG_INFINITY),
+      None => self.scan.segments_agreeing,
+    }
+  }
+
+  /// the segments whose own lowest count agrees with the file's and stands out past `z`, none
+  /// where the segments' offsets were not kept
   fn agreed(&self, z: f64) -> usize {
     let scan = self.scan;
+    if !self.placed() {
+      return 0;
+    }
     let agrees = |at: usize| match self.step {
       Some(step) => at.abs_diff(scan.offset).is_multiple_of(step),
       None => at == scan.offset,
@@ -470,7 +490,7 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
     counts
       .into_iter()
       .flatten()
-      .filter(|count| count.scan.z > count.z && count.agreed(f64::NEG_INFINITY) >= count.agreeing)
+      .filter(|count| count.scan.z > count.z && count.agreement() >= count.agreeing)
       .max_by(|a, b| (a.scan.z / a.z).total_cmp(&(b.scan.z / b.z)))
   }
   // MP3's steps, and the segments they show in
@@ -547,11 +567,12 @@ fn shown(scan: &Scan, thresholds: &ReadingThresholds) -> Option<(Codec, Evidence
         // at an offset an uncut decode has, fewer segments are enough where the file's count
         // stands out, and one where its own stands far out or MP3's steps show in it
         let at_uncut = uncut(count.codec, count.sine, count.scan.offset);
-        let agreeing = count.agreed(f64::NEG_INFINITY);
+        let agreeing = count.agreement();
         let agreed = at_uncut
           && count.scan.z > count.z
           && agreeing >= thresholds.uncut_grid_segments_agreeing.max(1);
         let stepped = count.codec == Codec::Mp3
+          && count.placed()
           && mp3_steps.is_some_and(|(steps, _)| {
             let segments = count.scan.segment_offset.iter().zip(&steps.segment_whole);
             segments
@@ -995,6 +1016,35 @@ mod tests {
     assert_eq!(shown.codec, Codec::Aac);
     assert_eq!(shown.evidence, Evidence::Count(codec_scan(40.0, 4)));
     assert_eq!(shown.family, Some(Family::Faac));
+  }
+
+  #[test]
+  fn counts_kept_without_the_segments_offsets_agree_as_the_scan_counted() {
+    let thresholds = ReadingThresholds::default();
+    let kept = |json: &str| -> CodecScan { serde_json::from_str(json).expect("the count is read") };
+    let quiet = || kept(r#"{"offset":5,"z":2.0,"segmentsAgreeing":0,"segmentZ":[1,1,1,1]}"#);
+    let scan = |aac: CodecScan, mp3: CodecScan| Scan {
+      aac,
+      aac_sine: None,
+      vorbis: None,
+      wma: None,
+      ac3: None,
+      mp3,
+      mp2: None,
+      opus: None,
+      other_rate: None,
+      mp3_steps: None,
+      aac_steps: None,
+      aac_sine_steps: None,
+    };
+    // four segments agreed at LAME's offset, where the zeroed offsets put none
+    let lame = kept(r#"{"offset":48,"z":50.0,"segmentsAgreeing":4,"segmentZ":[12,12,12,12]}"#);
+    let read = found(&scan(quiet(), lame.clone()), &thresholds).expect("four segments agree");
+    assert_eq!(read.evidence, Evidence::Count(lame));
+    assert_eq!(read.family, Some(Family::Lame));
+    // one segment agreed, where the zeroed offsets put all four at the file's
+    let one = kept(r#"{"offset":0,"z":20.0,"segmentsAgreeing":1,"segmentZ":[13,1,1,1]}"#);
+    assert_eq!(found(&scan(one, quiet()), &thresholds), None);
   }
 
   #[test]
