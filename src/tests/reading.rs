@@ -485,8 +485,8 @@ fn a_128_kbps_transcode_under_hiss_is_still_a_transcode() {
 #[test]
 fn a_128_kbps_stem_over_a_bed_too_quiet_to_count_is_still_a_transcode() {
   let dir = tempfile::tempdir().unwrap();
-  // a full-band bed 30 dB down
   let stem = fixtures::through_mp3(&music(3, 44_100, pink), Bitrate::Kbps128, dir.path());
+  // a full-band bed 30 dB down
   let bedded = stem.mixed(&music(4, 44_100, pink), 0.0316);
   reads(
     dir.path(),
