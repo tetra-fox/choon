@@ -64,7 +64,10 @@ pub fn kind(opus: &[OpusUse], he_aac: Option<HeAac>, dsd_multiple: Option<u32>) 
 /// what a file claims to be, a few words each: codec, rate, bit depth, channels, bitrate and
 /// length. `duration` is in seconds
 pub fn format(claimed: &Claimed, bitrate_kbps: Option<u32>, duration: f64) -> String {
-  let mut format = vec![claimed.codec.clone(), format!("{} Hz", claimed.sample_rate)];
+  let mut format = vec![
+    codec_words(&claimed.codec).to_string(),
+    format!("{} Hz", claimed.sample_rate),
+  ];
   if let Some(bits) = claimed.bit_depth {
     format.push(format!("{bits} bit"));
   }
@@ -78,6 +81,27 @@ pub fn format(claimed: &Claimed, bitrate_kbps: Option<u32>, duration: f64) -> St
   let seconds = duration.round() as u64;
   format.push(format!("{}:{:02}", seconds / 60, seconds % 60));
   format.join(", ")
+}
+
+/// the codec a decoder's short name stands for, spelled as its makers spell it. a name the
+/// program has no word for is given as it is
+fn codec_words(codec: &str) -> &str {
+  match codec {
+    "flac" => "FLAC",
+    "alac" => "ALAC",
+    "mp1" => "MP1",
+    "mp2" => "MP2",
+    "mp3" => "MP3",
+    "aac" => "AAC",
+    "opus" => "Opus",
+    "vorbis" => "Vorbis",
+    "wavpack" => "WavPack",
+    "ape" => "Monkey's Audio",
+    "dsd" => "DSD",
+    pcm if pcm.starts_with("pcm_") => "PCM",
+    adpcm if adpcm.starts_with("adpcm_") => "ADPCM",
+    other => other,
+  }
 }
 
 /// a frequency as kHz to one decimal

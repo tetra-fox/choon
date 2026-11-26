@@ -1058,6 +1058,13 @@ mod tests {
     let text = readout(Path::new("album/fake.flac"), &fake, plain);
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines[0], "album/fake.flac");
+    // the codec as its makers spell it, not the decoder's short name
+    assert!(
+      lines
+        .iter()
+        .any(|line| line.starts_with("  Format        FLAC, 44100 Hz, 16 bit, 2 channels, ")),
+      "{text}"
+    );
     assert!(
       lines.contains(&"  Verdict       likely transcode"),
       "{text}"

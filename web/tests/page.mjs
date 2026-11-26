@@ -307,7 +307,7 @@ async function run() {
   const decoded = await row("decoded.flac");
   check(decoded.status === "likely transcode", `a FLAC from an MP3 reads as ${decoded.status}`);
   check(decoded.found.startsWith("MP3 grid, cutoff "), `its detail is ${decoded.found}`);
-  check(decoded.text.includes("Format") && decoded.text.includes("flac, 44100 Hz"), decoded.text);
+  check(decoded.text.includes("Format") && decoded.text.includes("FLAC, 44100 Hz"), decoded.text);
   check((await row("source.mp3")).status === "consistent", "the MP3 reads as consistent");
   const words = await row("words.txt");
   check(words.status === "not read" && words.found.length > 0, `words are ${words.status}`);
