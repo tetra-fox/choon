@@ -156,7 +156,7 @@ where the wasm is, as the module is written without a default path.
   "words": {
     "verdict": "likely transcode",
     "found": ["MP3 grid", "cutoff 16.8 kHz", "MP3 ~128 kbps"],
-    "format": "flac, 44100 Hz, 16 bit, 2 channels, 0:34",
+    "format": "FLAC, 44100 Hz, 16 bit, 2 channels, 0:34",
     "flags": []
   },
   "reading": { "verdict": "likely_transcode", "summary": "...", "limitations": [] }
