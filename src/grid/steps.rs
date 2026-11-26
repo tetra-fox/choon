@@ -12,7 +12,7 @@ const MIN_STEP: f64 = 24.0;
 /// the whole numbers a band's smallest value is tried as
 const SMALLEST: std::ops::RangeInclusive<u32> = 1..=8;
 /// how near a whole power of the fourth root of two a step is one, in fourths of an octave
-pub(super) const WHOLE_STEP: f64 = 0.05;
+const WHOLE_STEP: f64 = 0.05;
 
 /// what a band's values show of a quantizer's step
 #[derive(Clone, Copy)]
@@ -91,4 +91,16 @@ pub(super) fn band_step(lines: &[f64], sigma: f64, scratch: &mut BandScratch) ->
   } else {
     BandStep::Untested
   }
+}
+
+/// the whole step of a band whose lines are `lines` and whose values sit on `step`, in quarter
+/// powers of two of `step / unit`, with its largest quantized value. `None` where the step is
+/// not a whole power of the fourth root of two
+pub(super) fn whole_step(step: f64, unit: f64, lines: &[f64]) -> Option<(i32, f64)> {
+  let fourths = 4.0 * (step / unit).log2();
+  ((fourths - fourths.round()).abs() < WHOLE_STEP).then(|| {
+    let top = lines.iter().fold(0.0f64, |top, line| top.max(line.abs()));
+    // a step within 2^-100 and 2^100, so its quarter powers fit
+    (fourths.round() as i32, (top / step).powf(0.75).round())
+  })
 }

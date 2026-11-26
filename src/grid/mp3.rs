@@ -7,7 +7,7 @@ use rustfft::num_traits::Float;
 use super::mdct::fold_with;
 use super::scan::active;
 use super::segments::Segment;
-use super::steps::{BandScratch, WHOLE_STEP, band_step};
+use super::steps::{BandScratch, band_step, whole_step};
 use super::{MP3_HOP, Mp3Neighbours, NOISE16};
 
 /// the rms of a hybrid filterbank value per unit rms of white input, which puts the MP3 noise
@@ -311,16 +311,10 @@ impl Mp3<f64> {
             tested += usize::from(step.tested());
             steps[at] = step.step().and_then(|step| {
               stepped += 1;
-              let fourths = 4.0 * (step / MP3_UNIT).log2();
-              ((fourths - fourths.round()).abs() < WHOLE_STEP).then(|| {
-                let top = lines.iter().fold(0.0f64, |top, line| top.max(line.abs()));
-                let largest = (top / step).powf(0.75).round();
-                // a step within 2^-100 and 2^100, so its quarter powers fit
-                let fourths = fourths.round() as i32;
-                let under = at.checked_sub(1).and_then(|under| steps[under]);
-                neighbours.take(at, fourths, largest, under);
-                fourths
-              })
+              let (fourths, largest) = whole_step(step, MP3_UNIT, lines)?;
+              let under = at.checked_sub(1).and_then(|under| steps[under]);
+              neighbours.take(at, fourths, largest, under);
+              Some(fourths)
             });
             whole += usize::from(steps[at].is_some());
           }

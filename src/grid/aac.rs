@@ -8,7 +8,7 @@ use rayon::prelude::*;
 use super::mdct::{DctIv, SplitMdct, Strided, fold_windowed};
 use super::scan::active_stereo;
 use super::segments::Segment;
-use super::steps::{BandScratch, WHOLE_STEP, band_step};
+use super::steps::{BandScratch, band_step, whole_step};
 use super::{AAC_HOP, AacNeighbours, NOISE16, in_stretch};
 use crate::kaiser;
 
@@ -217,14 +217,9 @@ impl AacStepper {
             counts[0] += usize::from(step.tested());
             let step = step.step()?;
             counts[1] += 1;
-            let fourths = 4.0 * step.log2();
-            ((fourths - fourths.round()).abs() < WHOLE_STEP).then(|| {
-              counts[2] += 1;
-              let top = lines.iter().fold(0.0f64, |top, line| top.max(line.abs()));
-              // a step within 2^-100 and 2^100, so its quarter powers fit
-              let fourths = fourths.round() as i32 - over;
-              (fourths, (top / step).powf(0.75).round() <= 1.0)
-            })
+            let (fourths, largest) = whole_step(step, 1.0, lines)?;
+            counts[2] += 1;
+            Some((fourths - over, largest <= 1.0))
           });
           (counts, whole)
         };
