@@ -535,3 +535,27 @@ fn a_file_stating_more_than_its_bytes_hold_is_as_long_as_they_hold() {
     "{reading:#?}"
   );
 }
+
+#[test]
+fn a_dsf_file_cut_inside_a_block_states_its_whole_blocks() {
+  let whole = fixtures::one_bit_tones(&[1000.0, 3000.0], 2).dsf();
+  // a block pair is 8192 bytes, and a file cut anywhere in its last one holds the blocks before
+  // it: 172 blocks of 4096 bytes a channel, 32768 one-bit samples each, a sixteenth of them PCM
+  for cut in [1000, 5096, 8192] {
+    let measured = measure_bytes(whole[..whole.len() - cut].to_vec(), &settings()).unwrap();
+    assert_eq!(
+      measured.claimed.frames,
+      Some(172 * 32_768 / 16),
+      "cut {cut}"
+    );
+    let reading = read(&measured);
+    let stopped = |l: &Limitation| {
+      matches!(l, Limitation::Decoder(why)
+        if why.ends_with("dsd: the samples stop before the length the file states"))
+    };
+    assert!(
+      reading.limitations.iter().any(stopped),
+      "cut {cut}: {reading:#?}"
+    );
+  }
+}
