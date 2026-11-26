@@ -188,9 +188,8 @@ fn dsf(file: &mut MediaSourceStream<'_>, length: u64) -> std::result::Result<Hea
     ));
   }
   let data_at = 92;
-  // the samples the file's bytes can hold bound what the header states. the data chunk's size
-  // is any 64 bits, so it is bounded by the file's bytes before it is counted in samples. a
-  // block of every channel is whole or not there, as a packet is read a whole block of each
+  // the data chunk's size is any 64 bits, so the file's bytes bound it before it is counted in
+  // samples. a block of every channel is whole or not there, as a packet reads a whole one of each
   let held = length.saturating_sub(data_at);
   let chunk = le64(&head[80..]).saturating_sub(12);
   let in_bytes = |bytes: u64| bytes / (BLOCK as u64 * u64::from(channels)) * BLOCK as u64 * 8;
