@@ -74,7 +74,8 @@ impl Segment {
   /// its start is a frame of the file at that rate. `None` when nothing is left of it
   pub(super) fn brought(&self, resampler: &Resampler) -> Option<Self> {
     let (channels, start) = resampler.brought(&[&self.left, &self.right], self.start)?;
-    let [mut left, mut right] = <[Vec<f64>; 2]>::try_from(channels).ok()?;
+    let [mut left, mut right] =
+      <[Vec<f64>; 2]>::try_from(channels).expect("two channels are brought as two");
     left.truncate(SEGMENT);
     right.truncate(SEGMENT);
     // a stretch brought to another rate is scanned as it is, whatever clips
