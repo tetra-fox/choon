@@ -60,8 +60,8 @@ const ID3V2: &[u8; 3] = b"ID3";
 const ID3V2_HEADER: usize = 10;
 
 /// `source`, ended where its audio ends: at an Ogg file's last page when the reader would not
-/// find that page, with the bytes left out then, and before the tags after a FLAC file, which
-/// are no audio left out. any other source comes back as it is, at its start
+/// find that page, with the count of the bytes left out, and before the tags after a FLAC
+/// file, whose bytes are not counted. any other source comes back as it is, at its start
 pub(super) fn ended(mut source: Box<dyn MediaSource>) -> (Box<dyn MediaSource>, Option<u64>) {
   let Some(length) = source.byte_len().filter(|_| source.is_seekable()) else {
     return (source, None);
