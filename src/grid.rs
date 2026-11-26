@@ -610,6 +610,13 @@ fn share(count: usize, all: usize) -> Option<f64> {
   (all > 0).then(|| count as f64 / all as f64)
 }
 
+/// the sum of `counts`, `None` where kept counts are too large to add up
+fn sum(counts: &[usize]) -> Option<usize> {
+  counts
+    .iter()
+    .try_fold(0usize, |sum, count| sum.checked_add(*count))
+}
+
 impl Mp3Neighbours {
   /// the quarter powers between two steps from which a pair is far apart
   const FAR: u32 = 6;
@@ -668,9 +675,8 @@ impl Mp3Neighbours {
   /// whether the pairs are as many as `rule` asks for, with a band at each end. counts kept
   /// before the granules were counted lack what the rules read, and are never enough
   fn enough(&self, rule: &FamilySteps) -> bool {
-    let total: usize = self.pairs.iter().sum();
     self.granules > 0
-      && total >= rule.min_pairs.max(1)
+      && sum(&self.pairs).is_some_and(|total| total >= rule.min_pairs.max(1))
       && self
         .pairs
         .iter()
@@ -689,17 +695,18 @@ impl Mp3Neighbours {
 
   /// the counts read as `of`; `None` of nothing, and for a share MP3's counts do not hold
   fn share(&self, of: StepShare) -> Option<f64> {
-    let total: usize = self.pairs.iter().sum();
-    let same: usize = self.same.iter().sum();
+    let total = sum(&self.pairs)?;
+    // `None` where kept counts hold more pairs alike than pairs
+    let moved = total.checked_sub(sum(&self.same)?);
     let within = |counts: &[usize; 3], all: &[usize; 3], region: usize| {
       share(*counts.get(region)?, *all.get(region)?)
     };
-    let moved_in = |region: usize| Some(self.pairs.get(region)? - self.same.get(region)?);
+    let moved_in = |region: usize| self.pairs.get(region)?.checked_sub(*self.same.get(region)?);
     match of {
-      StepShare::Moved => share(total - same, total),
+      StepShare::Moved => share(moved?, total),
       StepShare::SameIn(region) => within(&self.same, &self.pairs, region),
       StepShare::FinerIn(region) => within(&self.finer, &self.pairs, region),
-      StepShare::Far => share(self.far.iter().sum(), total - same),
+      StepShare::Far => share(sum(&self.far)?, moved?),
       StepShare::FarIn(region) => share(*self.far.get(region)?, moved_in(region)?),
       StepShare::TwoFiner => share(self.two_finer, total),
       StepShare::TwoCoarser => share(self.two_coarser, total),
@@ -846,8 +853,7 @@ impl AacNeighbours {
   /// whether the pairs are as many as `rule` asks for; the top region, which a low cutoff
   /// empties, is left out of the regions asked
   fn enough(&self, rule: &FamilySteps) -> bool {
-    let total: usize = self.pairs.iter().sum();
-    total >= rule.min_pairs.max(1)
+    sum(&self.pairs).is_some_and(|total| total >= rule.min_pairs.max(1))
       && self.pairs[..3]
         .iter()
         .all(|pairs| *pairs >= rule.min_region_pairs.max(1))
@@ -863,20 +869,21 @@ impl AacNeighbours {
 
   /// the counts read as `of`; `None` of nothing, and for a share AAC's counts do not hold
   fn share(&self, of: StepShare) -> Option<f64> {
-    let total: usize = self.pairs.iter().sum();
-    let same: usize = self.same.iter().sum();
+    let total = sum(&self.pairs)?;
+    // `None` where kept counts hold more pairs alike than pairs
+    let moved = total.checked_sub(sum(&self.same)?);
     let within = |counts: &[usize; 4], all: &[usize; 4], region: usize| {
       share(*counts.get(region)?, *all.get(region)?)
     };
-    let moved_in = |region: usize| Some(self.pairs.get(region)? - self.same.get(region)?);
+    let moved_in = |region: usize| self.pairs.get(region)?.checked_sub(*self.same.get(region)?);
     match of {
-      StepShare::Moved => share(total - same, total),
+      StepShare::Moved => share(moved?, total),
       StepShare::SameIn(region) => within(&self.same, &self.pairs, region),
       StepShare::FinerIn(region) => within(&self.finer, &self.pairs, region),
       StepShare::OneIn(region) => share(*self.one.get(region)?, moved_in(region)?),
-      StepShare::Far => share(self.far.iter().sum(), total - same),
+      StepShare::Far => share(sum(&self.far)?, moved?),
       StepShare::FarIn(region) => share(*self.far.get(region)?, moved_in(region)?),
-      StepShare::Coarsest => share(self.coarsest.iter().sum(), self.ranked.iter().sum()),
+      StepShare::Coarsest => share(sum(&self.coarsest)?, sum(&self.ranked)?),
       StepShare::CoarsestIn(region) => within(&self.coarsest, &self.ranked, region),
       StepShare::OnesIn(region) => within(&self.ones, &self.bands, region),
       StepShare::TwoFiner
@@ -1019,6 +1026,21 @@ mod tests {
       ..neighbours
     };
     assert_eq!(counted.family(&rules), Some(Family::Helix));
+    // counts that do not add up, as a damaged file of kept measures can hold, name none
+    let damaged = Mp3Neighbours {
+      same: [50_000, 0, 0],
+      ..counted.clone()
+    };
+    assert_eq!(damaged.family(&rules), None);
+    let damaged = AacNeighbours {
+      pairs: [10_000; 4],
+      same: [50_000, 0, 0, 0],
+      ..AacNeighbours::default()
+    };
+    let rules = crate::ReadingThresholds::default().aac_family_steps;
+    assert_eq!(damaged.share(StepShare::Moved), None);
+    assert_eq!(damaged.share(StepShare::FarIn(0)), None);
+    assert_eq!(damaged.family(&rules), None);
     let kept =
       r#"{"tested":12000,"stepped":8000,"whole":8000,"segmentWhole":[2000,2000,2000,2000]}"#;
     let steps: AacSteps = serde_json::from_str(kept).expect("the kept steps are read");
