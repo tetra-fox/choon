@@ -187,6 +187,15 @@ impl<'a> Heard<'a> {
     kept as f64 / self.windows.len().max(1) as f64
   }
 
+  /// the share of the windows within `cluster_hz` of `hz` that stop there with a sharp shelf
+  fn sharp_share(&self, hz: f64) -> f64 {
+    let cluster = self.thresholds.cluster_hz;
+    let near = |w: &&Seen| w.cutoff_hz.is_some_and(|c| (c - hz).abs() <= cluster);
+    let near_count = self.windows.iter().filter(near).count();
+    let sharp = self.windows.iter().filter(near).filter(|w| w.sharp).count();
+    sharp as f64 / near_count.max(1) as f64
+  }
+
   fn full(&self, window: &Seen) -> bool {
     window
       .cutoff_hz
@@ -333,8 +342,10 @@ impl Measured {
         too_little: false,
       };
     }
+    // only a cliff at such an edge looks like a recording made at that rate
     if found.verdict != Verdict::Consistent
       && let Some(cut) = found.cutoff_hz
+      && heard.sharp_share(cut) >= 0.5
       && let Some(edge) = thresholds
         .other_rate_edges
         .iter()
@@ -609,12 +620,7 @@ fn verdict(
   };
   let near = |hz: f64| heard.share(|w| w.cutoff_hz.is_some_and(|c| (c - hz).abs() <= t.cluster_hz));
   let clustered = near(median);
-  let sharp_share = heard.share(|w| {
-    w.sharp
-      && w
-        .cutoff_hz
-        .is_some_and(|c| (c - median).abs() <= t.cluster_hz)
-  }) / clustered.max(f64::EPSILON);
+  let sharp_share = heard.sharp_share(median);
   reading.shelf_hz = (clustered >= t.transcode_share && sharp_share >= 0.5).then_some(median);
   // a lossy file's own encoder cuts off too: only a cutoff well below its bitrate's counts
   let below_claim = |profile: &EncoderProfile| {

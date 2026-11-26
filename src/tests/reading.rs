@@ -845,6 +845,22 @@ fn a_cliff_at_an_old_equipment_rate_reads_as_its_encoder_and_says_so() {
 }
 
 #[test]
+fn a_gentle_roll_off_at_an_old_equipment_rate_is_not_called_its_cliff() {
+  let dir = tempfile::tempdir().unwrap();
+  // falling 24 dB an octave from 5.3 kHz, so it fades out near 15 kHz, the top of 30 kHz
+  let audio = music(1, 44_100, |hz| pink(hz) / (1.0 + (hz / 5_300.0).powi(4)));
+  let (reading, why) = explained(&flac(dir.path(), "soft.flac", &audio, 16));
+  assert!(reading.cutoff_hz.is_some(), "{why}");
+  assert!(
+    !reading
+      .limitations
+      .iter()
+      .any(|l| matches!(l, Limitation::OtherRate { .. })),
+    "{why}"
+  );
+}
+
+#[test]
 fn a_reading_needs_thirty_whole_seconds_of_audio() {
   let dir = tempfile::tempdir().unwrap();
   let mut audio = music_for(30, 1, 44_100, pink);
