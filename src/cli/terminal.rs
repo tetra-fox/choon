@@ -671,7 +671,7 @@ type Listed<'a> = (&'a Row<'a>, String);
 enum Entry {
   /// a directory, over its files
   Heading(String),
-  /// a directory whose files all read alike, and what they read as
+  /// a directory whose files are all flagged alike, and what they read as
   Alike(String, String),
   /// a reading of a file: its cells, the file's name last
   File(Vec<String>),
@@ -679,7 +679,7 @@ enum Entry {
 
 /// the files a check lists, by directory in the order of their paths. a directory is a
 /// heading over its files, each a line of a table under its name, and a directory whose files
-/// all read alike is one line. a directory named comes once, as it was named, over the
+/// are all flagged alike is one line. a directory named comes once, as it was named, over the
 /// directories under it, which are named from there. a file named itself is under its
 /// directory as named, or on a line of its own by its path, ahead of the directories, when
 /// no other file named shares the directory. empty when no file is listed
