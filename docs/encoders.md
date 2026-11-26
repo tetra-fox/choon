@@ -118,20 +118,20 @@ whose cutoff most of the file stops at with a sharp shelf:
 
 Decodes to FLAC of 40 recordings per setting, at each encoder's common bitrates:
 
-| Codec  | Encoder                                          | Decodes found, of 40 |
-| ------ | ------------------------------------------------ | -------------------- |
-| MP3    | LAME 3.90.3, 3.93.1, 3.97, 3.98.4, 3.99.5, 3.100 | 38 to 40             |
-| MP3    | Helix, Shine, BladeEnc, GOGO                     | 39 to 40             |
-| MP3    | Apple (Music) at 160, 320 and VBR                | 39 to 40             |
-| AAC-LC | ffmpeg, fdk-aac                                  | 40                   |
-| AAC-LC | Nero, Apple (CBR, constrained VBR, true VBR)     | 39 to 40             |
-| AAC-LC | FAAC at 128 kbps and at quality 100              | 30 and 36            |
-| AAC-LC | FAAC at 256 kbps                                 | 5                    |
-| HE-AAC | Apple, fdk-aac, Nero at 48 and 64 kbps           | 4 to 21              |
-| HE-AAC | Apple, fdk-aac, Nero, v2 at 32 kbps              | 0 to 3               |
-| Vorbis | libvorbis 1.1.2 to 1.3.7, aoTuV, at q3 and q6    | 34 to 36             |
-| Vorbis | libvorbis 1.2.0 and 1.3.7, aoTuV, at q9          | 18 to 23             |
-| Opus   | libopus 1.1, 1.3.1, 1.5.2, 1.6.1 at 64 to 256    | 39                   |
+| Codec  | Encoder                                            | Decodes found, of 40 |
+| ------ | -------------------------------------------------- | -------------------- |
+| MP3    | LAME 3.90.3, 3.93.1, 3.97, 3.98.4, 3.99.5, 3.100   | 38 to 40             |
+| MP3    | Helix, Shine, BladeEnc, GOGO                       | 39 to 40             |
+| MP3    | Apple (Music) at 160 and 320 kbps and VBR          | 39 to 40             |
+| AAC-LC | ffmpeg, fdk-aac                                    | 40                   |
+| AAC-LC | Nero, Apple (CBR, constrained VBR, true VBR)       | 39 to 40             |
+| AAC-LC | FAAC at 128 kbps and at quality 100                | 30 and 36            |
+| AAC-LC | FAAC at 256 kbps                                   | 5                    |
+| HE-AAC | Apple, fdk-aac, Nero at 48 and 64 kbps             | 4 to 21              |
+| HE-AAC | Apple, fdk-aac, Nero, v2 at 32 kbps                | 0 to 3               |
+| Vorbis | libvorbis 1.1.2 to 1.3.7, aoTuV, at q3 and q6      | 34 to 36             |
+| Vorbis | libvorbis 1.2.0 and 1.3.7, aoTuV, at q9            | 18 to 23             |
+| Opus   | libopus 1.1, 1.3.1, 1.5.2, 1.6.1 at 64 to 256 kbps | 39                   |
 
 - FAAC at 256 kbps codes nearly every frame as short blocks, which the scan does not analyse
 - An HE-AAC decode's core was coded at half the sample rate under the decoder's filterbank
