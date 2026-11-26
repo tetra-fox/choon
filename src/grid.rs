@@ -723,12 +723,17 @@ impl Mp3Neighbours {
   }
 
   fn add(&mut self, other: &Self) {
-    for region in 0..3 {
-      self.pairs[region] += other.pairs[region];
-      self.same[region] += other.same[region];
-      self.finer[region] += other.finer[region];
-      self.far[region] += other.far[region];
-      self.ones[region] += other.ones[region];
+    let all = [
+      (&mut self.pairs, &other.pairs),
+      (&mut self.same, &other.same),
+      (&mut self.finer, &other.finer),
+      (&mut self.far, &other.far),
+      (&mut self.ones, &other.ones),
+    ];
+    for (mine, theirs) in all {
+      for (mine, theirs) in mine.iter_mut().zip(theirs) {
+        *mine += theirs;
+      }
     }
     self.two_finer += other.two_finer;
     self.two_coarser += other.two_coarser;
