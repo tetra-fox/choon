@@ -177,6 +177,7 @@ where the wasm is, as the module is written without a default path.
 | `reading`              | the library's `Reading`, as its `serde` feature writes it     |
 
 - Every key is always there; one without a value is `null`, or `[]` for `opus`
+- The example's `reading` is cut to three of its keys; the library's `Reading` has the rest
 - The windows and the grid scan of `Measured` are left out, which leaves a few kB
 - The wording is the program's module `src/cli/words.rs`, which this crate includes as a
   file, as the library does not export it
