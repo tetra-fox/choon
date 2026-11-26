@@ -812,7 +812,9 @@ pub struct AacNeighbours {
   pub bands: [usize; 4],
   /// Number of those whose largest quantized value is one, by region.
   pub ones: [usize; 4],
-  /// Number of bands in a channel of a frame that shows four or more whole steps, by region.
+  /// Number of bands ranked against their channel's coarsest, by region.
+  ///
+  /// A band is ranked when it has a whole step in a channel of a frame that shows four or more.
   pub ranked: [usize; 4],
   /// Number of those whose step is the coarsest of their channel in their frame, by region.
   pub coarsest: [usize; 4],
