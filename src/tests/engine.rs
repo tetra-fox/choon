@@ -584,3 +584,57 @@ fn a_sampled_file_of_long_packets_holds_the_same_windows_as_one_read_in_full() {
   assert!(full.grid.is_some());
   assert_eq!(of_stretches(&sampled), of_stretches(&full));
 }
+
+#[test]
+fn a_grid_scan_cut_short_by_the_deadline_says_so() {
+  use std::time::Duration;
+
+  let dir = tempfile::tempdir().unwrap();
+  let path = dir.path().join("a.flac");
+  // a file that states no length has its stretches read after its windows
+  stating(&path, fixtures::SECONDS, 0);
+  // when each ask of the cancel check comes on a run with no deadline
+  let asked = Arc::new(std::sync::Mutex::new(Vec::new()));
+  let start = Instant::now();
+  let record = asked.clone();
+  let timed = Settings {
+    canceled: Some(Arc::new(move || {
+      record.lock().unwrap().push(start.elapsed());
+      false
+    })),
+    ..settings()
+  };
+  let whole = measure(&path, &timed).unwrap();
+  assert!(whole.grid.is_some());
+  let asked = asked.lock().unwrap().clone();
+  // the deadline passes by ask `at` at the latest: that ask waits for it
+  for at in (0..asked.len()).step_by(asked.len().div_ceil(40)) {
+    let start = Instant::now();
+    let deadline = start + asked[at] * 2 + Duration::from_millis(10);
+    let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let late = Settings {
+      deadline: Some(deadline),
+      canceled: Some(Arc::new(move || {
+        if count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == at {
+          std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
+        }
+        false
+      })),
+      ..settings()
+    };
+    let measured = match measure(&path, &late) {
+      Ok(measured) => measured,
+      Err(Error::OutOfTime) => continue,
+      Err(e) => panic!("out of time at ask {at}: {e}"),
+    };
+    let said = measured
+      .problems
+      .iter()
+      .any(|p| matches!(p, Limitation::OutOfTime | Limitation::GridScanOutOfTime));
+    assert!(
+      measured.grid.is_some() || said,
+      "out of time at ask {at}: {:?}",
+      measured.problems
+    );
+  }
+}

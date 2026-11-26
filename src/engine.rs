@@ -576,8 +576,11 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
   // TODO: read them after the windows again once a symphonia release seeks from the end
   let stretches_first = picks.is_some() && decoder.seekable && !reads_through;
   let mut moved = false;
+  // whether the time ran out while the segments were read, which leaves the scan no time either
+  let mut scan_halted = false;
   if stretches_first && let Some(segments) = &mut segments {
-    moved = read_segments(&mut decoder, segments, settings, &mut measured)?;
+    let read = read_segments(&mut decoder, segments, settings, &mut measured)?;
+    (moved, scan_halted) = (read.moved, read.halted);
   }
   let reached = match picks {
     Some(picks) if reads_through => {
@@ -668,7 +671,7 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
     && (measured.sampled || unscanned)
     && !stretches_first
   {
-    read_segments(&mut decoder, segments, settings, &mut measured)?;
+    scan_halted = read_segments(&mut decoder, segments, settings, &mut measured)?.halted;
   }
   measured.bits_used = decoder.bits_used();
   measured.opus = decoder.opus_uses();
@@ -696,7 +699,10 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
   if unscanned && segments.is_none() {
     measured.problems.push(Limitation::GridNotScanned);
   }
-  if let Some(segments) = &mut segments {
+  if scan_halted {
+    debug!("grid scan out of time while its segments were read");
+    measured.problems.push(Limitation::GridScanOutOfTime);
+  } else if let Some(segments) = &mut segments {
     let opus = opus_rate
       .zip(measuring.uncut.as_ref())
       .map(|(rate, uncut)| grid::Opus {
@@ -718,35 +724,47 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
   Ok(measured)
 }
 
+/// how a read of the grid segments ended
+struct Stretches {
+  /// whether it sought, which moves the decoder
+  moved: bool,
+  /// whether the analysis's time ran out before the segments were read
+  halted: bool,
+}
+
 /// reads the grid segments that sampled windows did not fill, seeking once to each and placing
-/// its samples by their packets' timestamps, and returns whether it sought, which moves the
-/// decoder. a segment that cannot be read whole stays short
+/// its samples by their packets' timestamps. a segment that cannot be read whole stays short
 fn read_segments(
   decoder: &mut Decoder,
   segments: &mut Segments,
   settings: &Settings,
   measured: &mut Measured,
-) -> Result<bool, Error> {
+) -> Result<Stretches, Error> {
+  let mut ended = Stretches {
+    moved: false,
+    halted: false,
+  };
   // without whole frames per tick, a packet's timestamp does not place its first sample
   if !decoder.ticks_fit_frames() {
-    return Ok(false);
+    return Ok(ended);
   }
   let channels = decoder.claimed.channels as usize;
   let mut samples = Vec::new();
-  let mut sought = false;
   for index in segments.missing() {
     if segments.untouched(index)
       && let Some(first) = segments.needs(index)
     {
       if halted(settings)? {
-        return Ok(sought);
+        ended.halted = true;
+        return Ok(ended);
       }
-      sought = true;
+      ended.moved = true;
       let seek = decoder.seek_frame(first);
       // a seek the analysis's own stop cut short only says its source gave no more bytes,
       // which a reader can take for a frame out of range
       if !matches!(seek, Ok(true)) && halted(settings)? {
-        return Ok(sought);
+        ended.halted = true;
+        return Ok(ended);
       }
       match seek {
         Ok(true) => {}
@@ -755,12 +773,12 @@ fn read_segments(
             frame = first,
             "a grid segment is not among the packets indexed"
           );
-          return Ok(sought);
+          return Ok(ended);
         }
         Err(problem) => {
           debug!(problem, frame = first, "seeking to a grid segment failed");
           measured.problems.push(Limitation::Decoder(problem));
-          return Ok(sought);
+          return Ok(ended);
         }
       }
     }
@@ -768,24 +786,26 @@ fn read_segments(
     // and the next is read
     while let Some(next) = segments.needs(index) {
       if halted(settings)? {
-        return Ok(sought);
+        ended.halted = true;
+        return Ok(ended);
       }
       let Some(frames) = decoder.next_interleaved(&mut samples) else {
         // as with the seek, the decoder's reason for the analysis's own stop says nothing
         if halted(settings)? {
           decoder.stopped = None;
+          ended.halted = true;
         }
-        return Ok(sought);
+        return Ok(ended);
       };
       // a packet past the frame needed leaves a gap no later packet fills
       if frames.start > next {
         debug!(frame = next, "a grid segment's packets leave a gap");
-        return Ok(sought);
+        return Ok(ended);
       }
       segments.take_interleaved(frames.start, &samples, channels);
     }
   }
-  Ok(sought)
+  Ok(ended)
 }
 
 /// scans full `segments` for a codec's frame grid; `None`, noted in `measured`, when they are
