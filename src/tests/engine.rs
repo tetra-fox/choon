@@ -593,7 +593,7 @@ fn a_grid_scan_cut_short_by_the_deadline_says_so() {
   let path = dir.path().join("a.flac");
   // a file that states no length has its stretches read after its windows
   stating(&path, fixtures::SECONDS, 0);
-  // when each ask of the cancel check comes on a run with no deadline
+  // when each ask of the cancel check comes on a run that ends in time
   let asked = Arc::new(std::sync::Mutex::new(Vec::new()));
   let start = Instant::now();
   let record = asked.clone();
