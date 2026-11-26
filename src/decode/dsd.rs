@@ -623,7 +623,7 @@ impl HalfBand {
 
   fn push(&mut self, samples: &[f32], out: &mut Vec<f32>) {
     let [even, odd] = &mut self.held;
-    // a sample at an odd position left over from the push before goes first
+    // the push before ended on an even position, so the first sample here is at an odd one
     let samples = match (self.odd, samples.split_first()) {
       (true, Some((first, rest))) => {
         odd.push(*first);
