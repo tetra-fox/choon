@@ -8,7 +8,6 @@ const LEVELS_FROM_DB: f64 = -160.0;
 /// a sample this far from zero or further counts as at full scale
 pub(crate) const CLIPPED: f64 = 0.9999;
 
-/// the running figures over every analyzed sample
 #[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
