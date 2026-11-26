@@ -46,7 +46,7 @@ impl Totals {
   }
 
   /// the correlation between the two channels, from -1 to 1; `None` for mono or when either
-  /// channel is constant
+  /// channel is constant, or so near it that rounding hides its spread
   pub fn stereo_correlation(&self) -> Option<f64> {
     if self.pairs == 0 {
       return None;
@@ -55,8 +55,13 @@ impl Totals {
     let covariance = self.product - self.left * self.right / n;
     let left = self.left_squared - self.left * self.left / n;
     let right = self.right_squared - self.right * self.right / n;
-    let spread = (left * right).sqrt();
-    (spread > 0.0).then(|| (covariance / spread).clamp(-1.0, 1.0))
+    // summing n terms can be off by about n * EPSILON of their sum, so a variance under that
+    // share of the channel's sum of squares cannot be told from 0, as a constant channel's is
+    let rounding = n * f64::EPSILON;
+    if left <= rounding * self.left_squared || right <= rounding * self.right_squared {
+      return None;
+    }
+    Some((covariance / (left * right).sqrt()).clamp(-1.0, 1.0))
   }
 
   /// the side channel's energy relative to the mid channel's, in dB, at least -120 dB
@@ -132,5 +137,35 @@ impl Totals {
       let index = (level - LEVELS_FROM_DB).floor().clamp(0.0, -LEVELS_FROM_DB) as usize;
       self.levels[index] += 1;
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::fixtures::{music_for, pink};
+
+  /// the totals of `left` and `right`, a second at a time
+  fn of(left: &[f32], right: &[f32]) -> Totals {
+    let mut totals = Totals::default();
+    for (l, r) in left.chunks(44_100).zip(right.chunks(44_100)) {
+      totals.add(&[l.to_vec(), r.to_vec()]);
+    }
+    totals
+  }
+
+  #[test]
+  fn a_constant_channel_has_no_correlation_with_the_other() {
+    let noise = music_for(30, 1, 44_100, pink).channels.swap_remove(1);
+    for level in [0.1, 0.3, 0.7, 1.0 / 3.0] {
+      let constant = vec![level; noise.len()];
+      let totals = of(&constant, &noise);
+      assert_eq!(totals.stereo_correlation(), None, "{level}");
+    }
+    let inverted: Vec<f32> = noise.iter().map(|s| -s).collect();
+    let same = of(&noise, &noise).stereo_correlation().unwrap();
+    let opposite = of(&noise, &inverted).stereo_correlation().unwrap();
+    assert!((same - 1.0).abs() < 1e-9, "{same}");
+    assert!((opposite + 1.0).abs() < 1e-9, "{opposite}");
   }
 }
