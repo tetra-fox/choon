@@ -7,7 +7,7 @@ use std::sync::{LazyLock, Once};
 use choon::{Coverage, MeasureThresholds, ReadingThresholds, Settings};
 use serde::{Deserialize, Serialize};
 
-/// lets a panic the library catches pass, as it does in a program. libFuzzer's hook aborts on
+/// lets a panic the library catches pass, as it does in a program. libfuzzer-sys's hook aborts on
 /// any panic, caught or not. with the default hook back, a panic nothing catches still ends
 /// the run when it unwinds out of the target
 pub fn pass_caught_panics() {
