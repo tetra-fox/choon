@@ -90,8 +90,9 @@ impl<T: FftNum + Float> DctIv<T> {
 
   /// writes the transform of `input` to `output`, both of length N.
   ///
-  /// with z_n = u_2n + i u_(N-1-2n) and Y_k = sum_n z_n exp(-i pi (2n + 1/2)(2k + 1/2) / N),
-  /// X_2k is the real part of Y_k and X_(N-1-2k) minus its imaginary part.
+  /// with z_n = u_2n + i u_(N-1-2n) and
+  /// Y_k = sqrt(2/N) sum_n z_n exp(-i pi (2n + 1/2)(2k + 1/2) / N), X_2k is the real part of
+  /// Y_k and X_(N-1-2k) minus its imaginary part.
   pub(crate) fn process(&mut self, input: &[T], output: &mut [T]) {
     // pair i holds u_2i and u_(2i+1), so u_(N-1-2n) is the second of pair N/2-1-n
     let (pairs, _) = input.as_chunks::<2>();
