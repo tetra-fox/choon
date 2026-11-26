@@ -22,8 +22,11 @@ vorbis-tools, fdkaac, flac, WavPack and Monkey's Audio. It also writes
 
 1. the file
 2. what it should read as
-3. where that expectation comes from: a section of the README, a file under `docs/`,
-   `samples/README.md`, the program's help or a type's documentation
+3. where that expectation comes from, one or more of:
+   - a section of the README, a file under `docs/`, `samples/README.md`, the program's help or
+     a type's documentation
+   - a rule in words where none of them states it
+   - `nothing says` where nothing does
 4. how the file was made
 
 | Expectation        | A case passes when                                                         |
