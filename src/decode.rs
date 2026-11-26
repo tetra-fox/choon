@@ -259,7 +259,8 @@ pub(crate) struct Decoder {
   /// what places the padding of an MPEG audio stream, whose packets are trimmed here
   mpeg: Option<Mpeg>,
   /// the sample frames a seek can decode and drop before its position, where the format's
-  /// packets are long enough for that to matter: Monkey's Audio's frames, of up to 27 s
+  /// packets are long enough for that to matter: Monkey's Audio's frames, 27 s at 44.1 kHz at
+  /// its highest level
   pub(crate) seek_decodes: u64,
   /// what an HE-AAC stream's decoder rebuilt
   pub(crate) he_aac: Option<HeAac>,
