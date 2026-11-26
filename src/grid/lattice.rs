@@ -772,9 +772,16 @@ fn counted(
   }
 }
 
-/// the frames a stretch of `length` samples holds at every offset
-fn frames_in(length: usize) -> usize {
-  (length / FRAME).saturating_sub(3)
+/// the frames of `frame` samples a stretch of `samples` holds at every offset, each read with
+/// the frame after it
+fn frames_in(samples: usize, frame: usize) -> usize {
+  (samples / frame).saturating_sub(3)
+}
+
+/// the frames of `frame` samples from `offset` to the end of a window of `samples`, each read
+/// with the frame after it
+fn frames_from(samples: usize, offset: usize, frame: usize) -> usize {
+  (samples.saturating_sub(offset) / frame).saturating_sub(1)
 }
 
 /// whether a short frame sits on the lattice after the frame before it, or with `alone`
@@ -871,7 +878,10 @@ impl Stretches {
     let runs: Vec<usize> = self
       .stretches
       .iter()
-      .map(|s| s.as_ref().map_or(0, |s| frames_in(s.channels[0].len())))
+      .map(|s| {
+        s.as_ref()
+          .map_or(0, |s| frames_in(s.channels[0].len(), FRAME))
+      })
       .collect();
     let most = runs.iter().copied().max().unwrap_or(0);
     offsets
@@ -914,7 +924,7 @@ impl Stretches {
         |(celt, kept), offset| {
           let mut counts = [0; 2];
           for stretch in self.stretches.iter().flatten() {
-            let frames = (stretch.channels[0].len() / length).saturating_sub(3);
+            let frames = frames_in(stretch.channels[0].len(), length);
             let first = in_stretch(offset, stretch.start, length);
             kept.clear();
             kept.resize(2 * frames, None);
@@ -1097,7 +1107,7 @@ impl Uncut {
       let frame = short.length;
       for (grid, counts) in short.uncut_offsets().into_iter().zip(counts) {
         let offset = in_stretch(grid, stretch.start, frame);
-        let frames = (length.saturating_sub(offset) / frame).saturating_sub(1);
+        let frames = frames_from(length, offset, frame);
         let mut kept = vec![None; stretch.channels.len() * frames];
         let run = short_sitting(*short, frames, stretch.channels.len(), |channel, at| {
           *kept[channel * frames + at].get_or_insert_with(|| {
@@ -1110,7 +1120,7 @@ impl Uncut {
     }
     // the first frame of the grid at or after the stretch's first sample
     let offset = in_stretch(UNCUT_OFFSET, stretch.start, FRAME);
-    let frames = (length.saturating_sub(offset) / FRAME).saturating_sub(1);
+    let frames = frames_from(length, offset, FRAME);
     let bands: Vec<Vec<[Bands; 2]>> = stretch
       .channels
       .iter()
