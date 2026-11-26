@@ -11,7 +11,7 @@ use crate::engine::{Error, Measured, Settings, measure, measure_bytes};
 use crate::fixtures::{self, Audio, Bitrate, music, music_for, pink};
 use crate::grid;
 use crate::limitation::Limitation;
-use crate::reading::Verdict;
+use crate::reading::{Reading, Verdict};
 use crate::thresholds::MeasureThresholds;
 
 #[test]
@@ -354,11 +354,7 @@ fn an_mp3_whose_header_counts_more_frames_than_its_bytes_hold_says_so() {
     measured.duration
   );
   let reading = read(&measured);
-  assert!(
-    reading.limitations.contains(&Limitation::LengthPastBytes),
-    "{:?}",
-    reading.limitations
-  );
+  assert_eq!(past_bytes(&reading), 1, "{:?}", reading.limitations);
 }
 
 #[test]
@@ -462,10 +458,16 @@ fn a_file_stating_a_huge_length_reports_only_what_was_read() {
   assert!(measured.duration <= 4.0, "{}", measured.duration);
   assert!(!measured.windows.is_empty());
   let reading = read(&measured);
-  assert!(
-    reading.limitations.contains(&Limitation::LengthPastBytes),
-    "{reading:#?}"
-  );
+  assert_eq!(past_bytes(&reading), 1, "{reading:#?}");
+}
+
+/// how many times a reading says its file states more than its bytes hold
+fn past_bytes(reading: &Reading) -> usize {
+  reading
+    .limitations
+    .iter()
+    .filter(|l| **l == Limitation::LengthPastBytes)
+    .count()
 }
 
 #[test]
@@ -530,10 +532,7 @@ fn a_file_stating_more_than_its_bytes_hold_is_as_long_as_they_hold() {
     "every window is inside the length"
   );
   let reading = read(&measured);
-  assert!(
-    reading.limitations.contains(&Limitation::LengthPastBytes),
-    "{reading:#?}"
-  );
+  assert_eq!(past_bytes(&reading), 1, "{reading:#?}");
 }
 
 #[test]

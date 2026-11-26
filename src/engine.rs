@@ -604,8 +604,9 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
         // a length the bytes could not hold is the header's mistake, whatever kind of length
         // it is. short of one they could hold, audio is missing where the length is a count,
         // and a decoder that stopped says why itself
-        let past = past_bytes(&decoder, stated, seconds, &mut measured).is_some();
-        if !past && decoder.length_is_counted() && decoder.stopped.is_none() {
+        if held_by_bytes(&decoder, stated, seconds).is_some() {
+          measured.problems.push(Limitation::LengthPastBytes);
+        } else if decoder.length_is_counted() && decoder.stopped.is_none() {
           debug!(
             stated,
             read = seconds,
@@ -620,7 +621,8 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
     Reached::Short(seconds) if stated.is_none() => measured.duration = seconds,
     Reached::Short(_) | Reached::Sampled => {
       let read = measured.windows.last().map_or(0.0, |w| w.start + 1.0);
-      if let Some(held) = past_bytes(&decoder, measured.duration, read, &mut measured) {
+      if let Some(held) = held_by_bytes(&decoder, measured.duration, read) {
+        measured.problems.push(Limitation::LengthPastBytes);
         measured.duration = held;
       }
     }
@@ -882,14 +884,13 @@ enum Reached {
 }
 
 /// the length the file's bytes can hold, when audio up to `seconds` needs more bytes than the
-/// file has; never short of `read`, the furthest the analysis read, and noted in `measured`
-fn past_bytes(decoder: &Decoder, seconds: f64, read: f64, measured: &mut Measured) -> Option<f64> {
+/// file has; never short of `read`, the furthest the analysis read
+fn held_by_bytes(decoder: &Decoder, seconds: f64, read: f64) -> Option<f64> {
   let most = decoder.most_seconds().filter(|most| seconds > *most)?;
   debug!(
     seconds,
     most, "the stated length is past what the file's bytes hold"
   );
-  measured.problems.push(Limitation::LengthPastBytes);
   Some(most.max(read))
 }
 
@@ -1002,8 +1003,8 @@ fn sampled(
       return Ok(Reached::Sampled);
     }
     // the picks are spread over the stated length, which tables pointing many packets at the
-    // same bytes can make longer than the file holds
-    if let Some(held) = past_bytes(decoder, (second + 1) as f64, furthest, measured) {
+    // same bytes can make longer than the file holds. the end of the read notes it
+    if let Some(held) = held_by_bytes(decoder, (second + 1) as f64, furthest) {
       return Ok(Reached::End(held));
     }
     if let Err(problem) = decoder.seek(second as f64) {
