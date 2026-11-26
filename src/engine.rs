@@ -134,16 +134,19 @@ fn thousandths(done: f64) -> u32 {
 /// the two in the progress an analysis reports
 const SCAN_JOB_WINDOWS: f64 = 110.0;
 
-/// what measures a file's windows: the analyzer, and in a file scanned for Opus's frames the
-/// count of them on the grid of an uncut decode
+/// what measures a file's windows: the analyzer, the buffer each window is filled into, one
+/// vector per analyzed channel, and in a file scanned for Opus's frames the count of them on the
+/// grid of an uncut decode
 struct Measuring<'a> {
   analyzer: Analyzer<'a>,
+  buffer: Vec<Vec<f32>>,
   uncut: Option<Uncut>,
 }
 
 impl Measuring<'_> {
-  /// measures the window of `buffer` at `second` into `measured`
-  fn window(&mut self, second: u64, buffer: &[Vec<f32>], rate: usize, measured: &mut Measured) {
+  /// measures the window in the buffer at `second` into `measured`
+  fn window(&mut self, second: u64, rate: usize, measured: &mut Measured) {
+    let buffer = &self.buffer;
     let window = self
       .analyzer
       .measure(second as f64, buffer, &mut measured.totals);
@@ -511,11 +514,11 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
   let opus_rate = lattice::Rate::of(claimed.sample_rate).filter(|_| scanned);
   let mut measuring = Measuring {
     analyzer: Analyzer::new(claimed.sample_rate, claimed.bit_depth, &settings.thresholds),
+    buffer: (0..decoder.channels)
+      .map(|_| Vec::with_capacity(rate))
+      .collect(),
     uncut: opus_rate.map(|rate| Uncut::new(rate, bits)),
   };
-  let mut buffer: Vec<Vec<f32>> = (0..decoder.channels)
-    .map(|_| Vec::with_capacity(rate))
-    .collect();
   let mut segments = claimed.frames.filter(|_| scanned).and_then(Segments::of);
   let unscanned = scanned && claimed.frames.is_none();
   let mut measured = Measured {
@@ -562,22 +565,40 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
       1.0
     },
   };
+  // a file whose packets are so long that seeking to each window decodes more than reading
+  // through to the last one is read through from its start, its stretches taken on the way
+  let reads_through = picks
+    .as_ref()
+    .is_some_and(|picks| seeking_decodes_more(picks, decoder.seek_decodes, rate as u64));
   // a sampled read's stretches are read before its windows where the source can be sought in.
   // symphonia-format-caf 0.6.1 refuses every seek once its last packet is read (demuxer.rs,
   // `seek`: "invalid packet index"), which the last window can do
   // TODO: read them after the windows again once a symphonia release seeks from the end
-  let stretches_first = picks.is_some() && decoder.seekable;
+  let stretches_first = picks.is_some() && decoder.seekable && !reads_through;
+  let mut moved = false;
   if stretches_first && let Some(segments) = &mut segments {
-    read_segments(&mut decoder, segments, settings, &mut measured)?;
+    moved = read_segments(&mut decoder, segments, settings, &mut measured)?;
   }
   let reached = match picks {
+    Some(picks) if reads_through => {
+      measured.sampled = true;
+      debug!("seeking to the windows decodes more than reading through to them");
+      through(
+        &mut decoder,
+        &mut measuring,
+        &picks,
+        &mut segments,
+        &run,
+        &mut measured,
+      )?
+    }
     Some(picks) => {
       measured.sampled = true;
       sampled(
         &mut decoder,
         &mut measuring,
-        &mut buffer,
         &picks,
+        !moved,
         &mut segments,
         &run,
         &mut measured,
@@ -586,7 +607,6 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
     None => whole(
       &mut decoder,
       &mut measuring,
-      &mut buffer,
       Windows::Upto(longest as u64),
       &mut segments,
       &run,
@@ -699,45 +719,48 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
 }
 
 /// reads the grid segments that sampled windows did not fill, seeking once to each and placing
-/// its samples by their packets' timestamps. a segment that cannot be read whole stays short
+/// its samples by their packets' timestamps, and returns whether it sought, which moves the
+/// decoder. a segment that cannot be read whole stays short
 fn read_segments(
   decoder: &mut Decoder,
   segments: &mut Segments,
   settings: &Settings,
   measured: &mut Measured,
-) -> Result<(), Error> {
+) -> Result<bool, Error> {
   // without whole frames per tick, a packet's timestamp does not place its first sample
   if !decoder.ticks_fit_frames() {
-    return Ok(());
+    return Ok(false);
   }
   let channels = decoder.claimed.channels as usize;
   let mut samples = Vec::new();
+  let mut sought = false;
   for index in segments.missing() {
     if segments.untouched(index)
       && let Some(first) = segments.needs(index)
     {
       if halted(settings)? {
-        return Ok(());
+        return Ok(sought);
       }
-      let sought = decoder.seek_frame(first);
+      sought = true;
+      let seek = decoder.seek_frame(first);
       // a seek the analysis's own stop cut short only says its source gave no more bytes,
       // which a reader can take for a frame out of range
-      if !matches!(sought, Ok(true)) && halted(settings)? {
-        return Ok(());
+      if !matches!(seek, Ok(true)) && halted(settings)? {
+        return Ok(sought);
       }
-      match sought {
+      match seek {
         Ok(true) => {}
         Ok(false) => {
           debug!(
             frame = first,
             "a grid segment is not among the packets indexed"
           );
-          return Ok(());
+          return Ok(sought);
         }
         Err(problem) => {
           debug!(problem, frame = first, "seeking to a grid segment failed");
           measured.problems.push(Limitation::Decoder(problem));
-          return Ok(());
+          return Ok(sought);
         }
       }
     }
@@ -745,24 +768,24 @@ fn read_segments(
     // and the next is read
     while let Some(next) = segments.needs(index) {
       if halted(settings)? {
-        return Ok(());
+        return Ok(sought);
       }
       let Some(frames) = decoder.next_interleaved(&mut samples) else {
         // as with the seek, the decoder's reason for the analysis's own stop says nothing
         if halted(settings)? {
           decoder.stopped = None;
         }
-        return Ok(());
+        return Ok(sought);
       };
       // a packet past the frame needed leaves a gap no later packet fills
       if frames.start > next {
         debug!(frame = next, "a grid segment's packets leave a gap");
-        return Ok(());
+        return Ok(sought);
       }
       segments.take_interleaved(frames.start, &samples, channels);
     }
   }
-  Ok(())
+  Ok(sought)
 }
 
 /// scans full `segments` for a codec's frame grid; `None`, noted in `measured`, when they are
@@ -911,11 +934,11 @@ enum Windows<'a> {
   Only(&'a BTreeSet<u64>),
 }
 
-/// reads windows one after another from where the decoder is and measures those `read` asks for
+/// reads windows one after another from the start of the file, where the decoder must be, and
+/// measures those `read` asks for
 fn whole(
   decoder: &mut Decoder,
   measuring: &mut Measuring<'_>,
-  buffer: &mut [Vec<f32>],
   read: Windows<'_>,
   segments: &mut Option<Segments>,
   run: &Run<'_>,
@@ -937,7 +960,7 @@ fn whole(
     if stop(settings, measured)? {
       return Ok(Reached::Short(second as f64));
     }
-    let filled = decoder.fill(buffer, rate);
+    let filled = decoder.fill(&mut measuring.buffer, rate);
     if filled != Filled::Full && stopped_by_us(decoder, settings, measured)? {
       return Ok(Reached::Short(second as f64));
     }
@@ -962,14 +985,14 @@ fn whole(
       Filled::End(length) => length,
     };
     if let Some(segments) = segments {
-      segments.take(second * rate as u64, buffer);
+      segments.take(second * rate as u64, &measuring.buffer);
     }
     let wanted = match read {
       Windows::Upto(_) => true,
       Windows::Only(picks) => picks.contains(&second),
     };
     if usable(&filled, rate) && wanted {
-      measuring.window(second, buffer, rate, measured);
+      measuring.window(second, rate, measured);
     }
     if filled != Filled::Full {
       return Ok(Reached::End(second as f64 + length as f64 / rate as f64));
@@ -979,22 +1002,19 @@ fn whole(
 }
 
 /// measures one window at each of `picks`, seeking to each, or reading from the start when the
-/// file cannot be sought in. a file that gives out early ends where the furthest window read ends
+/// file cannot be sought in and the decoder is still `at_start`. a file that gives out early
+/// ends where the furthest window read ends
 fn sampled(
   decoder: &mut Decoder,
   measuring: &mut Measuring<'_>,
-  buffer: &mut [Vec<f32>],
   picks: &BTreeSet<u64>,
+  at_start: bool,
   segments: &mut Option<Segments>,
   run: &Run<'_>,
   measured: &mut Measured,
 ) -> Result<Reached, Error> {
   let settings = run.settings;
   let rate = decoder.claimed.sample_rate as usize;
-  if seeking_decodes_more(picks, decoder.seek_decodes, rate as u64) {
-    debug!("seeking to the windows decodes more than reading through to them");
-    return through(decoder, measuring, buffer, picks, segments, run, measured);
-  }
   // where the furthest window read ends
   let mut furthest = 0.0;
   for (index, &second) in picks.iter().enumerate() {
@@ -1016,10 +1036,19 @@ fn sampled(
         measured.problems.push(Limitation::Decoder(problem));
         return Ok(Reached::End(furthest));
       }
+      // a read through from where the stretches left the decoder would place its windows wrong
+      if !at_start {
+        debug!(
+          problem,
+          "seeking to the start failed after the stretches were read"
+        );
+        measured.problems.push(Limitation::Decoder(problem));
+        return Ok(Reached::Sampled);
+      }
       debug!(problem, "the file cannot be sought in, reading it through");
-      return through(decoder, measuring, buffer, picks, segments, run, measured);
+      return through(decoder, measuring, picks, segments, run, measured);
     }
-    let filled = decoder.fill(buffer, rate);
+    let filled = decoder.fill(&mut measuring.buffer, rate);
     let length = match filled {
       Filled::Full => rate,
       Filled::End(length) => length,
@@ -1032,29 +1061,29 @@ fn sampled(
         furthest = second as f64 + length as f64 / rate as f64;
       }
       if usable(&filled, rate) {
-        measuring.window(second, buffer, rate, measured);
+        measuring.window(second, rate, measured);
       }
       debug!(second, "the file ended before its last pick");
       return Ok(Reached::End(furthest));
     }
     furthest = (second + 1) as f64;
-    measuring.window(second, buffer, rate, measured);
+    measuring.window(second, rate, measured);
   }
   Ok(Reached::Sampled)
 }
 
-/// measures the windows at `picks` on a read from where the decoder is to the last of them
+/// measures the windows at `picks` on a read from the start of the file, where the decoder must
+/// be, to the last of them
 fn through(
   decoder: &mut Decoder,
   measuring: &mut Measuring<'_>,
-  buffer: &mut [Vec<f32>],
   picks: &BTreeSet<u64>,
   segments: &mut Option<Segments>,
   run: &Run<'_>,
   measured: &mut Measured,
 ) -> Result<Reached, Error> {
   let read = Windows::Only(picks);
-  match whole(decoder, measuring, buffer, read, segments, run, measured)? {
+  match whole(decoder, measuring, read, segments, run, measured)? {
     Reached::Short(_) => Ok(Reached::Sampled),
     reached => Ok(reached),
   }

@@ -558,3 +558,29 @@ fn a_dsf_file_cut_inside_a_block_states_its_whole_blocks() {
     );
   }
 }
+
+#[test]
+fn a_sampled_file_of_long_packets_holds_the_same_windows_as_one_read_in_full() {
+  // Monkey's Audio's frames at its highest level are long enough that seeking to windows this
+  // close together decodes more than reading through to them
+  let bytes = fixtures::ape(&music_for(16, 1, 44_100, pink), 16, true);
+  let dir = tempfile::tempdir().unwrap();
+  let path = dir.path().join("a.ape");
+  std::fs::write(&path, &bytes).unwrap();
+  let full = measure(&path, &settings()).unwrap();
+  let sampled = Settings {
+    coverage: sampled(5.0, 12),
+    ..settings()
+  };
+  let sampled = measure(&path, &sampled).unwrap();
+  assert!(sampled.sampled);
+  assert_eq!(sampled.windows.len(), 12);
+  for window in &sampled.windows {
+    let same = full.windows.iter().find(|w| w.start == window.start);
+    assert!(Some(window) == same, "the window at {} s", window.start);
+  }
+  assert_eq!(sampled.duration, full.duration);
+  assert_eq!(missing(&sampled), None);
+  assert!(full.grid.is_some());
+  assert_eq!(of_stretches(&sampled), of_stretches(&full));
+}

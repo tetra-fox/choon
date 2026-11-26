@@ -158,3 +158,6 @@ opt-level = 3
 
 [profile.dev.package.mp3lame-sys]
 opt-level = 3
+
+[profile.dev.package.oxideav-ape]
+opt-level = 3
