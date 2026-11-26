@@ -247,7 +247,7 @@ fn a_mono_source_copied_to_stereo_is_flagged_and_shows_in_the_measures() {
 }
 
 #[test]
-fn a_lossy_layer_under_a_full_band_bed_reads_as_mixed_sources_and_shows_its_grid() {
+fn a_lossy_layer_under_a_full_band_bed_has_a_mixed_cutoff_and_reads_as_a_transcode_by_its_grid() {
   let dir = tempfile::tempdir().unwrap();
   let stem = fixtures::through_mp3(&music(3, 44_100, pink), Bitrate::Kbps128, dir.path());
   // a full-band bed 23 dB under a stem from a 128 kbps MP3, all the way through
