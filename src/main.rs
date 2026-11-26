@@ -175,10 +175,10 @@ struct Check {
   /// List every file in a terminal, and every flagged file in detail
   ///
   /// A terminal otherwise lists only the flagged files, read as a likely transcode, mixed
-  /// sources or possibly lossy, and those not read, and gives a directory whose files all read
-  /// alike one line. With this option the list also states each grid's offset. A file checked
-  /// alone is always shown in detail, and with its reading's summary under this option. Lines
-  /// and JSON always hold every file.
+  /// sources or possibly lossy, and those not read, and gives a directory whose files are all
+  /// flagged alike one line. With this option the list also states each grid's offset. A file
+  /// checked alone is always shown in detail, and with its reading's summary under this option.
+  /// Lines and JSON always hold every file.
   #[arg(short, long)]
   verbose: bool,
 
