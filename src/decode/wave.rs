@@ -9,8 +9,8 @@
 //! 32 bits cannot state, which includes 0xFFFFFFFF itself, are written as of no stated size,
 //! which the reader reads to the end of its source, so the source ends where they do, and the
 //! end of the source is the end of the audio
-//! TODO: remove once a symphonia release reads RF64 and reads a data chunk of no stated size
-//! to the end of its file
+//! TODO: remove once a symphonia release reads RF64, and reads a data chunk whose size is 0
+//! or wrapped at 32 bits as long as the file holds it
 
 use std::io::{self, Read, Seek, SeekFrom};
 
