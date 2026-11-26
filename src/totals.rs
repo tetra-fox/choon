@@ -24,7 +24,7 @@ pub(crate) struct Totals {
   left_squared: f64,
   right_squared: f64,
   product: f64,
-  /// the count of level blocks per whole dB from -160 dBFS
+  /// the count of level blocks per whole dB from [`LEVELS_FROM_DB`]
   levels: Vec<u64>,
 }
 
