@@ -916,8 +916,8 @@ impl Decoder {
   }
 }
 
-/// the bits per sample `params` state of a codec whose samples are integers; ALAC states them
-/// in its magic cookie only. the decoder made from `params` read the same cookie, so one that
+/// the bits per sample `params` state of a lossless or PCM codec; ALAC states them in its
+/// magic cookie only. the decoder made from `params` read the same cookie, so one that
 /// does not read here never gets this far. a container can state a depth of any codec, and
 /// CAF states 0 for a compressed one, which is none stated
 fn stated_bits(params: &AudioCodecParameters) -> Option<u32> {
