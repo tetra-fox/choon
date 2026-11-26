@@ -162,6 +162,9 @@ pub struct Claimed {
   /// Whether the codec keeps every bit of the audio.
   pub lossless: bool,
   /// Length the container states, in sample frames, when it states one.
+  ///
+  /// For an MPEG audio file whose header counts no frames, it is the reader's estimate from
+  /// the bitrate of the first frames and the size of the file.
   pub frames: Option<u64>,
 }
 
