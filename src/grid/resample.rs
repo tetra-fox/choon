@@ -8,7 +8,6 @@ use crate::kaiser;
 
 /// samples of the lower rate on each side of an output sample that the filter reads
 const HALF: usize = 64;
-/// the Kaiser window's beta of the filter
 const KAISER_BETA: f64 = 12.0;
 
 /// a polyphase windowed-sinc filter from one rate to another. output sample j sits at input
