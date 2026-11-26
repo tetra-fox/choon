@@ -24,11 +24,11 @@ const HI_RES_TOP_HZ: f64 = 24_000.0;
 /// # let tone = choon::fixtures::TONE.to_vec();
 /// # let measured = choon::measure_bytes(tone, &choon::Settings::default())?;
 /// let reading = measured.read(&ReadingThresholds::default());
-/// let lossy = match reading.verdict {
+/// let reads_lossy = match reading.verdict {
 ///   Verdict::LikelyTranscode | Verdict::MixedSources => true,
 ///   Verdict::Consistent | Verdict::PossiblyLossy | Verdict::Inconclusive => false,
 /// };
-/// println!("{}", if lossy { "lossy" } else { "no lossy source found" });
+/// println!("{}", if reads_lossy { "reads as lossy" } else { "no lossy source found" });
 /// # Ok(())
 /// # }
 /// ```
