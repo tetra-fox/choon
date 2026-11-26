@@ -15,13 +15,15 @@ use crate::thresholds::ReadingThresholds;
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(untagged))]
 pub enum Evidence {
-  /// Offset whose transform values count far fewer than the others.
+  /// Offset whose values count far fewer than the others.
   ///
   /// It is the count of MP3, MP2, AAC, Vorbis, WMA or AC-3. Where enough segments' subband
   /// counts sit at the phase an uncut MP3, Vorbis or MP2 decode has, it is the subband count,
   /// however little it stands out ([`ReadingThresholds::block_phase_segments`]).
   Count(CodecScan),
-  /// Such an offset in the samples brought to another rate, for a decode converted afterwards.
+  /// Such an offset in the samples brought to another rate.
+  ///
+  /// It shows a decode converted afterwards.
   CountAt {
     /// Rate in Hz the samples were brought to.
     rate: u32,
@@ -29,7 +31,9 @@ pub enum Evidence {
     #[cfg_attr(feature = "serde", serde(flatten))]
     scan: CodecScan,
   },
-  /// Such an offset in some of the segments alone, for a file decoded from the codec in part.
+  /// Such an offset in some of the segments alone.
+  ///
+  /// It shows a file decoded from the codec in part.
   Part {
     /// Number of segments that show the grid.
     ///
@@ -40,23 +44,23 @@ pub enum Evidence {
     #[cfg_attr(feature = "serde", serde(flatten))]
     scan: CodecScan,
   },
-  /// Scalefactor bands whose values sit on the quantizer's steps, for MP3.
+  /// Bands whose values sit on the quantizer's steps, for MP3.
   Steps {
     /// Offset of the granules the bands were read at, in samples.
     offset: usize,
     /// Counts of the bands.
     steps: Mp3Steps,
   },
-  /// Scalefactor bands whose values sit on the quantizer's steps, for AAC.
+  /// Bands whose values sit on the quantizer's steps, for AAC.
   AacSteps {
     /// Offset of the frames the bands were read at, in samples.
     offset: usize,
     /// Counts of the bands, under the window that shows them.
     steps: AacSteps,
   },
-  /// Frames whose band energies sit on the quantizer's lattice, for Opus.
+  /// Frames whose band energies sit on Opus's quantizer lattice.
   Lattice(OpusScan),
-  /// Frames whose band energies sit on that lattice once a change of level is taken off.
+  /// Frames on that lattice once a change of level is taken off.
   Shifted {
     /// Counts of the frames.
     shifted: OpusShifted,
@@ -66,12 +70,12 @@ pub enum Evidence {
     /// Counts of the frames.
     hybrid: OpusHybrid,
   },
-  /// Frames shorter than 20 ms whose band energies sit on that lattice.
+  /// Frames under 20 ms whose band energies sit on that lattice.
   Short {
     /// Counts of the frames of one length.
     short: OpusShort,
   },
-  /// Frames whose band energies sit on that lattice once the pitch post-filter is taken off.
+  /// Frames on that lattice once the pitch post-filter is taken off.
   Unfiltered {
     /// Counts of the frames.
     unfiltered: OpusUnfiltered,
@@ -95,7 +99,7 @@ impl Evidence {
   }
 }
 
-/// Encoder family a grid is consistent with, by its quantizer's steps or by its offset.
+/// Encoder family a grid is consistent with.
 ///
 /// An encoder moves the quantizer's step from one scalefactor band to the next in a way of
 /// its own, which the steps of its decode show wherever the grid sits
@@ -204,9 +208,13 @@ impl fmt::Display for Family {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum NamedBy {
-  /// How the quantizer's steps move from band to band, which holds wherever the grid sits.
+  /// How the quantizer's steps move from band to band.
+  ///
+  /// It holds wherever the grid sits.
   Steps,
-  /// Offset of the grid, with the window for AAC, which a cut start moves.
+  /// Offset of the grid, with the window for AAC.
+  ///
+  /// A cut start moves the offset.
   Offset,
   /// Steps and offset, which name the same family.
   Both,
@@ -219,11 +227,11 @@ pub enum NamedBy {
 pub struct Found {
   /// Codec whose grid it is.
   pub codec: Codec,
-  /// Encoder family the grid is consistent with, where it is one's.
+  /// Encoder family the grid is consistent with, if any.
   pub family: Option<Family>,
   /// What names the family, where it is named.
   pub named_by: Option<NamedBy>,
-  /// Setting of the encoder that the file's cutoff matches, in words.
+  /// Encoder setting the file's cutoff matches, in words.
   ///
   /// A reading fills it where most of the file stops at one cutoff with a sharp shelf: from
   /// [`ReadingThresholds::family_profiles`] for a family listed there, and from
