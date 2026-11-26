@@ -1159,8 +1159,8 @@ impl OpusStream {
 
   /// Returns the stream in a WebM container.
   ///
-  /// Each cluster holds up to a second of packets. The container counts in milliseconds and does not
-  /// state where the audio ends, so a reader gets the frames that pad the last packet too.
+  /// Each cluster holds up to a second of packets. The container counts in milliseconds and does
+  /// not state where the audio ends, so a reader gets the frames that pad the last packet too.
   pub fn webm(&self) -> Vec<u8> {
     let unsigned = |value: u64| -> Vec<u8> {
       let bytes = value.to_be_bytes();
