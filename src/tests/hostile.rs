@@ -179,6 +179,18 @@ fn a_wavpack_file_whose_first_block_is_damaged_is_refused_as_damaged() {
   );
 }
 
+/// measures and reads `input`, failing on a panic in either, which `measure_bytes` gives as
+/// [`Error::Panicked`]. any other error is a refusal of the bytes
+fn survives(input: Vec<u8>) {
+  match measure_bytes(input, &settings()) {
+    Ok(measured) => {
+      read(&measured);
+    }
+    Err(Error::Panicked) => panic!("the analysis panicked"),
+    Err(_) => {}
+  }
+}
+
 proptest::proptest! {
   #![proptest_config(proptest::prelude::ProptestConfig::with_cases(256))]
 
@@ -194,9 +206,7 @@ proptest::proptest! {
       input[(at * length as f64) as usize] = byte;
     }
     input.truncate((kept * length as f64) as usize);
-    if let Ok(measured) = measure_bytes(input, &settings()) {
-      read(&measured);
-    }
+    survives(input);
   }
 
   #[test]
@@ -214,9 +224,7 @@ proptest::proptest! {
       input[(at * length as f64) as usize] = byte;
     }
     input.truncate((kept * length as f64) as usize);
-    if let Ok(measured) = measure_bytes(input, &settings()) {
-      read(&measured);
-    }
+    survives(input);
   }
 
   /// ADTS and MP4 have no checksums, so the damage reaches the AAC decoder
@@ -232,9 +240,7 @@ proptest::proptest! {
       input[(at * length as f64) as usize] = byte;
     }
     input.truncate((kept * length as f64) as usize);
-    if let Ok(measured) = measure_bytes(input, &settings()) {
-      read(&measured);
-    }
+    survives(input);
   }
 
   /// arbitrary bytes, and a real file's header followed by arbitrary bytes, are read without a
@@ -252,9 +258,7 @@ proptest::proptest! {
     ];
     let mut input = headers[header].to_vec();
     input.extend_from_slice(&bytes);
-    if let Ok(measured) = measure_bytes(input, &settings()) {
-      read(&measured);
-    }
+    survives(input);
   }
 
   /// WebM has no checksums, so the damage reaches the Opus decoder
@@ -274,9 +278,7 @@ proptest::proptest! {
       input[(at * length as f64) as usize] = byte;
     }
     input.truncate((kept * length as f64) as usize);
-    if let Ok(measured) = measure_bytes(input, &settings()) {
-      read(&measured);
-    }
+    survives(input);
   }
 }
 
