@@ -1,5 +1,7 @@
-//! the analyzer for a web page: one function over the library, exported to JavaScript by
-//! wasm-bindgen. `README.md` has the JSON it takes and gives
+//! The choon analyzer for a web page.
+//!
+//! One function over the library, exported to JavaScript by wasm-bindgen. `README.md` has the
+//! JSON it takes and gives.
 
 use choon::{
   Claimed, HeAac, MeasureThresholds, Measured, OpusUse, Reading, ReadingThresholds, Settings,
@@ -129,13 +131,19 @@ impl Words {
   }
 }
 
-/// [`read`] for JavaScript, which gets the message as a thrown `Error`
+/// Calls [`read`] for JavaScript.
+///
+/// # Errors
+///
+/// The message [`read`] gives, thrown as a JavaScript `Error`.
 #[wasm_bindgen]
 pub fn check(bytes: Vec<u8>, thresholds: &str) -> Result<String, wasm_bindgen::JsError> {
   read(bytes, thresholds).map_err(|why| wasm_bindgen::JsError::new(&why))
 }
 
-/// the version of the JSON [`check`] returns, which a page asks for before it has read a file
+/// Returns the version of the JSON [`check`] returns.
+///
+/// A page asks for it before it has read a file.
 #[wasm_bindgen]
 pub fn version() -> u32 {
   VERSION
