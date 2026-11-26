@@ -265,18 +265,23 @@ proptest::proptest! {
     survives(input);
   }
 
-  /// WebM has no checksums, so the damage reaches the Opus decoder
+  /// WebM and MP4 have no checksums, so the damage reaches the Opus decoder and the header MP4
+  /// states
   #[test]
   fn a_damaged_opus_file_is_read_without_panicking(
     damage in proptest::collection::vec((0.0f64..1.0, proptest::prelude::any::<u8>()), 0..64),
     kept in 0.2f64..1.0,
-    ogg in proptest::prelude::any::<bool>(),
+    container in 0usize..3,
   ) {
     static STREAM: std::sync::LazyLock<fixtures::OpusStream> = std::sync::LazyLock::new(|| {
       let audio = music_for(3, 1, 48_000, pink);
       fixtures::opus(&audio, fixtures::OpusSettings::music(64))
     });
-    let mut input = if ogg { STREAM.ogg() } else { STREAM.webm() };
+    let mut input = match container {
+      0 => STREAM.ogg(),
+      1 => STREAM.webm(),
+      _ => STREAM.mp4(),
+    };
     let length = input.len();
     for (at, byte) in damage {
       input[(at * length as f64) as usize] = byte;
