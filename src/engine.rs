@@ -356,8 +356,9 @@ impl MediaSource for Watched {
 /// canceled or its time is up.
 ///
 /// A file that claims a lossless format is then scanned for a codec's frame grid in four
-/// stretches of its samples ([`grid`]). The scan's eight jobs, each codec in each stretch, run
-/// on rayon's thread pool: the global one, or the one the analysis is called from inside.
+/// stretches of its samples ([`grid`]). The scan's jobs, one for each codec looked for in each
+/// stretch, run on rayon's thread pool: the global one, or the one the analysis is called from
+/// inside.
 /// Cancellation and the deadline are checked before each job.
 ///
 /// # Errors
