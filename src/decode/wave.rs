@@ -2,13 +2,13 @@
 //! not: a data size of 0 or of 0xFFFFFFFF, which a program writing to a pipe leaves, one that
 //! wrapped at 32 bits, and an RF64 file's, which is 64 bits wide in a chunk of its own.
 //!
-//! symphonia-format-riff 0.6.1 reads the 32 bits of a RIFF file's data chunk as they are, so
-//! it takes a size of 0 for a file of no audio and a size that wrapped for a short file, and
-//! does not know RF64 (wave/mod.rs, wave/chunks.rs). the source is handed over with the header's sizes
-//! written as the file holds them, and an RF64 file's marker as RIFF's. samples whose size
-//! 32 bits cannot state, which includes 0xFFFFFFFF itself, are written as of no stated size,
-//! which the reader reads to the end of its source, so the source ends where they do, and the
-//! end of the source is the end of the audio
+//! symphonia-format-riff 0.6.1 reads the 32 bits of a RIFF file's data chunk as they are, so it
+//! takes a size of 0 for a file of no audio and a size that wrapped for a short file, and does not
+//! know RF64 (wave/mod.rs, wave/chunks.rs). the source is handed over with the header's sizes
+//! written as the file holds them, and an RF64 file's marker as RIFF's. samples whose size 32 bits
+//! cannot state, which includes 0xFFFFFFFF itself, are written as of no stated size, which the
+//! reader reads to the end of its source, so the source ends where they do, and the end of the
+//! source is the end of the audio
 //! TODO: remove once a symphonia release reads RF64, and reads a data chunk whose size is 0
 //! or wrapped at 32 bits as long as the file holds it
 
