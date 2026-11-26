@@ -127,8 +127,9 @@ pub enum Family {
   Faac,
   /// Nero's AAC encoder: the Kaiser-Bessel-derived window and a delay of 2624 samples.
   ///
-  /// Named only where the steps of AAC's quantizer show ([`Found::quantizer`]). A Vorbis
-  /// decode's AAC count sits at this offset about one time in thirteen, and shows none.
+  /// Named only where the steps of AAC's quantizer show, in [`Found::quantizer`] or as
+  /// [`Evidence::AacSteps`]. A Vorbis decode's AAC count sits at this offset about one time in
+  /// thirteen, and shows none.
   Nero,
   /// ffmpeg's AAC encoder or fdk-aac: the Kaiser-Bessel-derived window, their delay cut whole.
   ///
