@@ -6,13 +6,13 @@ use std::path::Path;
 
 use super::{a_17_khz_cut, analyzed, explained, flac, read, settings};
 use crate::decode::HeAac;
-use crate::engine::{measure, measure_bytes};
+use crate::engine::{Settings, measure, measure_bytes};
 use crate::fixtures::{self, Audio, Bitrate, lo_fi, music, music_for, pink, tone};
 use crate::flags::Flag;
 use crate::grid::{Codec, Evidence};
 use crate::limitation::Limitation;
 use crate::reading::{Reading, Verdict};
-use crate::thresholds::ReadingThresholds;
+use crate::thresholds::{MeasureThresholds, ReadingThresholds};
 
 /// the reading must not call honest audio fake, nor its cutoff read as lossy
 fn not_fake(reading: &Reading) {
@@ -702,6 +702,37 @@ fn a_17_khz_cut_whose_grid_was_not_scanned_is_possibly_lossy_too() {
   assert_eq!(reading.cutoff_verdict, Verdict::LikelyTranscode, "{why}");
   assert_eq!(reading.verdict, Verdict::PossiblyLossy, "{why}");
   assert!(reading.summary.contains("were not scanned"), "{why}");
+}
+
+#[test]
+fn a_cut_without_a_grid_names_only_the_grids_looked_for() {
+  let dir = tempfile::tempdir().unwrap();
+  let path = a_17_khz_cut(dir.path());
+  let all = analyzed(&path);
+  assert_eq!(all.verdict, Verdict::PossiblyLossy, "{all:#?}");
+  assert!(
+    all
+      .summary
+      .contains("No MP3, MP2, AAC, Vorbis, WMA, AC-3 or Opus frame grid shows"),
+    "{}",
+    all.summary
+  );
+  let no_wma = Settings {
+    thresholds: MeasureThresholds {
+      scan_wma: false,
+      ..MeasureThresholds::default()
+    },
+    ..settings()
+  };
+  let reading = read(&measure(&path, &no_wma).unwrap());
+  assert_eq!(reading.verdict, Verdict::PossiblyLossy, "{reading:#?}");
+  assert!(
+    reading
+      .summary
+      .contains("No MP3, MP2, AAC, Vorbis, AC-3 or Opus frame grid shows"),
+    "{}",
+    reading.summary
+  );
 }
 
 #[test]

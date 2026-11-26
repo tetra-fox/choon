@@ -5,7 +5,7 @@ use crate::aggregate::{Measures, measures, middle, percentile, upsample_ratio};
 use crate::decode::opus::OpusUse;
 use crate::engine::{Measured, grid_looked_for};
 use crate::flags::{Flag, findings};
-use crate::grid::{self, Codec, Evidence, Family, Found, NamedBy};
+use crate::grid::{self, Codec, Evidence, Family, Found, NamedBy, Scan};
 use crate::limitation::{Limitation, khz};
 use crate::thresholds::{EncoderProfile, ReadingThresholds};
 use crate::window::{Step, Window};
@@ -365,7 +365,7 @@ impl Measured {
       grid.setting = setting(grid, &found, thresholds);
     }
     if grid_looked_for(claimed, self.dsd_rate) {
-      found = weighed(found, grid.as_ref(), self.grid.is_some(), thresholds);
+      found = weighed(found, grid.as_ref(), self.grid.as_ref(), thresholds);
     }
     limitations.extend(found.limitations);
     if let Some(he_aac) = &self.he_aac {
@@ -434,12 +434,12 @@ fn setting(grid: &Found, found: &CutoffReading, thresholds: &ReadingThresholds) 
 
 /// the cutoff reading `found` of a file a grid is looked for in, weighed with the `grid` its
 /// scan found: a grid makes a likely transcode, one in part of the file mixed sources, and a
-/// cutoff that reads as lossy without one makes a doubt, whether the scan found none or, not
-/// `scanned`, did not run
+/// cutoff that reads as lossy without one makes a doubt, whether the `scan` found none or did
+/// not run
 fn weighed(
   found: CutoffReading,
   grid: Option<&Found>,
-  scanned: bool,
+  scan: Option<&Scan>,
   thresholds: &ReadingThresholds,
 ) -> CutoffReading {
   if let Some(grid) = grid {
@@ -569,10 +569,9 @@ fn weighed(
     Verdict::LikelyTranscode | Verdict::MixedSources => {
       let mut limitations = found.limitations;
       limitations.push(Limitation::CutoffWithoutGrid);
-      let unconfirmed = if scanned {
-        "No MP3, MP2, AAC, Vorbis, WMA, AC-3 or Opus frame grid shows in the samples"
-      } else {
-        "The samples were not scanned for a codec's frame grid"
+      let unconfirmed = match scan {
+        Some(scan) => format!("No {} frame grid shows in the samples", scanned_for(scan)),
+        None => "The samples were not scanned for a codec's frame grid".to_string(),
       };
       CutoffReading {
         verdict: Verdict::PossiblyLossy,
@@ -587,6 +586,28 @@ fn weighed(
     }
     Verdict::Consistent | Verdict::Inconclusive | Verdict::PossiblyLossy => found,
   }
+}
+
+/// the codecs `scan` looked for a grid of, as a list in words: MP3's and AAC's are always
+/// scanned, the others not at every rate, setting or version of the analyzer
+fn scanned_for(scan: &Scan) -> String {
+  let codecs: Vec<String> = [
+    Some(Codec::Mp3),
+    scan.mp2.as_ref().map(|_| Codec::Mp2),
+    Some(Codec::Aac),
+    scan.vorbis.as_ref().map(|_| Codec::Vorbis),
+    scan.wma.as_ref().map(|_| Codec::Wma),
+    scan.ac3.as_ref().map(|_| Codec::Ac3),
+    scan.opus.as_ref().map(|_| Codec::Opus),
+  ]
+  .into_iter()
+  .flatten()
+  .map(|codec| codec.to_string())
+  .collect();
+  let (last, rest) = codecs
+    .split_last()
+    .expect("mp3 and aac are always in the list");
+  format!("{} or {last}", rest.join(", "))
 }
 
 /// reads the cutoff of the non-silent windows, whose median cutoff is `median`
