@@ -295,9 +295,9 @@ impl Mp3<f64> {
       let at = from + LINES * granule;
       self.hybrid(&left[at..at + SUBBAND_SAMPLES], &mut l);
       self.hybrid(&right[at..at + SUBBAND_SAMPLES], &mut r);
-      for k in 0..MP3_HOP {
-        m[k] = (l[k] + r[k]) * half;
-        s[k] = (l[k] - r[k]) * half;
+      for ((m, s), (l, r)) in m.iter_mut().zip(&mut s).zip(l.iter().zip(&r)) {
+        *m = (l + r) * half;
+        *s = (l - r) * half;
       }
       let mut count = |pair: [&[f64; MP3_HOP]; 2]| {
         let (mut tested, mut stepped, mut whole) = (0, 0, 0);
