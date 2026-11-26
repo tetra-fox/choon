@@ -1,5 +1,5 @@
-//! ends a file's source where its audio ends, for the two readers of symphonia that trip on
-//! what follows it.
+//! ends a file's source where its audio ends, for the two readers of symphonia that read a
+//! file wrongly when bytes follow its audio.
 //!
 //! symphonia-format-ogg 0.6.1 looks for a stream's last page from a page's most bytes before
 //! the end of the file, and fails the open when no page starts from there on (physical.rs,
