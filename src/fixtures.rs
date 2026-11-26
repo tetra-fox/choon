@@ -1277,3 +1277,18 @@ fn ebml(id: &[u8], body: &[u8]) -> Vec<u8> {
   out.extend_from_slice(body);
   out
 }
+
+#[cfg(test)]
+mod tests {
+  #[test]
+  fn each_seed_makes_its_own_noise() {
+    let made: Vec<Vec<f32>> = (0..8)
+      .map(|seed| super::noise(seed, 1, 8000, |_| 1.0))
+      .collect();
+    for (seed, noise) in made.iter().enumerate() {
+      for other in &made[seed + 1..] {
+        assert_ne!(noise, other, "seed {seed}");
+      }
+    }
+  }
+}
