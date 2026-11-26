@@ -122,7 +122,7 @@ fn an_ogg_file_is_read_whatever_follows_its_last_page() {
 fn a_flac_file_with_tags_after_it_is_read_to_its_last_frame() {
   let whole = fixtures::flac(&music_for(4, 1, 44_100, pink), 16, false);
   let clean = measure_bytes(whole.clone(), &settings()).unwrap();
-  // an APE tag of one 9-byte item under a footer, then an ID3v1 tag
+  // an APE tag of one 11-byte item under a footer, then an ID3v1 tag
   let item = b"\x01\0\0\0\0\0\0\0A\0b";
   let mut ape = item.to_vec();
   ape.extend_from_slice(b"APETAGEX");
