@@ -849,7 +849,7 @@ fn quiet_tails_of_honest_dynamic_music_read_consistent() {
 }
 
 #[test]
-fn quiet_tails_of_transcoded_dynamic_music_do_not_reach_the_quantization_noise() {
+fn quiet_tails_of_transcoded_dynamic_music_do_not_hide_the_transcode() {
   let dir = tempfile::tempdir().unwrap();
   // its quiet tails would otherwise reach the 16-bit noise and read as full-band windows
   let through = fixtures::through_mp3(&fixtures::classical(90), Bitrate::Kbps192, dir.path());
