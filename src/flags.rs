@@ -80,7 +80,7 @@ pub(crate) fn findings(
     found.flags.push(Flag::DualMono);
     found
       .notes
-      .push("The two channels are identical, so the source was probably mono.".to_string());
+      .push("The two channels hold the same audio, so the source was probably mono.".to_string());
   }
   found
 }
