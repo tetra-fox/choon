@@ -11,7 +11,7 @@ use crate::window::Window;
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum Flag {
-  /// Audio made at a lower sample rate and converted up.
+  /// Audio that reads as made at a lower sample rate and converted up.
   ///
   /// The content stops with a cliff at the top of a lower sample rate's band where no encoder
   /// cuts.
