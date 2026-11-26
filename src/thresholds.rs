@@ -149,7 +149,10 @@ pub struct ReadingThresholds {
   pub transcode_share: f64,
   /// Distance in Hz at which a cutoff still shares the common one.
   pub cluster_hz: f64,
-  /// Percentile of a lossy file's cutoffs read as its encoder's ceiling.
+  /// Fraction of a lossy file's windows, from 0 to 1, whose cutoffs set its encoder's ceiling.
+  ///
+  /// The lowest cutoff that at least this fraction of the windows stop at or under is read as
+  /// the ceiling, the top of what the file's encoder kept.
   pub ceiling: f64,
   /// Share of windows each of two sources has for mixed sources.
   pub mixed_share: f64,
