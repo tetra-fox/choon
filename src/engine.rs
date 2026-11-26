@@ -265,9 +265,13 @@ pub enum Error {
   NotAudio(String),
   /// Audio the analyzer does not read, with why in words.
   ///
-  /// The track does not state its codec parameters, sample rate or channels, the codec is not
-  /// one the analyzer decodes, its decoder cannot start, or the sample rate is above what the
-  /// analyzer reads.
+  /// One of:
+  ///
+  /// - the track does not state its codec parameters, sample rate or channels
+  /// - the codec is not one the analyzer decodes, or its decoder cannot start
+  /// - the sample rate is above what the analyzer reads
+  /// - a WavPack, Monkey's Audio or DSD file is of a kind its reader does not read
+  /// - an AAC stream holds no packet its decoder reads
   Unsupported(String),
   /// Analysis that panicked, which is a bug in the analyzer or in a decoder.
   ///
