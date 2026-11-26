@@ -244,12 +244,10 @@ impl Segments {
     (!segment.full()).then(|| segment.next())
   }
 
-  /// whether segment `index` has no samples yet
   pub(crate) fn untouched(&self, index: usize) -> bool {
     self.0[index].left.is_empty()
   }
 
-  /// whether every segment is full
   pub(crate) fn complete(&self) -> bool {
     self.0.iter().all(Segment::full)
   }
