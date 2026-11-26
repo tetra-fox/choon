@@ -47,7 +47,7 @@ shares of its bands and neighbouring bands are held against bounds fitted to eac
   Shine, BladeEnc, GOGO, fdk-aac and Nero, 60 of them through Fraunhofer's codec and ffmpeg's
   AAC and 40 through Apple's MP3 encoder, and the corpus's LAME and ffmpeg AAC decodes of 100
   more. Each bound stands 0.02 clear of every decode of another encoder among them that meets
-  its rule's other bounds
+  its rule's other bounds, and Shine's two stand 0.001 and 0.1 clear
 - Of those decodes with their starts cut, the bounds name 871 of 3,294 of LAME, 524 of 600 of
   Helix, 329 of 360 of Fraunhofer, 230 of 360 of Shine, 257 of 300 of ffmpeg's AAC and 466 of
   640 of fdk-aac, and none of 840 of BladeEnc and GOGO or 120 of Apple's MP3 encoder
