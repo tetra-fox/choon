@@ -118,11 +118,7 @@ music/lame-320.flac: likely transcode (MP3 grid, cutoff 20.2 kHz, MP3 (LAME) ~32
   same threads
 - A line is complete when it is written, and lines come in the order files finish, so a
   consumer reads them while the run goes on and matches each to its input by `file`
-- A JSON line holds the claimed format, the length, the windows read, the grid scan, an Opus
-  file's modes and bandwidths, an HE-AAC file's core rate, a DSD file's one-bit rate, and every
-  reading
-- A path that is not Unicode has its bytes beside `file` on Unix, as `fileBytes`, a list of
-  numbers
+- `fileBytes` is a list of numbers, on Unix only
 - On Unix a piped line holds a path's bytes as they are, and a newline or a colon in a name
   reads as the line's own, so a script that matches files to readings reads the JSON
 - A file the analyzer fails on is not read and says so, and the other files are still read
@@ -134,6 +130,19 @@ music/lame-320.flac: likely transcode (MP3 grid, cutoff 20.2 kHz, MP3 (LAME) ~32
 - Repeating `--profile` reads each file with several profiles; those with the same `measure`
   thresholds share one decode
 - A reading is named after its profile's file, so two profile files of one name are refused
+
+| JSON key             | Description                                                             |
+| -------------------- | ----------------------------------------------------------------------- |
+| `file`, `fileBytes`  | the path, and its bytes when it is not Unicode                          |
+| `claimed`            | the format the file claims                                              |
+| `durationSeconds`    | the length of the audio, in seconds                                     |
+| `bitrateKbps`        | a lossy file's bitrate, in kbit/s                                       |
+| `sampled`, `windows` | whether only windows spread over the file were read, and how many were  |
+| `grid`               | the grid scan                                                           |
+| `opus`               | an Opus file's modes and bandwidths                                     |
+| `heAac`              | an HE-AAC file's core rate and whether parametric stereo was used       |
+| `dsdRate`            | a DSD file's one-bit rate, in Hz                                        |
+| `readings`           | each profile's reading, with `profile`, `measureSeconds`, `readSeconds` |
 
 | Exit code | Description                                           |
 | --------- | ----------------------------------------------------- |
