@@ -122,7 +122,8 @@ music/honest.flac: consistent (confidence 0.73)
   reading
 - A path that is not Unicode has its bytes beside `file` on Unix, as `fileBytes`, a list of
   numbers
-- A line holds a path as it is, so a script that matches files to readings reads the JSON
+- On Unix a line holds a path's own bytes, as it is, so a script that matches files to
+  readings reads the JSON
 - A file the analyzer fails on is not read and says so, and the other files are still read
 - A file out of time under `--timeout` prints a reading of the part measured, with a limitation
   that says so, and counts toward the exit code as any reading does. One with no window

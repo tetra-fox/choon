@@ -17,7 +17,7 @@ use console::{Alignment, Term};
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 
 use crate::cli::words::{self, encoder, flag_words, flagged, khz, label};
-use crate::{Checked, NOT_READ, detailed, piped, piped_unread};
+use crate::{Checked, NOT_READ, complain, detailed, said, unread_said};
 
 /// the verdicts in the order the summary counts them
 const VERDICTS: [Verdict; 5] = [
@@ -303,8 +303,8 @@ impl Bars {
   }
 
   /// prints `line` on stderr above the bars
-  pub fn complain(&self, line: &str) {
-    self.multi.suspend(|| eprintln!("{line}"));
+  pub fn complain(&self, line: &[u8]) {
+    self.multi.suspend(|| complain(line));
   }
 
   /// takes every bar off the screen
@@ -582,10 +582,10 @@ pub fn tables(
       let path = legible(&row.path);
       match &row.outcome {
         Ok(checked) if verbose || checked.flag().is_some() => {
-          lines += &piped(path, checked, colour);
+          lines += &format!("{path}: {}", said(checked, colour));
         }
         Ok(_) => continue,
-        Err(why) => lines += &piped_unread(path, why, colour),
+        Err(why) => lines += &format!("{path}: {}", unread_said(why, colour)),
       }
       lines += "\n";
     }

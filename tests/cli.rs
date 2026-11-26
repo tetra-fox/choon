@@ -288,6 +288,34 @@ fn json_holds_the_bytes_of_a_path_that_is_not_unicode() {
   assert_eq!(plain["file"], path(&dir.path().join("plain.m4a")));
 }
 
+#[cfg(unix)]
+#[test]
+fn a_line_and_a_complaint_hold_the_bytes_of_a_path_that_is_not_unicode() {
+  use std::ffi::OsStr;
+  use std::os::unix::ffi::OsStrExt;
+
+  let dir = tempfile::tempdir().unwrap();
+  let names: [&[u8]; 3] = [b"tone\xff.m4a", b"text\xff.m4a", b"gone\xff.m4a"];
+  let [tone, text, gone] = names.map(|name| dir.path().join(OsStr::from_bytes(name)));
+  std::fs::write(&tone, fixtures::TONE).unwrap();
+  std::fs::write(&text, "not audio\n").unwrap();
+  let output = Command::new(env!("CARGO_BIN_EXE_choon"))
+    .arg("check")
+    .args([&tone, &text, &gone])
+    .output()
+    .unwrap();
+  assert_eq!(status(&output), 2, "{output:?}");
+  let starts = |out: &[u8], path: &Path, before: &[u8]| {
+    let wanted = [before, path.as_os_str().as_bytes(), b": "].concat();
+    out
+      .split(|byte| *byte == b'\n')
+      .any(|line| line.starts_with(&wanted))
+  };
+  assert!(starts(&output.stdout, &tone, b""), "{output:?}");
+  assert!(starts(&output.stdout, &text, b""), "{output:?}");
+  assert!(starts(&output.stderr, &gone, b"choon: "), "{output:?}");
+}
+
 #[test]
 fn a_file_named_twice_or_inside_a_directory_named_is_read_once() {
   let dir = tempfile::tempdir().unwrap();

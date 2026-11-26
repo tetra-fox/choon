@@ -381,7 +381,7 @@ fn run(check: &Check) -> Result<u8, Failed> {
     // the defaults are numbers, strings and lists of them, which always serialize
     let defaults =
       serde_json::to_string_pretty(&Thresholds::default()).expect("thresholds serialize");
-    print(&mut io::stdout().lock(), &defaults)?;
+    print(&mut io::stdout().lock(), defaults.as_bytes())?;
     return Ok(CLEAN);
   }
   let profiles = profiles(check)?;
@@ -418,7 +418,8 @@ fn run(check: &Check) -> Result<u8, Failed> {
       )
       .map_err(Failed::Stdin)?;
       for problem in &inputs.problems {
-        eprintln!("{}", complaint(&problem.path, &problem.why));
+        let terminal = io::stderr().is_terminal();
+        complain(&complaint(&problem.path, problem.why.as_bytes(), terminal));
         if problem.unread {
           code = FAILED;
         }
@@ -789,7 +790,7 @@ fn printed(
       Ok(checked) => {
         if json {
           // the readings are numbers, strings and lists of them, which always serialize
-          serde_json::to_string(&Analyzed {
+          serde_json::to_vec(&Analyzed {
             file: file.to_string_lossy(),
             file_bytes: raw(file),
             claimed: &checked.claimed,
@@ -805,23 +806,24 @@ fn printed(
           })
           .expect("a reading serializes")
         } else {
-          piped(file.display(), &checked, false)
+          piped(file, &said(&checked, false))
         }
       }
       Err(unread @ (Unread::Open(_) | Unread::Unmeasured(_))) => {
-        eprintln!("{}", complaint(file, unread));
+        let why = unread.to_string();
+        complain(&complaint(file, why.as_bytes(), io::stderr().is_terminal()));
         continue;
       }
       Err(Unread::NotRead(why)) => {
         if json {
-          serde_json::to_string(&NotAudio {
+          serde_json::to_vec(&NotAudio {
             file: file.to_string_lossy(),
             file_bytes: raw(file),
             error: &why,
           })
           .expect("strings and bytes serialize")
         } else {
-          piped_unread(file.display(), &why, false)
+          piped(file, &unread_said(&why, false))
         }
       }
     };
@@ -892,8 +894,10 @@ fn shown(
               // the files not read are listed at the end, which says it again where stderr
               // is the terminal too. the one file of a check has no list
               Unread::Open(_) | Unread::Unmeasured(_) => {
-                if one || !io::stderr().is_terminal() {
-                  bars.complain(&complaint(&path, &unread));
+                let terminal = io::stderr().is_terminal();
+                if one || !terminal {
+                  let why = unread.to_string();
+                  bars.complain(&complaint(&path, why.as_bytes(), terminal));
                 }
               }
               Unread::NotRead(why) => alone = Some(not_read(&path, why, colour)),
@@ -944,7 +948,7 @@ fn shown(
     ),
   };
   if !text.is_empty() {
-    print(&mut io::stdout().lock(), text.trim_end())?;
+    print(&mut io::stdout().lock(), text.trim_end().as_bytes())?;
   }
   Ok(())
 }
@@ -953,8 +957,9 @@ fn shown(
 /// replacement character where it is not, so two paths can be the same `file`. serde writes
 /// the bytes as a list of numbers, which a script reads without a decoder.
 ///
-/// a piped line holds the path as it is and has no such key: a newline or a colon in a name
-/// reads as the line's own, so a script that matches files to readings reads the JSON
+/// a piped line holds the path as [`written`] gives it and has no such key: a newline or a
+/// colon in a name reads as the line's own, so a script that matches files to readings reads
+/// the JSON
 #[cfg(unix)]
 fn raw(path: &Path) -> Option<&[u8]> {
   use std::os::unix::ffi::OsStrExt;
@@ -967,20 +972,49 @@ fn raw(_: &Path) -> Option<&[u8]> {
   None
 }
 
-/// an error about `path` as stderr shows it, with the path made legible when stderr is a
-/// terminal
-fn complaint(path: &Path, why: impl std::fmt::Display) -> String {
-  if io::stderr().is_terminal() {
-    format!("choon: {}: {why}", terminal::legible(path))
+/// `path` as a line written to a pipe or a file holds it: its own bytes, which a script can
+/// hand back to the system as they are
+#[cfg(unix)]
+fn written(path: &Path) -> Cow<'_, [u8]> {
+  use std::os::unix::ffi::OsStrExt;
+  Cow::Borrowed(path.as_os_str().as_bytes())
+}
+
+/// off Unix a name is not bytes, and one that is not Unicode is written with a replacement
+/// character where it is not
+#[cfg(not(unix))]
+fn written(path: &Path) -> Cow<'_, [u8]> {
+  Cow::Owned(path.to_string_lossy().into_owned().into_bytes())
+}
+
+/// `path` as stderr shows it: made legible when stderr is a `terminal`, otherwise as a piped
+/// line holds it
+fn on_stderr(path: &Path, terminal: bool) -> Cow<'_, [u8]> {
+  if terminal {
+    Cow::Owned(terminal::legible(path).into_bytes())
   } else {
-    format!("choon: {}: {why}", path.display())
+    written(path)
   }
 }
 
-/// writes `line` to `out`; false when the reader has closed the pipe, as `head` does once it has
-/// what it wanted
-fn print(out: &mut impl Write, line: &str) -> Result<bool, Failed> {
-  match writeln!(out, "{line}") {
+/// an error about `path` as stderr shows it, `why` after it
+fn complaint(path: &Path, why: &[u8], terminal: bool) -> Vec<u8> {
+  [b"choon: ", &*on_stderr(path, terminal), b": ", why].concat()
+}
+
+/// writes `line` and a newline to stderr in one write, and panics where that fails, as
+/// `eprintln!` does
+fn complain(line: &[u8]) {
+  let line = [line, b"\n"].concat();
+  if let Err(e) = io::stderr().write_all(&line) {
+    panic!("failed printing to stderr: {e}");
+  }
+}
+
+/// writes `line` and a newline to `out`; false when the reader has closed the pipe, as `head`
+/// does once it has what it wanted
+fn print(out: &mut impl Write, line: &[u8]) -> Result<bool, Failed> {
+  match out.write_all(line).and_then(|()| out.write_all(b"\n")) {
     Ok(()) => Ok(true),
     Err(e) if e.kind() == io::ErrorKind::BrokenPipe => Ok(false),
     Err(e) => Err(Failed::Output(e)),
@@ -1173,15 +1207,16 @@ fn checked(
 /// the widest verdict, which the lines of a terminal pad the others to
 const VERDICT_WIDTH: usize = "likely transcode".len();
 
-/// a file's line where lines are piped: its path, then its readings
-fn piped(path: impl std::fmt::Display, checked: &Checked, colour: bool) -> String {
-  format!("{path}: {}", said(checked, colour))
+/// a file's line where lines are piped: its path as [`written`] gives it, then what was read
+/// of it, as [`said`] or [`unread_said`] says it
+fn piped(path: &Path, said: &str) -> Vec<u8> {
+  [&*written(path), b": ", said.as_bytes()].concat()
 }
 
-/// the line of a file not read as audio where lines are piped: its path, then why
-fn piped_unread(path: impl std::fmt::Display, why: &str, colour: bool) -> String {
+/// what a piped line says of a file not read as audio after its path: the status, then why
+fn unread_said(why: &str, colour: bool) -> String {
   let status = terminal::painted(None, NOT_READ, colour);
-  format!("{path}: {status} ({why})")
+  format!("{status} ({why})")
 }
 
 /// a terminal's line for the one file of a check when it is not read as audio: the status
