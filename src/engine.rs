@@ -576,7 +576,7 @@ fn measure_decoded(mut decoder: Decoder, settings: &Settings) -> Result<Measured
   // a sampled read's stretches are read before its windows where the source can be sought in.
   // symphonia-format-caf 0.6.1 refuses every seek once its last packet is read (demuxer.rs,
   // `seek`: "invalid packet index"), which the last window can do
-  // TODO: read them after the windows again once a symphonia release seeks from the end
+  // TODO: read them after the windows once a symphonia release seeks from the end
   let stretches_first = picks.is_some() && decoder.seekable && !reads_through;
   let mut moved = false;
   // whether the time ran out while the segments were read, which leaves the scan no time either
