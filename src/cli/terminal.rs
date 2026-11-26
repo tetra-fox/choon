@@ -1058,7 +1058,7 @@ mod tests {
     let text = readout(Path::new("album/fake.flac"), &fake, plain);
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines[0], "album/fake.flac");
-    // the codec as its makers spell it, not the decoder's short name
+    // the codec as its makers spell it, where the decoder names it flac
     assert!(
       lines
         .iter()
