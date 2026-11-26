@@ -1034,8 +1034,8 @@ fn print(out: &mut impl Write, line: &[u8]) -> Result<bool, Failed> {
 }
 
 /// the most threads `--jobs` starts. reading is work for a core, so threads past the cores only
-/// wait their turn, and each costs memory and time to start: rayon stops at 65,536 of them,
-/// which keep every core busy for minutes before a file is read
+/// wait their turn, and each costs memory and time to start: rayon stops at 65,535 of them on a
+/// 64-bit target, which keep every core busy for minutes before a file is read
 const MAX_JOBS: usize = 1024;
 
 /// the number of jobs `text` names, from 1 to [`MAX_JOBS`]
