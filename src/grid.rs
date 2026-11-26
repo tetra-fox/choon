@@ -1,10 +1,10 @@
-//! Frame grids that MP3, MP2, AAC, Vorbis, WMA, AC-3 and Opus encoders leave in decoded audio.
+//! Frame grids that lossy encoders leave in decoded audio.
 //!
-//! An encoder transforms its input in frames on a fixed grid and quantizes what the transform
-//! gives. The decoder's synthesis inverts the encoder's analysis, so running that analysis again
-//! on the decoded samples, with frames on the encoder's grid, gives the quantized values back.
-//! With frames at any other offset they are mixed with the neighbouring frames'. Lossless audio
-//! has no such offset.
+//! The scan looks for the grids of MP3, MP2, AAC, Vorbis, WMA, AC-3 and Opus. An encoder transforms
+//! its input in frames on a fixed grid and quantizes what the transform gives. The decoder's
+//! synthesis inverts the encoder's analysis, so running that analysis again on the decoded samples,
+//! with frames on the encoder's grid, gives the quantized values back. With frames at any other
+//! offset they are mixed with the neighbouring frames'. Lossless audio has no such offset.
 //!
 //! The scan reads four stretches of 40960 samples, at 20, 40, 60 and 80% of the file, or spread
 //! evenly over a file shorter than five such stretches. No two share a sample, and a file
@@ -144,7 +144,7 @@ fn in_stretch(offset: usize, start: u64, hop: usize) -> usize {
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 #[non_exhaustive]
 pub enum Codec {
-  /// AAC, read with a long block's transform under either of its windows.
+  /// AAC, read with a long block's transform under either window.
   ///
   /// A Vorbis decode whose grid does not show under Vorbis's own window can read as AAC.
   Aac,
@@ -191,7 +191,7 @@ impl Codec {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct CodecScan {
-  /// Offset of the frames that count the fewest values, in samples.
+  /// Offset of the frames counting the fewest values, in samples.
   ///
   /// It is where frames start, modulo the codec's hop, counted from the file's first sample.
   pub offset: usize,
@@ -232,7 +232,7 @@ pub struct OpusScan {
   /// It is where frames start at 48 kHz, modulo the 960 samples of a 20 ms frame, counted
   /// from the file's first sample. Where no offset counts a frame it is the uncut decode's.
   pub offset: usize,
-  /// Number of frames counted at `offset`, over the four segments.
+  /// Number of frames counted at `offset`, over the segments.
   pub frames: usize,
   /// Each segment's count at `offset`, in file order.
   pub segment_frames: [usize; SEGMENTS],
@@ -241,7 +241,7 @@ pub struct OpusScan {
   /// The grid is the one a decode has when nothing was cut from its start: libopus's encoders
   /// all delay their input by the same 312 samples. Up to 60 windows are read.
   pub uncut_frames: usize,
-  /// Frames counted once a change of level after the decode is taken off.
+  /// Frames counted once a gain after the decode is taken off.
   ///
   /// `None` in measures kept by a version of the analyzer that did not search for one.
   #[cfg_attr(feature = "serde", serde(default))]
@@ -251,12 +251,12 @@ pub struct OpusScan {
   /// `None` in measures kept by a version of the analyzer that did not count them.
   #[cfg_attr(feature = "serde", serde(default))]
   pub hybrid: Option<OpusHybrid>,
-  /// Frames counted as frames of 10, 5 and 2.5 ms, in that order.
+  /// Counts of frames of 10, 5 and 2.5 ms, in that order.
   ///
   /// Empty in measures kept by a version of the analyzer that did not count them.
   #[cfg_attr(feature = "serde", serde(default))]
   pub short: Vec<OpusShort>,
-  /// Frames counted once the pitch post-filter is taken off them.
+  /// Frames counted once the pitch post-filter is taken off.
   ///
   /// `None` in measures kept by a version of the analyzer that did not search for it.
   #[cfg_attr(feature = "serde", serde(default))]
@@ -278,7 +278,7 @@ pub struct OpusScan {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct OpusUnfiltered {
-  /// Number of pairs of frames the filter was searched in, up to 40.
+  /// Number of frame pairs the filter was searched in, up to 40.
   pub searched: usize,
   /// Number of them whose later frame sits on the lattice with the filter taken off.
   pub frames: usize,
@@ -305,14 +305,14 @@ pub struct OpusShort {
   /// It is where frames start at 48 kHz, modulo `length`, counted from the file's first
   /// sample. Where no offset counts a frame it is the uncut decode's.
   pub offset: usize,
-  /// Number of frames counted at `offset`, over the four segments.
+  /// Number of frames counted at `offset`, over the segments.
   pub frames: usize,
   /// Offset of an uncut decode's grid that counts the most frames in the windows, in samples.
   ///
   /// libopus delays its input by 312 samples, or by 120 in its low-delay mode, which ffmpeg
   /// sets for frames under 10 ms. The windows are counted on the grid each delay leaves.
   pub uncut_offset: usize,
-  /// Number of frames counted in the windows measured, at `uncut_offset`.
+  /// Number of frames counted in the windows at `uncut_offset`.
   pub uncut_frames: usize,
 }
 
@@ -335,7 +335,7 @@ impl OpusShort {
   }
 }
 
-/// How many frames of a file carry the band energies of Opus's hybrid mode.
+/// How many frames carry Opus's hybrid-mode band energies.
 ///
 /// The hybrid mode codes audio under 8 kHz with a voice coder and the four bands above with
 /// CELT. A frame is tested on the two bands from 9.6 to 15.6 kHz: the voice coder's output
@@ -354,9 +354,9 @@ pub struct OpusHybrid {
   /// It is where frames start at 48 kHz, modulo the 960 samples of a 20 ms frame, counted
   /// from the file's first sample. Where no offset counts a frame it is the uncut decode's.
   pub offset: usize,
-  /// Number of frames counted at `offset`, over the four segments.
+  /// Number of frames counted at `offset`, over the segments.
   pub frames: usize,
-  /// Number of frames at `offset` whose two bands could be tested.
+  /// Number of frames at `offset` whose two bands were tested.
   pub tested: usize,
   /// Number of different pairs of steps the frames counted at `offset` sit on.
   ///
@@ -401,7 +401,7 @@ pub struct OpusShifted {
   /// It is where frames start at 48 kHz, modulo the 960 samples of a 20 ms frame, counted
   /// from the file's first sample. Where no offset counts a frame it is the uncut decode's.
   pub offset: usize,
-  /// Number of frames counted at `offset`, over the four segments.
+  /// Number of frames counted at `offset`, over the segments.
   pub frames: usize,
   /// Number of frames counted in the windows measured, on the grid of an uncut decode.
   pub uncut_frames: usize,
@@ -434,7 +434,7 @@ impl OpusShifted {
   }
 }
 
-/// Scan of a file for the frame grids of MP3, MP2, AAC, Vorbis, WMA, AC-3 and Opus.
+/// Scan of a file for the frame grids of lossy codecs.
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
@@ -475,13 +475,13 @@ pub struct Scan {
   /// of the analyzer that did not look for them.
   #[cfg_attr(feature = "serde", serde(default))]
   pub mp3_steps: Option<Mp3Steps>,
-  /// AAC's quantizer steps on the grid of `aac`, with the Kaiser-Bessel-derived window.
+  /// AAC's quantizer steps on the grid of `aac`.
   ///
   /// `None` at a sample rate other than 44.1 and 48 kHz, and in measures kept by a version of
   /// the analyzer that did not look for them.
   #[cfg_attr(feature = "serde", serde(default))]
   pub aac_steps: Option<AacSteps>,
-  /// AAC's quantizer steps on the grid of `aac_sine`, with the sine window.
+  /// AAC's quantizer steps on the grid of `aac_sine`.
   ///
   /// `None` where `aac_steps` is.
   #[cfg_attr(feature = "serde", serde(default))]
@@ -501,7 +501,7 @@ pub struct Scan {
   pub other_rate: Option<OtherRate>,
 }
 
-/// How many scalefactor bands of a file hold values on MP3's quantizer.
+/// How many scalefactor bands hold values on MP3's quantizer.
 ///
 /// An MP3 encoder keeps each value of a scalefactor band as a whole number to the power 4/3
 /// times the band's step, and a step is a whole power of the fourth root of two. With the
@@ -518,7 +518,7 @@ pub struct Scan {
 pub struct Mp3Steps {
   /// Number of bands tested, over the four segments.
   pub tested: usize,
-  /// Number of bands whose values all sit on the lattice of one step.
+  /// Number of bands whose values all sit on one step's lattice.
   pub stepped: usize,
   /// Number of those whose step is a whole power of the fourth root of two.
   ///
@@ -552,7 +552,7 @@ pub struct Mp3Neighbours {
   pub pairs: [usize; 3],
   /// Number of pairs whose two steps are the same, by region.
   pub same: [usize; 3],
-  /// Number of pairs whose higher band has the finer step, by region.
+  /// Number of pairs whose higher band's step is finer, by region.
   pub finer: [usize; 3],
   /// Number of pairs whose steps are six quarter powers or more apart, by region.
   ///
@@ -750,7 +750,7 @@ impl Mp3Neighbours {
   }
 }
 
-/// How many scalefactor bands of a file hold values on AAC's quantizer.
+/// How many scalefactor bands hold values on AAC's quantizer.
 ///
 /// An AAC encoder keeps each value of a scalefactor band as a whole number to the power 4/3
 /// times the band's step, and a step is a whole power of the fourth root of two, as in MP3
@@ -767,7 +767,7 @@ impl Mp3Neighbours {
 pub struct AacSteps {
   /// Number of bands tested, over the four segments.
   pub tested: usize,
-  /// Number of bands whose values all sit on the lattice of one step.
+  /// Number of bands whose values all sit on one step's lattice.
   pub stepped: usize,
   /// Number of those whose step is a whole power of the fourth root of two.
   ///
@@ -801,9 +801,9 @@ pub struct AacNeighbours {
   pub pairs: [usize; 4],
   /// Number of pairs whose two steps are the same, by region.
   pub same: [usize; 4],
-  /// Number of pairs whose higher band has the finer step, by region.
+  /// Number of pairs whose higher band's step is finer, by region.
   pub finer: [usize; 4],
-  /// Number of pairs whose steps are one quarter power apart, by region.
+  /// Number of pairs one quarter power apart, by region.
   pub one: [usize; 4],
   /// Number of pairs whose steps are four quarter powers or more apart, by region.
   pub far: [usize; 4],
