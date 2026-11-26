@@ -17,8 +17,8 @@ Check that lossless audio is actually lossless. A command-line tool and a Rust l
 - Finds that grid after a conversion between 44.1 and 48 kHz
 - Finds an Opus decode at 48 kHz or converted to 44.1 kHz, with or without a gain after the
   decode, in CELT and hybrid modes, in frames of 2.5 to 60 ms
-- Tuned on LAME at 96 to 320 kbps and V0 to V9, ffmpeg's AAC at 96 to 256 kbps and libopus at
-  16 to 256 kbps
+- Tuned on LAME, libopus, libvorbis and ffmpeg's AAC, MP2, WMA, AC-3 and E-AC-3, at the
+  settings under [Results](#results)
 - Names the [encoder family](docs/encoders.md#encoder-family) a grid fits, such as LAME, Helix,
   fdk-aac or libopus, by its quantizer's steps or its offset
 - Guesses the encoder and setting behind a transcode, such as `MP3 (LAME) ~128 kbps`
