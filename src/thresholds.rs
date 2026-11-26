@@ -51,7 +51,7 @@ pub struct MeasureThresholds {
   pub holes_from_hz: f64,
   /// Top in Hz of the band gaps are counted in.
   pub holes_to_hz: f64,
-  /// Depth in dB under its neighbors at which a bin is a gap.
+  /// Depth in dB under its neighbours at which a bin is a gap.
   pub hole_depth_db: f64,
   /// Whether MP3 and AAC are scanned for at the other rate too.
   ///
@@ -100,7 +100,7 @@ impl Default for MeasureThresholds {
 pub struct ReadingThresholds {
   /// Least drop in dB across the cutoff for an encoder's low-pass.
   ///
-  /// A smaller drop is a natural roll-off.
+  /// A smaller drop reads as a natural roll-off.
   pub sharp_shelf_db: f64,
   /// Fraction of the top from which a cutoff counts as full band.
   ///
@@ -115,7 +115,7 @@ pub struct ReadingThresholds {
   pub natural_limit: f64,
   /// Least inner step in dB that reads as a band-limited layer.
   ///
-  /// A step of at least this size inside a full band is a band-limited layer under it.
+  /// A step of at least this size inside a full band reads as a band-limited layer under it.
   pub inner_shelf_db: f64,
   /// Least step in dB at a top-bitrate cutoff that casts doubt.
   ///
@@ -134,10 +134,10 @@ pub struct ReadingThresholds {
   /// Seconds past `min_seconds` with little to go on.
   ///
   /// Within this many seconds over `min_seconds` a reading says it has little to go on. There
-  /// each second moves the shares its rules compare by about 2.5 percent, so a few odd
-  /// seconds can tip it.
+  /// each second is a large share of the windows its rules compare, so a few odd seconds can
+  /// tip it.
   pub few_seconds_over: f64,
-  /// Share of windows at the top of the band for consistent content.
+  /// Share of windows, from 0 to 1, at the top of the band for consistent content.
   ///
   /// Content reads as reaching the top of its band where at least this share of windows does.
   /// Where this share of windows reaches the top or stops without a sharp shelf, the content
@@ -145,7 +145,7 @@ pub struct ReadingThresholds {
   /// top up, inconclusive below it. A lossy file where neither holds is read by its
   /// [`ceiling`](Self::ceiling).
   pub consistent_share: f64,
-  /// Share of windows that stop at one encoder cutoff for a transcode.
+  /// Share of windows, from 0 to 1, that stop at one encoder cutoff for a transcode.
   pub transcode_share: f64,
   /// Distance in Hz at which a cutoff still shares the common one.
   pub cluster_hz: f64,
@@ -154,7 +154,7 @@ pub struct ReadingThresholds {
   /// The lowest cutoff that at least this fraction of the windows stop at or under is read as
   /// the ceiling, the top of what the file's encoder kept.
   pub ceiling: f64,
-  /// Share of windows each of two sources has for mixed sources.
+  /// Share of windows, from 0 to 1, each of two sources has for mixed sources.
   pub mixed_share: f64,
   /// Band tops in Hz of the sample rates audio is commonly made at.
   ///
@@ -165,9 +165,8 @@ pub struct ReadingThresholds {
   pub lower_rate_edges: Vec<f64>,
   /// Band edges of rates some old equipment recorded at.
   ///
-  /// They are left out of `lower_rate_edges` because they sit on encoder cutoffs (18.9 kHz
-  /// beside 192 kbps MP3's). A cliff at one reads as that encoder, with a limitation naming the
-  /// rate.
+  /// They are left out of `lower_rate_edges` because they sit within `cluster_hz` of encoder
+  /// cutoffs. A cliff at one reads as that encoder, with a limitation naming the rate.
   pub other_rate_edges: Vec<RateEdge>,
   /// Correlation above which two channels hold the same audio.
   ///
@@ -450,7 +449,7 @@ pub enum StepShare {
   TwoCoarser,
   /// Bands at the coarsest step of their channel, of the bands ranked, from 0 to 1.
   Coarsest,
-  /// The same share of a region's bands, from 0 to 1.
+  /// Bands at the coarsest step of their channel, of a region's bands, from 0 to 1.
   ///
   /// AAC alone.
   CoarsestIn(usize),
@@ -464,7 +463,7 @@ pub enum StepShare {
   Joint,
   /// Mean of log2 of one more than the largest quantized value, over MP3's bands 0 to 5.
   LowLog,
-  /// The same mean over MP3's bands 12 up.
+  /// Mean of log2 of one more than the largest quantized value, over MP3's bands 12 up.
   HighLog,
 }
 
