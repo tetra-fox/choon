@@ -48,8 +48,7 @@ pub(crate) fn jobs(opus: bool, other_rate: bool, wma: bool) -> usize {
 /// splits its offsets into tasks on the same pool. Opus is among the codecs with `opus`, WMA
 /// with `wma`, and with `other_rate` a file at 44.1 or 48 kHz is scanned for MP3 and AAC at
 /// the other of the two too. `go_on` is asked before each job and the scan is `None` once it
-/// says not to;
-/// `ended` is called as each job ends. panics when a segment is not full.
+/// says not to; `ended` is called as each job ends. panics when a segment is not full.
 pub(crate) fn scan(
   segments: &Segments,
   rate: u32,
