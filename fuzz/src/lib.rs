@@ -90,14 +90,24 @@ pub fn wave(samples: &[u8], frames: u32, float: bool) -> Vec<u8> {
   wave
 }
 
-/// three seconds of noise from a fixed seed as a 16-bit WAV file, long enough for the grid scan
+/// four seconds of noise from a fixed seed as a 16-bit WAV file, long enough for the grid scan
 pub fn noise() -> Vec<u8> {
   let mut state = 1u32;
-  let samples: Vec<u8> = (0..3 * RATE * 4)
+  let samples: Vec<u8> = (0..4 * RATE * 4)
     .map(|_| {
       state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
       (state >> 24) as u8
     })
     .collect();
-  wave(&samples, 3 * RATE, false)
+  wave(&samples, 4 * RATE, false)
+}
+
+#[cfg(test)]
+mod tests {
+  #[test]
+  fn noise_is_scanned_for_a_grid() {
+    let measured = choon::measure_bytes(super::noise(), &choon::Settings::default())
+      .expect("a valid WAV file is read");
+    assert!(measured.grid.is_some(), "the noise is scanned for a grid");
+  }
 }
