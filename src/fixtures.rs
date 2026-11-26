@@ -822,9 +822,9 @@ pub enum LongWindow {
 /// The coder is a 2048-point MDCT at a hop of 1024 under `window`, a 4096-point one at a hop
 /// of 2048 under [`LongWindow::Wma`], or a 512-point one at a hop of 256 under
 /// [`LongWindow::Ac3`]. It drops every line above 16 kHz and rounds the others to a step of
-/// 0.7 times the level of their band of 16 lines, which zeroes most of them, as an encoder at
-/// a low bitrate does. The first block starts `delay` samples before the audio, so the
-/// decode's frame grid is at an offset of the hop less `delay`.
+/// 0.7 times the level of their band of 16 lines, as an encoder at a low bitrate does. The
+/// first block starts `delay` samples before the audio, so the decode's frame grid is at an
+/// offset of the hop less `delay`.
 pub fn through_transform(audio: &Audio, window: LongWindow, delay: usize) -> Audio {
   transform_coded(audio, window, delay, |lines| {
     for band in lines.chunks_mut(16) {
