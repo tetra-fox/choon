@@ -343,8 +343,8 @@ impl Measured {
         }),
         summary: format!(
           "The content stops sharply at {}, both the upper limit of a {} recording and the \
-         cutoff of an encoder at {}. The file was either upsampled from that rate or \
-         transcoded from that encoder, and the analyzer cannot tell which.",
+         cutoff of an encoder at {}. An upsample from that rate and a transcode from that \
+         encoder both fit, and the analyzer cannot tell which.",
           khz_exact(edge),
           khz_exact(edge * 2.0),
           profile
@@ -471,7 +471,7 @@ fn weighed(
           confidence: thresholds.confidence_cap,
           summary: format!(
             "The samples carry {a} {name} frame grid at offset {} in {segments} of the {} \
-             stretches scanned (z {:.0}): part of the audio passed through {a} {name} encoder. {}",
+             stretches scanned (z {:.0}), as when part of the audio was decoded from {name}. {}",
             scan.offset,
             grid::SEGMENTS,
             scan.z,
@@ -482,7 +482,7 @@ fn weighed(
         };
       }
       Evidence::Count(scan) => format!(
-        "The samples carry {a} {name} frame grid at offset {} (z {:.0}, {} of {} segments \
+        "The samples carry {a} {name} frame grid at offset {} (z {:.0}, {} of {} stretches \
          agreeing), as audio decoded from {name} does.",
         scan.offset,
         scan.z,
@@ -491,7 +491,7 @@ fn weighed(
       ),
       Evidence::CountAt { rate, scan } => format!(
         "Brought to {} kHz, the samples carry {a} {name} frame grid at offset {} (z {:.0}, {} of \
-         {} segments agreeing), as audio decoded from {name} at that rate and converted does.",
+         {} stretches agreeing), as audio decoded from {name} at that rate and converted does.",
         f64::from(*rate) / 1000.0,
         scan.offset,
         scan.z,
@@ -678,9 +678,10 @@ fn verdict(
     });
     reading.cutoff_hz = Some(median);
     reading.summary = format!(
-      "{} of the time stops at {} with a sharp shelf, where an encoder at {} cuts off.",
+      "{} of the time stops at {}, {} of it with a sharp shelf, where an encoder at {} cuts off.",
       percent(clustered),
       khz(median),
+      percent(sharp_share),
       profile
     );
     return reading;
@@ -698,10 +699,11 @@ fn verdict(
     });
     reading.limitations.push(Limitation::FilteredAt20Khz);
     reading.summary = format!(
-      "{} of the time stops at {} with a sharp shelf, where an encoder at {} cuts off or where \
-       a recording was filtered when it was made.",
+      "{} of the time stops at {}, {} of it with a sharp shelf, where an encoder at {} cuts off \
+       or where a recording was filtered when it was made.",
       percent(clustered),
       khz(median),
+      percent(sharp_share),
       profile
     );
     return reading;
