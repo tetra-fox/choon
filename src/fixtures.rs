@@ -130,7 +130,6 @@ impl Rng {
     (value >> 11) as f64 / (1u64 << 53) as f64
   }
 
-  /// a normally distributed value
   fn gaussian(&mut self) -> f64 {
     let u = self.next().max(f64::MIN_POSITIVE);
     let v = self.next();
