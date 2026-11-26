@@ -155,8 +155,10 @@ pub struct ReadingThresholds {
   pub mixed_share: f64,
   /// Band tops in Hz of the sample rates audio is commonly made at.
   ///
-  /// Content that stops with a cliff at one, in a file whose band reaches past it, was made at
-  /// that rate.
+  /// Content that stops with a cliff at one, in a file whose band reaches past it, reads as
+  /// made at that rate and is flagged ([`Flag::Upsampled`](crate::Flag::Upsampled)). Where a
+  /// profile's cutoff is within `cluster_hz` of the edge no flag is raised, as the cliff fits a
+  /// transcode from that encoder as well.
   pub lower_rate_edges: Vec<f64>,
   /// Band edges of rates some old equipment recorded at.
   ///
