@@ -1,6 +1,7 @@
 //! reads Monkey's Audio files: a reader that hands out one frame a packet by the file's seek
 //! table, and a decoder that decodes each frame through `ape-decoder`. files it does not decode
-//! right are refused by name: those made before Monkey's Audio 3.99, and float and 32-bit ones
+//! right are refused by name: those made before Monkey's Audio 3.99, and those of float, 32-bit,
+//! big-endian or signed 8-bit samples
 
 use std::io::{Read, Seek, SeekFrom};
 use std::num::NonZeroU32;
