@@ -15,7 +15,8 @@
 //!   WavPack, with the samples it was made from
 //! - a short MP2 file made by ffmpeg
 //!
-//! As test support, every function here panics when encoding, writing or decoding fails.
+//! As test support, every function here panics when encoding, writing or decoding fails, and on
+//! audio or an argument outside what its docs state.
 
 use std::path::Path;
 
@@ -824,8 +825,8 @@ pub enum LongWindow {
 /// of 2048 under [`LongWindow::Wma`], or a 512-point one at a hop of 256 under
 /// [`LongWindow::Ac3`]. It drops every line above 16 kHz and rounds the others to a step of
 /// 0.7 times the level of their band of 16 lines, as an encoder at a low bitrate does. The
-/// first block starts `delay` samples before the audio, so the decode's frame grid is at an
-/// offset of the hop less `delay`.
+/// first block starts `delay` samples before the audio, `delay` at most the hop, so the
+/// decode's frame grid is at an offset of the hop less `delay`.
 pub fn through_transform(audio: &Audio, window: LongWindow, delay: usize) -> Audio {
   transform_coded(audio, window, delay, |lines| {
     for band in lines.chunks_mut(16) {
