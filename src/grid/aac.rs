@@ -208,7 +208,8 @@ impl AacStepper {
       let mut ones = [[false; BANDS]; 2];
       for (at, band) in bands.windows(2).enumerate() {
         // tested, stepped and whole over the two channels of a pair, and each one's whole
-        // step with its largest value; `over` is the quarter powers a value is over the coded
+        // step as it is coded with whether its largest value is one; `over` is the quarter
+        // powers a value is over the coded
         let mut count = |pair: [&Vec<f64>; 2], over: i32| {
           let mut counts = [0; 3];
           let whole = pair.map(|lines| {
