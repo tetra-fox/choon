@@ -78,7 +78,7 @@ fn sizes(source: &mut dyn MediaSource, length: u64) -> io::Result<Sizes> {
   if !(rf64 || form.starts_with(RIFF)) || !form.ends_with(WAVE) {
     return Ok(Sizes::default());
   }
-  // the size of the samples an RF64 file states, from its first chunk
+  // the size of the samples an RF64 file states, from its `ds64` chunk
   let mut wide = None;
   let mut at = FORM;
   for _ in 0..CHUNKS {
