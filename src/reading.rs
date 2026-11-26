@@ -110,6 +110,8 @@ struct CutoffReading {
   cutoff_hz: Option<f64>,
   /// the cutoff most of the windows stop at with a sharp shelf, where they do
   shelf_hz: Option<f64>,
+  /// too little audio was heard for any rule to read it
+  too_little: bool,
 }
 
 /// writes limitations as the sentences a person is shown
@@ -305,6 +307,7 @@ impl Measured {
       && let Some(profile) = thresholds.profile_at(edge)
       && found.verdict != Verdict::MixedSources
       && !own_cutoff
+      && !found.too_little
     {
       // the edge of the lower rate is also where an encoder cuts: either could be the source
       found = CutoffReading {
@@ -327,6 +330,7 @@ impl Measured {
         limitations: Vec::new(),
         cutoff_hz: Some(edge),
         shelf_hz: found.shelf_hz,
+        too_little: false,
       };
     }
     if found.verdict != Verdict::Consistent
@@ -592,9 +596,11 @@ fn verdict(
     limitations: Vec::new(),
     cutoff_hz: median.filter(|m| *m < t.full_band * heard.top),
     shelf_hz: None,
+    too_little: false,
   };
   let Some(median) = median.filter(|_| count >= t.min_windows && seconds >= t.min_seconds) else {
     reading.confidence = 0.2;
+    reading.too_little = true;
     reading.summary = format!(
       "Only {seconds:.1} s of the audio is above silence; a reading needs at least {:.0} s.",
       t.min_seconds
@@ -960,6 +966,7 @@ mod tests {
       limitations: Vec::new(),
       cutoff_hz: shelf,
       shelf_hz: shelf,
+      too_little: false,
     };
     let named =
       |codec, family, shelf: f64| setting(&grid(codec, family), &read(Some(shelf)), &thresholds);

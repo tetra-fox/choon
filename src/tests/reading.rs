@@ -515,6 +515,18 @@ fn too_little_audio_is_inconclusive() {
 }
 
 #[test]
+fn too_little_audio_cut_where_an_encoder_and_a_lower_rate_both_stop_is_inconclusive() {
+  let dir = tempfile::tempdir().unwrap();
+  // 16 kHz is the top of a 32 kHz recording and a 128 kbps MP3's cutoff
+  let audio = music_for(5, 1, 44_100, fixtures::cut_at(16_000.0));
+  let (reading, why) = explained(&flac(dir.path(), "short.flac", &audio, 16));
+  assert_eq!(reading.verdict, Verdict::Inconclusive, "{why}");
+  assert!(reading.confidence <= 0.2, "{why}");
+  assert_eq!(reading.encoder_guess, None, "{why}");
+  assert!(reading.summary.starts_with("Only 4.9 s"), "{why}");
+}
+
+#[test]
 fn the_reading_uses_the_thresholds_it_is_given() {
   let dir = tempfile::tempdir().unwrap();
   let measured = measure(a_17_khz_cut(dir.path()), &settings()).unwrap();
@@ -580,9 +592,15 @@ fn he_aac_is_read_at_its_output_rate_however_its_band_replication_is_signalled()
     // the core alone stops under 11.025 kHz: a higher cutoff is the rebuilt band's
     let reading = read(&measured);
     let cutoff = reading
-      .cutoff_hz
+      .measures
+      .cutoff_median_hz
       .unwrap_or_else(|| panic!("{name}: {reading:#?}"));
-    assert!((15_000.0..17_500.0).contains(&cutoff), "{name}: {cutoff}");
+    assert!((15_000..17_500).contains(&cutoff), "{name}: {cutoff}");
+    // three seconds are too few for a reading, whatever edge the band stops at
+    assert!(
+      reading.summary.starts_with("Only 3."),
+      "{name}: {reading:#?}"
+    );
     assert_eq!(reading.encoder_guess, None, "{name}");
     assert!(
       reading

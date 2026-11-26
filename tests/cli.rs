@@ -1014,7 +1014,12 @@ fn he_aac_wavpack_ape_and_dsd_files_are_read_and_name_what_they_are() {
     found.unwrap_or_else(|| panic!("{file}: {lines:?}"))
   };
   assert_eq!(lines.len(), 6, "{lines:?}");
-  assert!(line(&he_aac).ends_with(", HE-AAC v2)"), "{lines:?}");
+  // three seconds are too few for a reading, so the line shows no cutoff
+  assert_eq!(
+    line(&he_aac),
+    format!("{he_aac}: inconclusive (HE-AAC v2)"),
+    "{lines:?}"
+  );
   for file in [&dsf, &dff, &at_48k] {
     assert!(line(file).ends_with(" (DSD64)"), "{lines:?}");
   }
