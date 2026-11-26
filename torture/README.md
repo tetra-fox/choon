@@ -66,7 +66,20 @@ file differently, and a sampled read that does, is noted beside it. A second bin
 with `-C debug-assertions -C overflow-checks` turns an integer overflow that a release build
 wraps into a panic.
 
-The outcomes: `as documented`, `worse`, `undocumented`, and by name the failures that matter
-most: `FALSE ACCUSATION` (an honest file read as lossy), `CRASH`, `HANG`, `OVERCLAIM` (a
-damaged file read without a word of it), `wrong name`, `miss`, `possibly lossy` (an honest
-file read so).
+| Outcome            | Description                                                            |
+| ------------------ | ---------------------------------------------------------------------- |
+| `as documented`    | the case meets its condition                                           |
+| `undocumented`     | an `open` case read or refused, or an `other` case read with no family |
+| `worse`            | the reading or exit status is not the one expected                     |
+| `FALSE ACCUSATION` | an honest file read as lossy or with a grid                            |
+| `possibly lossy`   | an honest file read as possibly lossy                                  |
+| `miss`             | no grid found in a file expected lossy                                 |
+| `wrong name`       | another codec named, or an encoder family where none is expected       |
+| `family`           | the codec found, another encoder family named                          |
+| `OVERCLAIM`        | a damaged file read without a limitation                               |
+| `unclear`          | a file refused without the expected words                              |
+| `CRASH`            | an exit status other than 0, 1 or 2, from any binary or read           |
+| `HANG`             | no result within the timeout, from any binary or read                  |
+
+- `FALSE ACCUSATION`, `possibly lossy`, `miss`, `wrong name`, `OVERCLAIM`, `CRASH` and `HANG`
+  are the failures that matter most
