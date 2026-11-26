@@ -9,9 +9,11 @@
 //!
 //! The files kept as bytes:
 //!
-//! - a short ALAC tone and five short HE-AAC files, which nothing here can encode
-//! - a clip from the WavPack and Monkey's Audio reference encoders, with the samples it was
-//!   made from
+//! - a short ALAC tone, five short HE-AAC files and an AAC-ELD file, which nothing here can
+//!   encode
+//! - a clip from the WavPack and Monkey's Audio reference encoders, lossless and as hybrid
+//!   WavPack, with the samples it was made from
+//! - a short MP2 file made by ffmpeg
 //!
 //! As test support, every function here panics when encoding, writing or decoding fails.
 
