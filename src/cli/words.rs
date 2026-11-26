@@ -29,10 +29,10 @@ pub fn label(verdict: Verdict) -> &'static str {
   }
 }
 
-/// the encoder a reading names: without a grid the setting its cutoff matches, with one the
-/// grid's codec, its encoder family in parentheses and the setting the reading names beside
-/// it. `None` where a grid has neither a family nor a setting to name, and beside a verdict
-/// that finds no lossy audio, where a named encoder would read as a finding
+/// the encoder a reading names: without a grid the codec and setting its cutoff matches, with
+/// one the grid's codec, its encoder family in parentheses and the setting the reading names
+/// beside it. `None` where a grid has neither a family nor a setting to name, and beside a
+/// verdict that finds no lossy audio, where a named encoder would read as a finding
 pub fn encoder(reading: &Reading) -> Option<String> {
   let Some(grid) = &reading.grid else {
     let guess = reading.encoder_guess.as_ref();
