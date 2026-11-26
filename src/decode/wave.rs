@@ -27,8 +27,9 @@ const DATA: &[u8; 4] = b"data";
 const FORM: u64 = 12;
 /// the bytes of a chunk's name and size
 const CHUNK: u64 = 8;
-/// the size a header states of what it does not know, and what one more than it wraps to
+/// the size a header states of what it does not know
 const UNSTATED: u32 = u32::MAX;
+/// the bytes a size of 32 bits wraps at
 const WRAP: u64 = 1 << 32;
 /// the chunks read before the samples are given up on
 const CHUNKS: usize = 64;
