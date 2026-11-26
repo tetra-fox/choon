@@ -74,9 +74,9 @@ Piped or with `--json`, each file is one line, in the order files finish:
 ```console
 $ fd -e flac . music/ | choon check - | sort
 music/cut-19.flac: possibly lossy (cutoff 19.4 kHz, MP3 ~224 kbps, no grid)
+music/honest.flac: consistent (confidence 0.73)
 music/lame-128.flac: likely transcode (MP3 grid, cutoff 16.8 kHz, MP3 (LAME) ~128 kbps)
 music/lame-320.flac: likely transcode (MP3 grid, cutoff 20.2 kHz, MP3 (LAME) ~320 kbps)
-music/honest.flac: consistent (confidence 0.73)
 ```
 
 | Argument    | Description                                                         |
