@@ -1,5 +1,5 @@
 //! the rule that reads a scan under a reading's thresholds: the codec whose grid it shows, what
-//! shows it, and the encoder family the grid's offset fits
+//! shows it, and the encoder family its steps or offset fit
 
 use std::fmt;
 
