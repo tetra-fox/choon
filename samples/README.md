@@ -22,7 +22,7 @@ are on the path.
 - `<bits>-<kHz>` is the bit depth and sample rate the file is written at
 - A lossy file in its own format has only its history: `lame-128.mp3`
 
-## What each reads as
+## Readings
 
 | File                              | History                                       | Reading                               |
 | --------------------------------- | --------------------------------------------- | ------------------------------------- |
