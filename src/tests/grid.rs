@@ -352,7 +352,6 @@ fn an_opus_decode_at_another_level_carries_opus_frames_once_the_level_is_taken_o
   let dir = tempfile::tempdir().unwrap();
   let through = through_opus(&music(1, 48_000, pink), 128, dir.path());
   let thresholds = ReadingThresholds::default();
-  // 7.3 dB quieter, and the channels 1 and 2.5 dB quieter
   for (name, gains) in [
     ("quieter.flac", [-7.3, -7.3]),
     ("balance.flac", [-1.0, -2.5]),
