@@ -9,7 +9,8 @@ choon check samples/
 ```
 
 `just samples` runs `make.sh` in a Nix shell that provides ffmpeg, LAME, opus-tools, vorbis-tools
-and fdkaac, and writes about 50 MB here. Without Nix, you'll need to install those programs.
+and fdkaac, and writes about 50 MB here. Without Nix, `make.sh` runs wherever those programs
+are on the path.
 
 ## File names
 
