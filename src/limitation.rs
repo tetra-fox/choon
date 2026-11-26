@@ -245,6 +245,13 @@ pub(crate) fn khz(hz: f64) -> String {
   format!("{} kHz", text.strip_suffix(".0").unwrap_or(&text))
 }
 
+/// a frequency as kHz to the hertz, without trailing zeros, for a band edge or a sample rate
+/// such as 11.025 or 22.05 kHz that one decimal would round
+pub(crate) fn khz_exact(hz: f64) -> String {
+  let text = format!("{:.3}", hz / 1000.0);
+  format!("{} kHz", text.trim_end_matches('0').trim_end_matches('.'))
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -256,6 +263,12 @@ mod tests {
     assert_eq!(Limitation::Decoder(String::new()).to_string(), "");
     let whole = Limitation::LengthNotStated { seconds: 120 };
     assert!(whole.to_string().ends_with("after 2 minutes"));
+  }
+
+  #[test]
+  fn a_band_edge_is_written_to_the_hertz_without_trailing_zeros() {
+    let edges = [11_025.0, 22_050.0, 24_000.0, 100_000.0].map(khz_exact);
+    assert_eq!(edges, ["11.025 kHz", "22.05 kHz", "24 kHz", "100 kHz"]);
   }
 
   #[test]

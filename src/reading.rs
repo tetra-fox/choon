@@ -6,7 +6,7 @@ use crate::decode::opus::OpusUse;
 use crate::engine::{Measured, grid_looked_for};
 use crate::flags::{Flag, findings};
 use crate::grid::{self, Codec, Evidence, Family, Found, NamedBy, Scan};
-use crate::limitation::{Limitation, khz};
+use crate::limitation::{Limitation, khz, khz_exact};
 use crate::thresholds::{EncoderProfile, ReadingThresholds};
 use crate::window::{Step, Window};
 
@@ -327,13 +327,11 @@ impl Measured {
           confidence: 0.4,
         }),
         summary: format!(
-          "The content stops sharply at {}, both the upper limit of a {} kHz recording and the \
+          "The content stops sharply at {}, both the upper limit of a {} recording and the \
          cutoff of an encoder at {}. The file was either upsampled from that rate or \
          transcoded from that encoder, and the analyzer cannot tell which.",
-          khz(edge),
-          format!("{:.2}", edge * 2.0 / 1000.0)
-            .trim_end_matches('0')
-            .trim_end_matches('.'),
+          khz_exact(edge),
+          khz_exact(edge * 2.0),
           profile
         ),
         limitations: Vec::new(),

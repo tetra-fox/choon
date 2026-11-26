@@ -2,6 +2,7 @@
 
 use crate::aggregate::Measures;
 use crate::decode::Claimed;
+use crate::limitation::khz_exact;
 use crate::thresholds::ReadingThresholds;
 use crate::window::Window;
 
@@ -55,9 +56,9 @@ pub(crate) fn findings(
   {
     found.flags.push(Flag::Upsampled);
     found.notes.push(format!(
-      "The content stops sharply at {:.2} kHz, the upper limit of a lower sample rate, so the \
-       audio was probably recorded at that rate.",
-      edge / 1000.0
+      "The content stops sharply at {}, the upper limit of a lower sample rate, so the audio \
+       was probably recorded at that rate.",
+      khz_exact(edge)
     ));
   }
   if let (Some(claim), Some(used)) = (claimed.bit_depth, measures.bit_depth_effective)
