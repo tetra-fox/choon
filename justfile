@@ -118,8 +118,8 @@ web: (lock "web")
 web-check: web
     npm run --prefix web/page check
 
-# web/dist served by Cloudflare as the Worker of web/wrangler.jsonc. wrangler reads the account
-# and the token from CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN, or asks to log in
+# web/dist served by Cloudflare as the Worker of web/wrangler.jsonc. wrangler reads its token
+# from CLOUDFLARE_API_TOKEN, or asks to log in
 web-deploy: web
     wrangler deploy --config web/wrangler.jsonc
 

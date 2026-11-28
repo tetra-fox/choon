@@ -1,6 +1,6 @@
 # each push to main tests the page and serves it from Cloudflare as the Worker of
-# web/wrangler.jsonc. the cloudflare environment's secrets CLOUDFLARE_ACCOUNT_ID and
-# CLOUDFLARE_API_TOKEN name the account and a token that can edit its Workers
+# web/wrangler.jsonc. the cloudflare environment's secret CLOUDFLARE_API_TOKEN is a token that
+# can edit the account's Workers
 name: deploy
 
 on:
@@ -29,5 +29,4 @@ jobs:
       - run: nix develop .#web -c just web-test
       - run: nix develop .#web -c just web-deploy
         env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
