@@ -424,4 +424,4 @@ Layer III), ISO/IEC 13818-7 (MPEG-2 AAC) and RFC 6716 (Opus). Opus files are rea
 
 ## License
 
-[AGPL-3.0-only](LICENSE)
+[MPL-2.0](LICENSE)
