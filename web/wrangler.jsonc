@@ -3,6 +3,9 @@
   "$schema": "https://unpkg.com/wrangler@4.156.0/config-schema.json",
   "name": "choon",
   "compatibility_date": "2026-11-28",
+  // the page's one address, a custom domain on the tetra.cool zone, and no workers.dev one
+  "routes": [{ "pattern": "choon.tetra.cool", "custom_domain": true }],
+  "workers_dev": false,
   "assets": {
     "directory": "./dist",
   },
