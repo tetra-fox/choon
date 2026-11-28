@@ -116,13 +116,15 @@
             ];
           };
 
-          # what `just web` and `just web-test` run: binaryen for wasm-opt, node to run the
-          # wasm and, with its npm, to build the page, CMake for the encoders the test's
-          # fixtures build, and Chromium and Firefox to open the page in. nixpkgs builds the two
-          # for Linux alone: elsewhere CHROMIUM and FIREFOX name them
+          # what the web recipes run: binaryen for wasm-opt, node to run the wasm and, with its
+          # npm, to build the page, CMake for the encoders the test's fixtures build, wrangler
+          # for `just web-deploy`, and Chromium and Firefox to open the page in. nixpkgs builds
+          # the browsers for Linux alone: elsewhere CHROMIUM and FIREFOX name them
           web = pkgs.mkShell {
             # Astro reports its use to its makers unless told not to
             env.ASTRO_TELEMETRY_DISABLED = "1";
+            # and so does wrangler
+            env.WRANGLER_SEND_METRICS = "false";
 
             packages =
               (with pkgs; [
@@ -131,6 +133,7 @@
                 binaryen
                 nodejs
                 cmake
+                wrangler
                 just
                 git
               ])
