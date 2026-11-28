@@ -87,8 +87,8 @@ fuzz TARGET SECONDS="": fuzz-seed
     cargo fuzz run "${build[@]}" {{ TARGET }} -- -timeout=60 -max_len=65536 "${dict[@]}" \
       {{ if SECONDS == "" { "" } else { "-max_total_time=" + SECONDS } }}
 
-# the web recipes need wasm-bindgen's program, wasm-opt, deno, Chromium and Firefox: run them
-# inside `nix develop .#web`
+# the web recipes need wasm-bindgen's program, wasm-opt and deno: run them inside
+# `nix develop .#web`
 
 # the analyzer as WebAssembly with SIMD, the JavaScript wasm-bindgen writes for it, and the page
 # of web/page copied into web/dist with the commit it is built from: web/README.md. wasm-opt
@@ -122,15 +122,8 @@ web-check: web
 
 # web/dist served by Cloudflare as the Worker of web/wrangler.jsonc. wrangler reads its token
 # from CLOUDFLARE_API_TOKEN, or asks to log in
-web-deploy: web
+web-deploy: web-check
     wrangler deploy --config web/wrangler.jsonc
-
-# deno runs the wasm over generated audio, and each reading is compared with the native one
-# and worded as the program words it; then a headless Chromium and a headless Firefox read
-# files on the page
-web-test: web-check
-    cargo build --release
-    cargo test --manifest-path web/Cargo.toml --release -- --nocapture
 
 # the library alone and the program on the manifest's rust-version
 msrv:

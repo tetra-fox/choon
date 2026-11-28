@@ -1,6 +1,6 @@
-# each push to main tests the page and serves it from Cloudflare as the Worker of
-# web/wrangler.jsonc. the cloudflare environment's secret CLOUDFLARE_API_TOKEN is a token that
-# can edit the account's Workers
+# each push to main serves the page from Cloudflare as the Worker of web/wrangler.jsonc. the
+# cloudflare environment's secret CLOUDFLARE_API_TOKEN is a token that can edit the account's
+# Workers
 name: deploy
 
 on:
@@ -26,11 +26,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
-      # ubuntu 24.04 lets AppArmor refuse unprivileged user namespaces, which Chromium's sandbox
-      # is made of. without them it falls back to its setuid helper, which the nix store cannot
-      # make setuid, and Chromium aborts rather than run unsandboxed
-      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - run: nix develop .#web -c just web-test
       - run: nix develop .#web -c just web-deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

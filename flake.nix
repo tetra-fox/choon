@@ -116,11 +116,8 @@
             ];
           };
 
-          # what the web recipes run: binaryen for wasm-opt, deno to check the page's types and
-          # to run the wasm and the browsers in the tests, CMake for the encoders the test's
-          # fixtures build, wrangler for `just web-deploy`, and Chromium and Firefox to open the
-          # page in. nixpkgs builds the browsers for Linux alone: elsewhere CHROMIUM and FIREFOX
-          # name them
+          # what the web recipes run: binaryen for wasm-opt, deno to check the page's types, and
+          # wrangler for `just web-deploy`
           web = pkgs.mkShell {
             # wrangler reports its use to its makers unless told not to
             env.WRANGLER_SEND_METRICS = "false";
@@ -131,15 +128,10 @@
                 wasmBindgen
                 binaryen
                 deno
-                cmake
                 wrangler
                 just
                 git
-              ])
-              ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
-                pkgs.chromium
-                pkgs.firefox
-              ];
+              ]);
           };
         }
       );

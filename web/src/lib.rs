@@ -62,16 +62,8 @@ struct Shown<'a> {
   grid_scanned: bool,
 }
 
-/// Measures a file's bytes in full and reads the measures, both under `thresholds`.
-///
-/// `thresholds` is a profile as JSON, and an empty string for the defaults. The reading comes
-/// back as JSON.
-///
-/// # Errors
-///
-/// A message in words: `thresholds` is not a profile, or the bytes were not measured
-/// ([`choon::Error`]).
-pub fn read(bytes: Vec<u8>, thresholds: &str) -> Result<String, String> {
+// `check` with its error as a message in words
+fn read(bytes: Vec<u8>, thresholds: &str) -> Result<String, String> {
   let thresholds = if thresholds.trim().is_empty() {
     Thresholds::default()
   } else {
@@ -131,11 +123,15 @@ impl Words {
   }
 }
 
-/// Calls [`read`] for JavaScript.
+/// Measures a file's bytes in full and reads the measures, both under `thresholds`.
+///
+/// `thresholds` is a profile as JSON, and an empty string for the defaults. The reading comes
+/// back as JSON.
 ///
 /// # Errors
 ///
-/// The message [`read`] gives, thrown as a JavaScript `Error`.
+/// A message in words, thrown as a JavaScript `Error`: `thresholds` is not a profile, or the
+/// bytes were not measured ([`choon::Error`]).
 #[wasm_bindgen]
 pub fn check(bytes: Vec<u8>, thresholds: &str) -> Result<String, wasm_bindgen::JsError> {
   read(bytes, thresholds).map_err(|why| wasm_bindgen::JsError::new(&why))

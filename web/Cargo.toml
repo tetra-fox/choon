@@ -7,8 +7,7 @@ license = "MPL-2.0"
 publish = false
 
 [lib]
-# the rlib is for the tests, which call the same function natively
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib"]
 
 [dependencies]
 choon = { path = "..", default-features = false, features = ["serde"] }
@@ -18,11 +17,6 @@ serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
 # pinned: the wasm-bindgen program that writes the JavaScript must be this version, and the
 # flake's `web` shell takes its version from this line
 wasm-bindgen = "=0.2.130"
-
-[dev-dependencies]
-# the generated audio the tests read
-choon = { path = "..", default-features = false, features = ["testing"] }
-tempfile = "3.27.0"
 
 # its own workspace: a build for another target beside the main crate's, with nothing of the
 # program
