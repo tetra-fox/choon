@@ -1,0 +1,30 @@
+# each push to main tests the page and serves it from Cloudflare as the Worker of
+# web/wrangler.jsonc. the repository's secrets CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN
+# name the account and a token that can edit its Workers
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# one deploy at a time, and a newer push waits for the one running instead of ending it
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+      - run: nix develop .#web -c just web-test
+      - run: nix develop .#web -c just web-deploy
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
