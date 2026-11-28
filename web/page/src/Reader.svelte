@@ -240,8 +240,7 @@
       worker = start();
     } else {
       taking = false;
-      notice =
-        "This browser lacks WebAssembly SIMD, which the analyzer needs to read a file";
+      notice = "The analyzer needs WebAssembly SIMD, which this browser lacks";
     }
   });
 </script>
@@ -266,9 +265,8 @@
   />
   <p id="notice" role="alert" hidden={!notice}>{notice}</p>
   <p class="hint">
-    A file in a lossless format takes from several seconds to around a minute, depending on the
-    device. Other files take far less. Files over <span id="limit">{MAX_FILE_WORDS}</span> are not
-    read.
+    A lossless file takes from several seconds to about a minute to read, depending on the device,
+    and a lossy file far less. Files over <span id="limit">{MAX_FILE_WORDS}</span> are not read.
   </p>
 </section>
 

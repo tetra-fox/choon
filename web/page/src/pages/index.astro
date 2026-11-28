@@ -40,8 +40,9 @@ const readme = `${CHOON_REPOSITORY}/blob/${CHOON_COMMIT}/README.md`;
         <h1>choon</h1>
         <p class="lead">Checks that lossless audio is actually lossless.</p>
         <p>
-          A FLAC or WAV file made from an MP3, AAC or Opus file keeps traces of the lossy encoder:
-          its frame grid in the samples, its cutoff in the spectrum. choon reads a file for them.
+          A lossless file decoded from MP3, AAC, Opus or another lossy format keeps traces of its
+          encoder: a frame grid or quantized band energies in the samples, and a cutoff in the
+          spectrum. choon reads a file for them.
         </p>
         <p><a href={CHOON_REPOSITORY}>Source on GitHub</a></p>
       </header>
@@ -52,18 +53,18 @@ const readme = `${CHOON_REPOSITORY}/blob/${CHOON_COMMIT}/README.md`;
           <div class="way">
             <h3>Command-line tool</h3>
             <pre><code>cargo install choon</code></pre>
-            <p>Checks a whole library in one run, with exit codes and JSON for scripts.</p>
+            <p>Checks directories of files in parallel, with exit codes and JSON for scripts.</p>
             <p class="links">
               <a href={`${CHOON_REPOSITORY}/releases`}>Binaries for Linux, Windows and macOS</a>
-              <a href={`${readme}#installation`}>README</a>
+              <a href={`${readme}#usage`}>Usage</a>
             </p>
           </div>
           <div class="way">
             <h3>Rust library</h3>
             <pre><code>cargo add choon <span class="nowrap">--no-default-features</span></code></pre>
-            <p>Measures a file and reads it under thresholds the caller passes.</p>
+            <p>Measures a file and reads it into a verdict, under thresholds the caller passes.</p>
             <p class="links">
-              <a href="https://docs.rs/choon">Docs on docs.rs</a>
+              <a href="https://docs.rs/choon">Documentation</a>
               <a href="https://crates.io/crates/choon">crates.io</a>
             </p>
           </div>
@@ -71,8 +72,8 @@ const readme = `${CHOON_REPOSITORY}/blob/${CHOON_COMMIT}/README.md`;
       </section>
 
       <section id="try" aria-labelledby="try-title">
-        <h2 id="try-title">Try it here</h2>
-        <p>Files stay on this device. The analysis runs in this tab and nothing is uploaded.</p>
+        <h2 id="try-title">Demo</h2>
+        <p>Files are read in this tab, and nothing is uploaded.</p>
         <div id="reader"><Reader /></div>
       </section>
     </main>
