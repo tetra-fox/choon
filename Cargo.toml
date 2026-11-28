@@ -55,7 +55,7 @@ realfft = "3.5.1"
 rustfft = "6.4.1"
 # decodes AAC, with the HE-AAC that symphonia's decoder leaves out. pinned to the release checked
 # against ffmpeg's decode and fuzzed; without its SIMD, which is where most of its unsafe code is
-rusty_aac = { version = "=2.0.2", default-features = false }
+rusty_aac = { version = "=2.1.1", default-features = false }
 # decodes Monkey's Audio. pinned to the release checked sample for sample against the reference
 # decoder and fuzzed
 ape-decoder = "=0.3.2"
