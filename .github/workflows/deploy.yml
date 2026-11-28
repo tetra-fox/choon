@@ -1,6 +1,6 @@
 # each push to main tests the page and serves it from Cloudflare as the Worker of
-# web/wrangler.jsonc. the repository's secrets CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN
-# name the account and a token that can edit its Workers
+# web/wrangler.jsonc. the cloudflare environment's secrets CLOUDFLARE_ACCOUNT_ID and
+# CLOUDFLARE_API_TOKEN name the account and a token that can edit its Workers
 name: deploy
 
 on:
@@ -20,6 +20,9 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    environment:
+      name: cloudflare
+      url: https://choon.tetra.cool
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
