@@ -1,4 +1,4 @@
-//! the wasm of `web/page/wasm`, run by node over generated audio and compared with the same
+//! the wasm of `web/page/wasm`, run by deno over generated audio and compared with the same
 //! function called natively. `just web-test` builds the wasm first
 
 use std::path::Path;
@@ -161,18 +161,19 @@ fn wasm(path: &Path) -> Result<String, String> {
     web.join("page/wasm/choon_web_bg.wasm").exists(),
     "`just web` has built web/page/wasm"
   );
-  let node = Command::new("node")
-    .arg(web.join("tests/run.mjs"))
+  let deno = Command::new("deno")
+    .args(["run", "--allow-read"])
+    .arg(web.join("tests/run.js"))
     .arg(path)
     .output()
-    .expect("node runs");
-  match node.status.code() {
-    Some(0) => Ok(String::from_utf8(node.stdout).unwrap()),
-    Some(1) => Err(String::from_utf8(node.stderr).unwrap()),
+    .expect("deno runs");
+  match deno.status.code() {
+    Some(0) => Ok(String::from_utf8(deno.stdout).unwrap()),
+    Some(2) => Err(String::from_utf8(deno.stderr).unwrap()),
     _ => panic!(
-      "node failed on {}: {}",
+      "deno failed on {}: {}",
       path.display(),
-      String::from_utf8_lossy(&node.stderr)
+      String::from_utf8_lossy(&deno.stderr)
     ),
   }
 }

@@ -2,9 +2,7 @@ target
 dist
 Cargo.lock
 
-# written by `just web`: npm's packages, Astro's types, and the analyzer for the page
-page/node_modules
-page/.astro
+# written by `just web`: the analyzer for the page
 page/wasm
 
 # written by wrangler

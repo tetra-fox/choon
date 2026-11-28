@@ -2,12 +2,15 @@
 // then for each file posted `{ result }`, the JSON `check` returns, or `{ error }`, why the
 // file was not read. a trap is reported as an uncaught error, which the page gets as the
 // worker's `error` event
-import { check, initSync, version } from "../wasm/choon_web.js";
-import wasm from "../wasm/choon_web_wasm.js";
+// the types wasm-bindgen writes, which deno reads only when told here
+// @ts-types="./wasm/choon_web.d.ts"
+import { check, initSync, version } from "./wasm/choon_web.js";
+import wasm from "./wasm/choon_web_wasm.js";
 
-export type Posted = { version: number } | { result: string } | { error: string };
+/** @typedef {{ version: number } | { result: string } | { error: string }} Posted */
 
-function post(message: Posted) {
+/** @param {Posted} message */
+function post(message) {
   postMessage(message);
 }
 
@@ -19,7 +22,8 @@ for (let at = 0; at < binary.length; at++) module[at] = binary.charCodeAt(at);
 initSync({ module });
 post({ version: version() });
 
-onmessage = async ({ data: file }: MessageEvent<File>) => {
+/** @param {MessageEvent<File>} event */
+onmessage = async ({ data: file }) => {
   let bytes;
   try {
     bytes = new Uint8Array(await file.arrayBuffer());

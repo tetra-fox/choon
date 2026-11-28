@@ -87,43 +87,45 @@ fuzz TARGET SECONDS="": fuzz-seed
     cargo fuzz run "${build[@]}" {{ TARGET }} -- -timeout=60 -max_len=65536 "${dict[@]}" \
       {{ if SECONDS == "" { "" } else { "-max_total_time=" + SECONDS } }}
 
-# the web recipes need wasm-bindgen's program, wasm-opt, node with npm, Chromium and Firefox:
-# run them inside `nix develop .#web`
+# the web recipes need wasm-bindgen's program, wasm-opt, deno, Chromium and Firefox: run them
+# inside `nix develop .#web`
 
-# the analyzer as WebAssembly with SIMD, the JavaScript wasm-bindgen writes for it and the page
-# of web/page, which Astro builds into web/dist: web/README.md. wasm-opt makes the wasm about a
-# quarter smaller and no faster
+# the analyzer as WebAssembly with SIMD, the JavaScript wasm-bindgen writes for it, and the page
+# of web/page copied into web/dist with the commit it is built from: web/README.md. wasm-opt
+# makes the wasm about a quarter smaller and no faster
 web: (lock "web")
     #!/usr/bin/env bash
     set -euo pipefail
     RUSTFLAGS="-C target-feature=+simd128" cargo build --manifest-path web/Cargo.toml --lib --release --target wasm32-unknown-unknown
-    # without the default path the JavaScript names no wasm file, which the page's build would
-    # otherwise copy into web/dist for a fetch the page never makes
+    # without the default path the JavaScript names no wasm file, as web/dist has the wasm as
+    # base64 alone
     wasm-bindgen --target web --omit-default-module-path --out-dir web/page/wasm web/target/wasm32-unknown-unknown/release/choon_web.wasm
     wasm-opt -O2 web/page/wasm/choon_web_bg.wasm -o web/page/wasm/choon_web_bg.wasm
     # the wasm as a module the worker imports
     { printf 'export default "'; base64 < web/page/wasm/choon_web_bg.wasm | tr -d '\n'; printf '";\n'; } > web/page/wasm/choon_web_wasm.js
-    # npm's packages as the lockfile states them, installed again when it is newer than they are
-    [ web/page/node_modules/.package-lock.json -nt web/page/package-lock.json ] || npm ci --prefix web/page
+    rm -rf web/dist
+    mkdir -p web/dist/wasm
+    cp web/page/page.css web/page/page.js web/page/worker.js web/dist/
+    cp web/page/wasm/choon_web.js web/page/wasm/choon_web_wasm.js web/dist/wasm/
     # the page names the commit it is built from, and says when the checkout differs from it
-    changed=false
-    git diff --quiet HEAD || changed=true
-    CHOON_REPOSITORY="$(sed -n 's/^repository = "\(.*\)"/\1/p' Cargo.toml)" \
-      CHOON_COMMIT="$(git rev-parse HEAD)" \
-      CHOON_COMMIT_SHORT="$(git rev-parse --short HEAD)" \
-      CHOON_CHANGED="$changed" \
-      npm run --prefix web/page build
+    changed=""
+    git diff --quiet HEAD || changed=", with changes not committed"
+    sed -e "s|@REPOSITORY@|$(sed -n 's/^repository = "\(.*\)"/\1/p' Cargo.toml)|g" \
+      -e "s|@COMMIT@|$(git rev-parse HEAD)|g" \
+      -e "s|@COMMIT_SHORT@|$(git rev-parse --short HEAD)|g" \
+      -e "s|@CHANGED@|$changed|g" \
+      web/page/index.html > web/dist/index.html
 
-# the types of the page's Astro, Svelte and TypeScript files
+# the types of the page's JavaScript, from its JSDoc
 web-check: web
-    npm run --prefix web/page check
+    deno check --config web/page/deno.json web/page/page.js web/page/worker.js
 
 # web/dist served by Cloudflare as the Worker of web/wrangler.jsonc. wrangler reads its token
 # from CLOUDFLARE_API_TOKEN, or asks to log in
 web-deploy: web
     wrangler deploy --config web/wrangler.jsonc
 
-# node runs web/dist over generated audio, and each reading is compared with the native one
+# deno runs the wasm over generated audio, and each reading is compared with the native one
 # and worded as the program words it; then a headless Chromium and a headless Firefox read
 # files on the page
 web-test: web-check

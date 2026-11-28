@@ -11,47 +11,31 @@ on.
 nix develop .#web -c just web
 ```
 
-`web/dist` then holds the page and what it loads, as static files:
+The page is plain HTML, CSS and JavaScript in `web/page`, with no build tool and no npm
+packages. `just web` builds the wasm and copies the page into `web/dist`:
 
-| File                       | Description                                                    |
-| -------------------------- | -------------------------------------------------------------- |
-| `index.html`               | the page                                                       |
-| `_astro/index.*.css`       | its stylesheet                                                 |
-| `_astro/index.astro_*.js`  | the list of files, their readings and what is kept             |
-| `_astro/index-client.*.js` | the part of Svelte that script runs on                         |
-| `_astro/worker-*.js`       | the Web Worker that runs the analyzer, with the wasm as base64 |
-| `_astro/client.*.js`       | written by Astro's Svelte integration, and loaded by nothing   |
+| File                      | Description                                                 |
+| ------------------------- | ----------------------------------------------------------- |
+| `index.html`              | the page, with its policy, and the commit filled in         |
+| `page.css`                | its stylesheet                                              |
+| `page.js`                 | the list of files, their readings and what is kept          |
+| `worker.js`               | the Web Worker that runs the analyzer                       |
+| `wasm/choon_web.js`       | what wasm-bindgen writes for the worker to import           |
+| `wasm/choon_web_wasm.js`  | the wasm as base64 in a module                              |
 
 - The wasm uses SIMD (`+simd128`) and goes through `wasm-opt -O2`
 - The `wasm-bindgen` crate is pinned in `Cargo.toml`, and the flake takes the version of
   wasm-bindgen's program from that line
-- A file under `_astro` has a hash of its contents in its name
 - `web/page/wasm` holds what wasm-bindgen writes (`--target web`): `choon_web.js`, its types and
-  `choon_web_bg.wasm`, for the worker's build and for other callers. None of it is in `web/dist`
+  `choon_web_bg.wasm`, for the worker and for other callers. `just web` writes it, and git
+  ignores it
 - `index.html` names the commit `web/dist` was built from and links the source at that commit,
   under the `repository` of the main `Cargo.toml`. A build from a checkout with changes says so
 - The links in `index.html` are relative, so `web/dist` is served from any path of a host
-
-### Sources
-
-The page is an [Astro](https://astro.build) project in `web/page`, built to static files with
-no server part. `just web` installs its npm packages as `package-lock.json` states them, when
-they are missing or older than it.
-
-| File                    | Description                                                       |
-| ----------------------- | ----------------------------------------------------------------- |
-| `src/pages/index.astro` | the page's HTML, with its policy and the commit                   |
-| `src/Reader.svelte`     | the one Svelte component: the files taken and their readings      |
-| `src/page.ts`           | starts that component in the browser                              |
-| `src/worker.ts`         | the Web Worker                                                    |
-| `src/page.css`          | the stylesheet                                                    |
-| `wasm/`                 | wasm-bindgen's files, and the wasm as base64 in a module          |
-| `astro.config.ts`       | what the build is told                                            |
-
-- Astro renders the component into `index.html` when it builds, and `page.ts` starts it there
-- `just web` writes `wasm/`, and git ignores it
-- `just web-check` checks the types of the Astro, Svelte and TypeScript files (`astro check`
-  and `svelte-check`), under TypeScript's strictest settings as Astro names them
+- The files keep their names from one build to the next. A host has the browser check each
+  file again on every visit: Cloudflare sends `max-age=0, must-revalidate` with an `ETag`
+- `just web-check` checks the types of `page.js` and `worker.js` from their JSDoc with
+  `deno check`, under the settings in `deno.json`
 
 ## Page
 
@@ -67,7 +51,7 @@ parentheses after one, the reading's summary, the format, the flags and the limi
 Nothing is loaded from another origin.
 
 - A file is measured in full under the default thresholds
-- A file over 256 MiB (`MAX_FILE_BYTES` in `Reader.svelte`) is shown as `not read` without being
+- A file over 256 MiB (`MAX_FILE_BYTES` in `page.js`) is shown as `not read` without being
   opened. The worker holds a file's bytes twice while it copies them into the analyzer's
   memory, the analysis adds to that, and a tab on a phone can be ended at a few hundred MiB.
   The number is an estimate: no phone was measured for it
@@ -103,8 +87,7 @@ modules are the origin's, and no connection of any kind (`connect-src 'none'`).
   that worker under the `meta` policy alone, which the test shows. Safari was not tried
 - The worker cannot fetch the wasm under this policy, so it has it as base64 in its own file
 - The policy names no hash and no nonce, as `index.html` has no script or style written into
-  it. Astro would write both: a stylesheet small enough, which `astro.config.ts` turns off, and
-  the script that starts a component given a `client:` directive, which `page.ts` stands in for
+  it
 - A host that sends the same policy as a response header changes nothing the page needs
 
 ## Usage
@@ -194,8 +177,8 @@ nix develop .#web -c just web-test
 in Chromium and in Firefox: the `web` shell has both on Linux, and `CHROMIUM` and `FIREFOX`
 name others. Without a Firefox the test of it passes without opening the page.
 
-`tests/node.rs` writes generated audio to a temporary directory, has node read each file with
-the wasm in `web/page/wasm` (`tests/run.mjs`), and compares the JSON with what the same function
+`tests/wasm.rs` writes generated audio to a temporary directory, has deno read each file with
+the wasm in `web/page/wasm` (`tests/run.js`), and compares the JSON with what the same function
 returns natively. It also compares `words` with the lines the program prints for the same
 files.
 
@@ -215,7 +198,7 @@ files.
   `proptest-regressions/tests/hostile.txt` give a reading in the release wasm
 
 `tests/page.rs` opens the page from a local server in a headless Chromium, over the DevTools
-protocol, and in a headless Firefox, over WebDriver BiDi (`tests/page.mjs`), and gives it
+protocol, and in a headless Firefox, over WebDriver BiDi (`tests/page.js`), and gives it
 generated files:
 
 - Four files given at once are read one after another: a FLAC decoded from an MP3 reads as

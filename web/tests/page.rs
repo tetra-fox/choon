@@ -1,4 +1,4 @@
-//! the page of `web/dist` in a headless browser, reading generated audio. `tests/page.mjs`
+//! the page of `web/dist` in a headless browser, reading generated audio. `tests/page.js`
 //! drives the browser and holds what is checked; `just web-test` builds the page first
 
 use std::path::Path;
@@ -6,7 +6,7 @@ use std::process::Command;
 
 use choon::fixtures::{self, Bitrate, music, pink};
 
-/// the page read by `browser`, which `tests/page.mjs` knows by name
+/// the page read by `browser`, which `tests/page.js` knows by name
 fn page_in(browser: &str) {
   let web = Path::new(env!("CARGO_MANIFEST_DIR"));
   assert!(
@@ -28,12 +28,22 @@ fn page_in(browser: &str) {
   for (name, bytes) in files {
     std::fs::write(dir.path().join(name), bytes).unwrap();
   }
-  let page = Command::new("node")
-    .arg(web.join("tests/page.mjs"))
+  // the browser is a program it starts, a server and a WebSocket its network, and the
+  // environment names a browser and where screenshots go
+  let page = Command::new("deno")
+    .args([
+      "run",
+      "--allow-run",
+      "--allow-net=127.0.0.1",
+      "--allow-read",
+      "--allow-write",
+      "--allow-env",
+    ])
+    .arg(web.join("tests/page.js"))
     .arg(dir.path())
     .arg(browser)
     .output()
-    .expect("node runs");
+    .expect("deno runs");
   assert!(
     page.status.success(),
     "{}",

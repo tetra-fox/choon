@@ -1,30 +1,23 @@
 // reads the files of a directory on the page of web/dist in a headless browser, `chromium`
 // over its DevTools protocol or `firefox` over WebDriver BiDi, and ends with status 1 at the
-// first thing that is not as it should be. `tests/page.rs` writes the files and runs this.
-// with SHOTS set to a directory, Chromium's screenshots of the page are written there
-import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createServer } from "node:http";
-import { tmpdir } from "node:os";
-import { extname, join } from "node:path";
-
+// first thing that is not as it should be. `tests/page.rs` writes the files and runs this
+// under deno. with SHOTS set to a directory, Chromium's screenshots of the page are written
+// there
 const dist = new URL("../dist/", import.meta.url);
-const [files, engine] = process.argv.slice(2);
-const shots = process.env.SHOTS;
+const [files, engine] = Deno.args;
+const shots = Deno.env.get("SHOTS");
 
 const TYPES = {
-  ".html": "text/html",
-  ".css": "text/css",
-  ".js": "text/javascript",
-  ".svg": "image/svg+xml",
-  ".wasm": "application/wasm",
+  html: "text/html",
+  css: "text/css",
+  js: "text/javascript",
 };
 
-// the worker's module, which Astro names with a hash of what is in it
-const WORKER = /\/_astro\/worker-[\w-]+\.js$/;
+// the worker's module
+const WORKER = /\/worker\.js$/;
 
 // the page's own policy, which the second server sends as a header too
-const policy = readFileSync(new URL("index.html", dist), "utf8").match(
+const policy = Deno.readTextFileSync(new URL("index.html", dist)).match(
   /Content-Security-Policy"\s+content="([^"]+)"/,
 )[1];
 
@@ -36,60 +29,62 @@ const policy = readFileSync(new URL("index.html", dist), "utf8").match(
 const servers = [];
 function serve({ header = false, probe = false, loose = false } = {}) {
   let probed = false;
-  const server = createServer((request, response) => {
-    const name = request.url === "/" ? "index.html" : request.url.slice(1);
+  const server = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen() {} }, (request) => {
+    const path = new URL(request.url).pathname;
+    const name = path === "/" ? "index.html" : path.slice(1);
     if (name === "probe") {
       probed = true;
-      response.writeHead(204).end();
-      return;
+      return new Response(null, { status: 204 });
     }
     let body;
     try {
-      body = readFileSync(new URL(name, dist));
+      body = Deno.readTextFileSync(new URL(name, dist));
     } catch {
-      response.writeHead(404).end();
-      return;
+      return new Response(null, { status: 404 });
     }
-    if (probe && WORKER.test(request.url)) {
+    if (probe && WORKER.test(path)) {
       body += '\nfetch(new URL("/probe", import.meta.url)).catch(() => {});\n';
     }
     if (loose && name === "index.html") {
-      body = String(body).replace("connect-src 'none'", "connect-src 'self'");
+      body = body.replace("connect-src 'none'", "connect-src 'self'");
     }
-    const headers = { "content-type": TYPES[extname(name)] };
+    const headers = { "content-type": TYPES[name.split(".").pop()] };
     if (header) headers["content-security-policy"] = policy;
-    response.writeHead(200, headers).end(body);
+    return new Response(body, { headers });
   });
-  return new Promise((resolve) => {
-    servers.push(server);
-    server.listen(0, "127.0.0.1", () => {
-      resolve({ origin: `http://127.0.0.1:${server.address().port}`, probed: () => probed });
-    });
-  });
+  servers.push(server);
+  return { origin: `http://127.0.0.1:${server.addr.port}`, probed: () => probed };
 }
 
 function check(holds, what) {
   if (!holds) throw new Error(what);
 }
 
-const profile = mkdtempSync(join(tmpdir(), "choon-page-"));
+const profile = Deno.makeTempDirSync({ prefix: "choon-page-" });
 // every request the page or its worker makes, and every error, exception and policy
 // violation the browser reports
 const requests = [];
 const faults = [];
 
-// the browser started with `args`, and the WebSocket address it says on stderr after `said`
+// the browser started with `args`, and the WebSocket address it says on stderr after `said`.
+// its stderr is read to the end, so that a full pipe never stops it
 async function launch(program, args, said) {
-  const browser = spawn(program, args, { stdio: ["ignore", "ignore", "pipe"] });
+  const browser = new Deno.Command(program, {
+    args,
+    stdin: "null",
+    stdout: "null",
+    stderr: "piped",
+  }).spawn();
   const address = await new Promise((resolve, reject) => {
     let heard = "";
-    browser.stderr.on("data", (chunk) => {
-      heard += chunk;
-      const found = heard.match(said);
-      if (found) resolve(found[1]);
-    });
-    browser.on("error", reject);
-    browser.on("exit", () => reject(new Error(`${program} ended: ${heard}`)));
+    (async () => {
+      for await (const chunk of browser.stderr.pipeThrough(new TextDecoderStream())) {
+        heard += chunk;
+        const found = heard.match(said);
+        if (found) resolve(found[1]);
+      }
+      reject(new Error(`${program} ended: ${heard}`));
+    })().catch(reject);
   });
   return { browser, address };
 }
@@ -127,7 +122,7 @@ async function connect(address, event) {
 // `give(paths)` to the file picker, `shot(name, look)`
 async function chromium() {
   const { browser, address } = await launch(
-    process.env.CHROMIUM ?? "chromium",
+    Deno.env.get("CHROMIUM") ?? "chromium",
     ["--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank"],
     /DevTools listening on (ws:\S+)/,
   );
@@ -157,6 +152,7 @@ async function chromium() {
   return {
     browser,
     socket,
+    close: () => call("Browser.close"),
     navigate: (url) => on("Page.navigate", { url }),
     async evaluate(expression) {
       const { result, exceptionDetails } = await on("Runtime.evaluate", {
@@ -188,14 +184,15 @@ async function chromium() {
         captureBeyondViewport: true,
         clip: { x: 0, y: 0, width, height: Math.max(height, cssContentSize.height), scale: 1 },
       });
-      writeFileSync(join(shots, `${name}.png`), Buffer.from(data, "base64"));
+      const bytes = Uint8Array.from(atob(data), (char) => char.charCodeAt(0));
+      Deno.writeFileSync(`${shots}/${name}.png`, bytes);
     },
   };
 }
 
 async function firefox() {
   const { browser, address } = await launch(
-    process.env.FIREFOX ?? "firefox",
+    Deno.env.get("FIREFOX") ?? "firefox",
     ["--headless", "--no-remote", "--remote-debugging-port", "0", "--profile", profile],
     /WebDriver BiDi listening on (ws:\S+)/,
   );
@@ -222,6 +219,7 @@ async function firefox() {
   return {
     browser,
     socket,
+    close: () => call("browser.close"),
     navigate: (url) => call("browsingContext.navigate", { context, url }),
     async evaluate(expression) {
       // a value comes back as JSON, as the protocol's own form of one is not a plain value
@@ -270,7 +268,7 @@ async function row(name) {
 }
 
 function give(...names) {
-  return driver.give(names.map((name) => join(files, name)));
+  return driver.give(names.map((name) => `${files}/${name}`));
 }
 
 function click(selector) {
@@ -409,15 +407,23 @@ try {
 } catch (error) {
   console.error(error.message);
   if (faults.length) console.error(`the browser logged: ${faults.join("; ")}`);
-  process.exitCode = 1;
+  Deno.exitCode = 1;
 } finally {
-  socket.close();
-  browser.removeAllListeners("exit");
-  browser.kill();
-  await new Promise((resolve) => browser.on("exit", resolve));
-  rmSync(profile, { recursive: true, force: true });
-  for (const server of servers) {
-    server.close();
-    server.closeAllConnections();
+  // a browser told to close ends the processes it started, which write to its profile until
+  // they end. one that has not ended after ten seconds is killed. the reply to the close may
+  // never come, as the socket closes with the browser
+  driver.close().catch(() => {});
+  let waited;
+  const ended = await Promise.race([
+    browser.status.then(() => true),
+    new Promise((resolve) => (waited = setTimeout(() => resolve(false), 10_000))),
+  ]);
+  clearTimeout(waited);
+  if (!ended) {
+    browser.kill();
+    await browser.status;
   }
+  socket.close();
+  Deno.removeSync(profile, { recursive: true });
+  await Promise.all(servers.map((server) => server.shutdown()));
 }

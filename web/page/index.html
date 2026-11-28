@@ -1,0 +1,102 @@
+<!doctype html>
+<!-- `just web` writes this into web/dist with the repository and the commit filled in -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- no connection of any kind, and nothing from another origin: web/README.md has the
+         reasoning. data: images are the empty icon below, so that the browser asks for no
+         favicon.ico -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="color-scheme" content="light dark" />
+    <meta
+      name="description"
+      content="Checks in the browser that lossless audio is actually lossless. No file is uploaded."
+    />
+    <title>choon</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="page.css" />
+    <script type="module" src="page.js"></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>choon</h1>
+        <p class="lead">Checks that lossless audio is actually lossless.</p>
+        <p>
+          A lossless file decoded from MP3, AAC, Opus or another lossy format keeps traces of its
+          encoder: a frame grid or quantized band energies in the samples, and a cutoff in the
+          spectrum. choon reads a file for them.
+        </p>
+        <p><a href="@REPOSITORY@">Source on GitHub</a></p>
+      </header>
+
+      <section id="get" aria-labelledby="get-title">
+        <h2 id="get-title">Available as a command-line tool or a Rust library</h2>
+        <div class="ways">
+          <div class="way">
+            <h3>Command-line tool</h3>
+            <pre><code>cargo install choon</code></pre>
+            <p>Checks directories of files in parallel, with exit codes and JSON for scripts.</p>
+            <p class="links">
+              <a href="@REPOSITORY@/releases">Binaries for Linux, Windows and macOS</a>
+              <a href="@REPOSITORY@/blob/@COMMIT@/README.md#usage">Usage</a>
+            </p>
+          </div>
+          <div class="way">
+            <h3>Rust library</h3>
+            <pre><code>cargo add choon <span class="nowrap">--no-default-features</span></code></pre>
+            <p>Measures a file and reads it into a verdict, under thresholds the caller passes.</p>
+            <p class="links">
+              <a href="https://docs.rs/choon">Documentation</a>
+              <a href="https://crates.io/crates/choon">crates.io</a>
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="try" aria-labelledby="try-title">
+        <h2 id="try-title">Demo</h2>
+        <p>Files are read in this tab, and nothing is uploaded.</p>
+
+        <section id="drop" aria-labelledby="drop-title">
+          <h2 id="drop-title">Drop audio files here</h2>
+          <button id="choose" type="button">Choose files</button>
+          <input id="files" type="file" multiple hidden />
+          <p id="notice" role="alert" hidden></p>
+          <p class="hint">
+            A lossless file takes from several seconds to about a minute to read, depending on the
+            device, and a lossy file far less. Files over <span id="limit"></span> are not read.
+          </p>
+        </section>
+
+        <section id="read" aria-labelledby="read-title" hidden>
+          <div class="heading">
+            <h2 id="read-title">Readings</h2>
+            <button id="clear" type="button">Clear</button>
+          </div>
+          <p class="hint">Kept in this browser until cleared</p>
+          <ul id="readings"></ul>
+          <p id="said" class="unseen" role="status"></p>
+        </section>
+      </section>
+    </main>
+
+    <footer>
+      <p>
+        A reading says what the analyzer saw in the samples. The README says
+        <a href="@REPOSITORY@/blob/@COMMIT@/README.md#verdicts">what each verdict means</a>
+        and
+        <a href="@REPOSITORY@/blob/@COMMIT@/README.md#limitations">what a reading cannot tell</a>.
+      </p>
+      <p>
+        Built from <a href="@REPOSITORY@">choon</a> at commit
+        <a href="@REPOSITORY@/tree/@COMMIT@"><code>@COMMIT_SHORT@</code></a>@CHANGED@. Licensed
+        under <span class="nowrap">MPL-2.0</span>.
+      </p>
+    </footer>
+  </body>
+</html>
