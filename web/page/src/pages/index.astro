@@ -10,7 +10,8 @@ const policy = [
   "script-src 'self' 'wasm-unsafe-eval'",
   "worker-src 'self' blob:",
   "style-src 'self'",
-  "img-src 'self'",
+  // the empty icon below, so that the browser asks for no favicon.ico
+  "img-src data:",
   "connect-src 'none'",
   "base-uri 'none'",
   "form-action 'none'",
@@ -30,7 +31,7 @@ const readme = `${CHOON_REPOSITORY}/blob/${CHOON_COMMIT}/README.md`;
       content="Checks in the browser that lossless audio is actually lossless. No file is uploaded."
     />
     <title>choon</title>
-    <link rel="icon" href="icon.svg" type="image/svg+xml" />
+    <link rel="icon" href="data:," />
     <script src="../page.ts"></script>
   </head>
   <body>

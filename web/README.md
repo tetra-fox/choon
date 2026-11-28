@@ -15,7 +15,7 @@ nix develop .#web -c just web
 
 | File                       | Description                                                    |
 | -------------------------- | -------------------------------------------------------------- |
-| `index.html`, `icon.svg`   | the page                                                       |
+| `index.html`               | the page                                                       |
 | `_astro/index.*.css`       | its stylesheet                                                 |
 | `_astro/index.astro_*.js`  | the list of files, their readings and what is kept             |
 | `_astro/index-client.*.js` | the part of Svelte that script runs on                         |
@@ -45,7 +45,6 @@ they are missing or older than it.
 | `src/page.ts`           | starts that component in the browser                              |
 | `src/worker.ts`         | the Web Worker                                                    |
 | `src/page.css`          | the stylesheet                                                    |
-| `public/`               | copied to `web/dist` as it is: the icon                           |
 | `wasm/`                 | wasm-bindgen's files, and the wasm as base64 in a module          |
 | `astro.config.ts`       | what the build is told                                            |
 
@@ -94,9 +93,9 @@ else.
 
 ### Content Security Policy
 
-`index.html` states its policy in a `meta` tag: scripts, styles and the icon from the page's
-own origin, WebAssembly, a worker from a `blob:` URL whose modules are the origin's, and no
-connection of any kind (`connect-src 'none'`).
+`index.html` states its policy in a `meta` tag: scripts and styles from the page's own
+origin, an empty icon as a `data:` URL, WebAssembly, a worker from a `blob:` URL whose
+modules are the origin's, and no connection of any kind (`connect-src 'none'`).
 
 - The worker is made from a `blob:` URL so that the page's policy holds it too. A worker made
   from its own URL is held to the policy of that response, and a static host sends none

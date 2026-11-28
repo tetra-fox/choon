@@ -391,10 +391,12 @@ async function run() {
   await until(async () => (await rows())[0]?.status === "consistent", "a file is read under the header");
 
   const origins = [plain, strict, allowed.origin, held.origin];
-  // the worker's blob is the page's own, and is no request to a server
+  // the worker's blob is the page's own and the empty icon is a data: URL, and neither is a
+  // request to a server
   const elsewhere = requests.filter(
     (url) =>
       url !== "about:blank" &&
+      !url.startsWith("data:") &&
       !origins.some((origin) => url.replace(/^blob:/, "").startsWith(`${origin}/`)),
   );
   check(elsewhere.length === 0, `requests left the origin: ${elsewhere.join(", ")}`);
