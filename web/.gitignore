@@ -6,3 +6,6 @@ Cargo.lock
 page/node_modules
 page/.astro
 page/wasm
+
+# written by wrangler
+.wrangler

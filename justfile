@@ -118,6 +118,11 @@ web: (lock "web")
 web-check: web
     npm run --prefix web/page check
 
+# web/dist served by Cloudflare as the Worker of web/wrangler.jsonc. wrangler reads the account
+# and the token from CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN, or asks to log in
+web-deploy: web
+    wrangler deploy --config web/wrangler.jsonc
+
 # node runs web/dist over generated audio, and each reading is compared with the native one
 # and worded as the program words it; then a headless Chromium and a headless Firefox read
 # files on the page
